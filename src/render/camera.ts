@@ -1,60 +1,57 @@
 import { Vec3, clamp, smoothDamp } from '../core/math3';
-import { COURT_HALF_LENGTH } from '../core/rules';
+import { COURT_HALF_LENGTH, COURT_HALF_WIDTH } from '../core/rules';
 
 export interface Projected {
   /** Screen position in CSS pixels. */
   x: number;
   y: number;
-  /** Distance from the camera along its view axis; used for depth sorting. */
+  /** Sorting key: larger means further from the viewer. */
   depth: number;
-  /** Perspective scale factor, ~1.35 at the court centre. */
+  /** Size multiplier for anything drawn at this point. */
   scale: number;
-  /** True when the point is behind the camera and must not be drawn. */
+  /** Kept for API compatibility; an orthographic camera has nothing behind it. */
   behind: boolean;
 }
 
+/** Pixels per metre along the court and vertically, at a 1280 px viewport. */
+const PIXELS_PER_METRE = 55;
 /**
- * Side-on camera: the court length runs across the screen, the net stands in
- * the middle, and the two teams occupy the left and right halves.
+ * Oblique projection of the court's width: each metre further from the viewer
+ * moves a point this far up and this far right.
  *
- * This is the framing the 90s volleyball coin-ops used, and it is the reason
- * their action reads instantly — the height of the ball relative to the net is
- * the single most important thing to judge, and a side view puts that on the
- * screen's vertical axis where it is unmissable.
+ * Mapping width to a purely vertical offset would be simpler, but then the net
+ * — which runs along the width — becomes a vertical bar on screen. Sending it
+ * diagonally instead is the trick 2D sports games have always used: depth is
+ * legible, and because the offset is constant per metre, nothing converges and
+ * nothing changes size with distance.
+ */
+const DEPTH_RISE = 22;
+const DEPTH_SHEAR = 20;
+/**
+ * How much smaller the far sideline is drawn than the near one. Applied to
+ * sprite size only, never to position, so court lines stay exactly parallel.
+ */
+const DEPTH_SHRINK = 0.08;
+
+/**
+ * Orthographic side-on camera.
  *
- * The camera sits a long way out with a correspondingly long focal length, so
- * the projection is nearly orthographic. Court width becomes depth into the
- * screen, giving just enough scale and vertical offset to tell a near player
- * from a far one without turning the picture into a 3D scene.
+ * The previous version divided by depth, and that single operation is what made
+ * the picture read as a 3D scene no matter how the angles were tuned: parallel
+ * court lines converged, and players changed size as they crossed the court.
+ *
+ * Here nothing converges. Court length runs across the screen, height runs up
+ * it, and court width becomes a fixed vertical offset per metre. A player at
+ * the back of the court is drawn higher and very slightly smaller, and that is
+ * the entire third dimension. Flat on purpose.
  */
 export class Camera {
-  /**
-   * Camera position: off the near sideline and raised, looking across and
-   * slightly down. Purely level would flatten the court into a single line —
-   * this angle keeps the side-on read while still showing the floor, which is
-   * what makes the landing marker legible.
-   */
-  x = -40;
-  y = -4.82; // = x * tan(yaw), keeping the court centred
-  z = 9.0;
-  /** Downward tilt in radians. */
-  pitch = 0.25;
-  /**
-   * Slight rotation off dead-side-on.
-   *
-   * At exactly 90 degrees to the net every point on it shares one screen
-   * column, so the net collapses into a vertical line and reads as a pole.
-   * A few degrees of yaw gives it width and turns the court into a readable
-   * trapezoid, without losing the side-on framing.
-   */
-  yaw = 0.12;
-  /** Focal length in pixels at a 1280 px wide viewport. */
-  focal = 2400;
-
   viewWidth = 1280;
   viewHeight = 720;
 
-  /** Screen-space offset applied after projection, for shake and framing. */
+  /** Pan along the court, in metres. */
+  panY = 0;
+  /** Screen-space offset applied after projection, for shake. */
   offsetX = 0;
   offsetY = 0;
 
@@ -67,31 +64,28 @@ export class Camera {
     this.viewHeight = height;
   }
 
-  /** Kick the camera; magnitude is in screen pixels. */
   addShake(amount: number): void {
     this.shake = Math.min(30, this.shake + amount);
   }
 
-  /**
-   * Track the rally. In a side view the meaningful movement is along the court,
-   * so the camera pans with the ball's length-wise position and pushes in a
-   * little when play is at the net.
-   */
-  /**
-   * Where the camera must sit along y for the court centre to stay in the
-   * middle of the frame, given the yaw.
-   */
-  private get centredY(): number {
-    return this.x * Math.tan(this.yaw);
+  /** Metres-to-pixels, including the viewport scale and the zoom. */
+  private get unit(): number {
+    return PIXELS_PER_METRE * (this.viewWidth / 1280) * this.zoom;
+  }
+
+  /** Screen row that the court centre line sits on. */
+  private get baseline(): number {
+    return this.viewHeight * 0.62;
   }
 
   follow(ballPos: Vec3, dt: number): void {
-    const targetY = this.centredY + clamp(ballPos.y * 0.22, -2.2, 2.2);
+    // Gentle pan only. A 2D game of this kind should keep the whole court in
+    // frame; the camera is here to add life, not to chase the ball.
+    const targetPan = clamp(ballPos.y * 0.1, -1.2, 1.2);
     const nearNet = 1 - clamp(Math.abs(ballPos.y) / COURT_HALF_LENGTH, 0, 1);
-    const targetZoom = 1 + nearNet * 0.05;
 
-    this.y = smoothDamp(this.y, targetY, 3.0, dt);
-    this.zoom = smoothDamp(this.zoom, targetZoom, 2.2, dt);
+    this.panY = smoothDamp(this.panY, targetPan, 2.6, dt);
+    this.zoom = smoothDamp(this.zoom, 1 + nearNet * 0.03, 2.0, dt);
 
     if (this.shake > 0.01) {
       this.shakePhase += dt * 46;
@@ -105,40 +99,21 @@ export class Camera {
     }
   }
 
-  /**
-   * Project a world point to screen space.
-   *
-   * World axes: x across the court, y along it, z up. The camera looks along
-   * +x, so world y becomes the screen's horizontal axis and world x becomes
-   * depth — the opposite assignment to a behind-the-baseline view.
-   */
+  /** Size multiplier for a point at court-width `wx`. */
+  scaleAt(wx: number): number {
+    return 1 - (wx / (2 * COURT_HALF_WIDTH)) * DEPTH_SHRINK;
+  }
+
   project(wx: number, wy: number, wz: number): Projected {
-    const dx = wx - this.x;
-    const dy = wy - this.y;
-    const above = wz - this.z;
+    const u = this.unit;
+    const k = (this.viewWidth / 1280) * this.zoom;
 
-    // Yaw first, in the floor plane, then pitch in the resulting vertical plane.
-    const sy = Math.sin(this.yaw);
-    const cy = Math.cos(this.yaw);
-    const right = -dx * sy + dy * cy;
-    const forward = dx * cy + dy * sy;
-
-    const sp = Math.sin(this.pitch);
-    const cp = Math.cos(this.pitch);
-
-    const depth = forward * cp - above * sp;
-    const up = forward * sp + above * cp;
-
-    if (depth <= 0.05) {
-      return { x: 0, y: 0, depth, scale: 0, behind: true };
-    }
-
-    const f = this.focal * (this.viewWidth / 1280) * this.zoom;
     return {
-      x: this.viewWidth / 2 + (f * right) / depth + this.offsetX,
-      y: this.viewHeight * 0.68 - (f * up) / depth + this.offsetY,
-      depth,
-      scale: f / depth / 42,
+      x: this.viewWidth / 2 + (wy - this.panY) * u + wx * DEPTH_SHEAR * k + this.offsetX,
+      y: this.baseline - wx * DEPTH_RISE * k - wz * u + this.offsetY,
+      // Nearer the viewer means smaller x, and must be drawn last.
+      depth: wx,
+      scale: (u * this.scaleAt(wx)) / 42,
       behind: false,
     };
   }
@@ -147,7 +122,6 @@ export class Camera {
     return this.project(p.x, p.y, p.z);
   }
 
-  /** Convenience: project a point on the floor. */
   projectFloor(x: number, y: number): Projected {
     return this.project(x, y, 0);
   }

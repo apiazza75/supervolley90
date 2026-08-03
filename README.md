@@ -166,10 +166,18 @@ of it is drawn, so switching from a behind-the-baseline view to the side-on one
 this game needed was a change to the projection alone. Not a line of gameplay
 code moved.
 
-The camera is deliberately not *exactly* side-on. At a perfect right angle every
-point of the net shares a single screen column, so it collapses into a line and
-reads as a pole; a few degrees of yaw give it width and turn the court into a
-legible trapezoid.
+**The projection is oblique, not perspective.** There is no divide by depth
+anywhere in the renderer, and that single absence is what makes the picture read
+as a 2D game: court lines stay exactly parallel, and a player is the same size
+wherever they stand. Court width is mapped to a constant diagonal offset —
+22 px up and 20 px right per metre — which is the trick 2D sports games have
+always used. Sending width straight up instead would be simpler, but then the
+net, which runs along the width, becomes a vertical bar on screen.
+
+Players are drawn as articulated vector figures rather than sprites: a skeleton
+of joint angles, limbs as tapered capsules with knees and elbows, flat colours
+and a dark outline. Poses ease towards their target every frame instead of
+snapping, which is what lets a run flow into a jump and a jump into a swing.
 
 ## Tooling
 

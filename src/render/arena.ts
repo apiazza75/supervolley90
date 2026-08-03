@@ -9,88 +9,257 @@ import {
 } from '../core/rules';
 import { Camera } from './camera';
 
-const LINE = 'rgba(255,255,255,0.92)';
+const LINE = 'rgba(255,255,255,0.94)';
 const COURT_NEAR = '#c9713a';
-const COURT_FAR = '#bd6835';
+const COURT_FAR = '#b9642f';
 const SURROUND = '#2f6a5a';
 
+interface Spectator {
+  /** Seat position: x is the depth into the stand, y runs along it. */
+  x: number;
+  y: number;
+  /** Height of this seat above the floor. */
+  tier: number;
+  shirt: string;
+  skin: string;
+  hair: string;
+  /** Phase offset so the crowd does not move as one body. */
+  phase: number;
+  /** Some spectators stand and wave during big moments. */
+  lively: number;
+}
+
+const SHIRTS = [
+  '#d94f4f', '#3f7fd0', '#e0a63a', '#4aa76a', '#8a54c4', '#d76fa8',
+  '#e7e7ec', '#33404f', '#e2703a', '#2f9ea6', '#b5495f', '#5b6ec7',
+];
+const CROWD_SKINS = ['#f2c6a0', '#dfa877', '#c08553', '#94602f', '#6b4324'];
+const CROWD_HAIRS = ['#241a16', '#0f0d10', '#54341c', '#7d5326', '#332520', '#8d8d95'];
+
 /**
- * The static scenery: crowd, floor, court markings, net and posts, all drawn
- * for the side-on camera.
+ * Arena scenery drawn for the flat side-on camera: crowd, floor, court
+ * markings, net and posts.
  *
- * Everything is procedural. That keeps the build asset-free and, more usefully,
- * means the court stays razor sharp at any resolution — including the 2x
- * Retina backing store a Mac gives us.
+ * Everything is procedural, so the build stays asset-free and the court is
+ * razor sharp at any resolution — including the 2x backing store a Retina Mac
+ * gives us.
  */
+/** Where the stand starts, how deep it is, and how steeply it climbs. */
+const STAND_FRONT = COURT_HALF_WIDTH + 2.1;
+const STAND_ROWS = 8;
+const STAND_ROW_DEPTH = 0.58;
+const STAND_ROW_RISE = 0.24;
+const STAND_BASE_HEIGHT = 0.8;
+
+const rowDepth = (row: number): number => STAND_FRONT + row * STAND_ROW_DEPTH;
+const rowHeight = (row: number): number => STAND_BASE_HEIGHT + row * STAND_ROW_RISE;
+
 export class Arena {
-  private crowd: { x: number; y: number; r: number; c: string }[] = [];
+  private crowd: Spectator[] = [];
+  /** Rises after a point and decays, making the stand come alive. */
+  private excitement = 0;
 
   constructor(seed = 4242) {
     const rng = new Rng(seed);
-    const palette = ['#2b3350', '#3a2f4d', '#243a52', '#4a3350', '#1f2c44', '#553a46'];
-    // Stands behind the far sideline, filling the top of the frame.
-    for (let i = 0; i < 1100; i++) {
-      this.crowd.push({
-        x: rng.range(11, 34),
-        y: rng.range(-26, 26),
-        r: rng.range(0.17, 0.32),
-        c: palette[rng.int(0, palette.length)],
-      });
+    for (let row = 0; row < STAND_ROWS; row++) {
+      // Rows are shallow and closely spaced on purpose. The oblique projection
+      // pushes every metre of depth a long way up the screen, so a stand with
+      // realistic spacing would climb straight out of the frame.
+      const x = rowDepth(row);
+      const count = 44 + row * 3;
+      for (let i = 0; i < count; i++) {
+        if (rng.chance(0.07)) continue; // empty seats
+        const y = -34 + (68 * (i + rng.range(0.05, 0.95))) / count;
+        this.crowd.push({
+          x: x + rng.spread(0.1),
+          y,
+          tier: rowHeight(row) + rng.spread(0.05),
+          shirt: SHIRTS[rng.int(0, SHIRTS.length)],
+          skin: CROWD_SKINS[rng.int(0, CROWD_SKINS.length)],
+          hair: CROWD_HAIRS[rng.int(0, CROWD_HAIRS.length)],
+          phase: rng.range(0, Math.PI * 2),
+          lively: rng.next(),
+        });
+      }
     }
+  }
+
+  /** Called when something worth cheering happens. */
+  cheer(amount = 1): void {
+    this.excitement = Math.min(1, this.excitement + amount);
+  }
+
+  update(dt: number): void {
+    this.excitement = Math.max(0, this.excitement - dt * 0.5);
   }
 
   drawBackground(ctx: CanvasRenderingContext2D, cam: Camera, time: number): void {
     const { viewWidth: w, viewHeight: h } = cam;
 
     const hall = ctx.createLinearGradient(0, 0, 0, h);
-    hall.addColorStop(0, '#080b18');
-    hall.addColorStop(0.34, '#131a2f');
-    hall.addColorStop(0.6, '#1c2340');
-    hall.addColorStop(1, '#0e1326');
+    hall.addColorStop(0, '#070a16');
+    hall.addColorStop(0.3, '#111a2c');
+    hall.addColorStop(0.62, '#1a2438');
+    hall.addColorStop(1, '#0d1322');
     ctx.fillStyle = hall;
     ctx.fillRect(0, 0, w, h);
 
     this.drawCrowd(ctx, cam, time);
+    this.drawRoof(ctx, cam);
+    this.drawBarrier(ctx, cam);
     this.drawFloor(ctx, cam);
   }
 
+  /**
+   * The stand. Each spectator is a head, hair and a pair of shoulders — three
+   * shapes, but enough that the block reads as people rather than confetti,
+   * which is what a bank of plain dots looked like.
+   */
   private drawCrowd(ctx: CanvasRenderingContext2D, cam: Camera, time: number): void {
     ctx.save();
-    for (let i = 0; i < this.crowd.length; i++) {
-      const c = this.crowd[i];
-      // Tiered seating: further from the court means higher up.
-      const tier = (c.x - 11) * 0.34 + 1.1;
-      const sway = Math.sin(time * 1.6 + i * 0.7) * 0.05;
-      const s = cam.project(c.x, c.y, tier + sway);
-      if (s.behind || s.scale <= 0) continue;
-      const r = c.r * s.scale * 42;
-      if (r < 0.4) continue;
-      ctx.globalAlpha = 0.5;
-      ctx.fillStyle = c.c;
+    for (const s of this.crowd) {
+      const bob =
+        Math.sin(time * 2.2 + s.phase) * 0.035 +
+        (s.lively < this.excitement ? Math.abs(Math.sin(time * 7 + s.phase)) * 0.3 : 0);
+
+      const p = cam.project(s.x, s.y, s.tier + bob);
+      const u = p.scale * 42;
+      const headR = 0.115 * u;
+      if (headR < 1.1) continue;
+
+      // Shoulders.
       ctx.beginPath();
-      ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+      ctx.ellipse(p.x, p.y + headR * 1.5, headR * 1.75, headR * 1.3, 0, Math.PI, Math.PI * 2);
+      ctx.fillStyle = s.shirt;
       ctx.fill();
+
+      // Head.
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, headR, 0, Math.PI * 2);
+      ctx.fillStyle = s.skin;
+      ctx.fill();
+
+      // Hair cap.
+      ctx.beginPath();
+      ctx.arc(p.x, p.y - headR * 0.16, headR * 0.98, Math.PI * 1.03, Math.PI * 1.97);
+      ctx.closePath();
+      ctx.fillStyle = s.hair;
+      ctx.fill();
+
+      // Raised arms for the ones on their feet.
+      if (s.lively < this.excitement && headR > 2) {
+        ctx.strokeStyle = s.skin;
+        ctx.lineWidth = headR * 0.45;
+        ctx.lineCap = 'round';
+        const wave = Math.sin(time * 9 + s.phase) * headR * 0.5;
+        ctx.beginPath();
+        ctx.moveTo(p.x - headR * 1.2, p.y + headR * 1.4);
+        ctx.lineTo(p.x - headR * 1.5 + wave, p.y - headR * 1.1);
+        ctx.moveTo(p.x + headR * 1.2, p.y + headR * 1.4);
+        ctx.lineTo(p.x + headR * 1.5 + wave, p.y - headR * 1.1);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Roof and upper deck. Without them the stand simply runs off the top of the
+   * frame, which reads as an unfinished background rather than a building.
+   */
+  private drawRoof(ctx: CanvasRenderingContext2D, cam: Camera): void {
+    // Sit the roof just above the back row, derived from the same numbers the
+    // seating uses so the two can never drift apart.
+    const back = rowDepth(STAND_ROWS - 1);
+    const top = rowHeight(STAND_ROWS - 1) + 0.55;
+    const left = cam.project(back, -34, top);
+    const right = cam.project(back, 34, top);
+    const { viewWidth: w } = cam;
+
+    ctx.save();
+    // Dark mass above the last row, fading down into the crowd.
+    const grad = ctx.createLinearGradient(0, left.y - 140, 0, left.y + 16);
+    grad.addColorStop(0, '#05070f');
+    grad.addColorStop(0.7, '#080c18');
+    grad.addColorStop(1, 'rgba(8,12,24,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, Math.min(0, left.y - 200), w, Math.max(0, left.y + 16));
+
+    // Roof truss.
+    ctx.strokeStyle = 'rgba(150,170,205,0.22)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, left.y);
+    ctx.lineTo(w, right.y);
+    ctx.stroke();
+
+    // Floodlight banks.
+    for (let i = 0; i < 5; i++) {
+      const cx = (w * (i + 0.5)) / 5;
+      const cy = left.y - 26 + (right.y - left.y) * ((i + 0.5) / 5);
+      ctx.fillStyle = 'rgba(30,38,58,0.9)';
+      ctx.fillRect(cx - 58, cy - 12, 116, 22);
+      for (let j = 0; j < 4; j++) {
+        const lx = cx - 42 + j * 28;
+        const glow = ctx.createRadialGradient(lx, cy, 1, lx, cy, 34);
+        glow.addColorStop(0, 'rgba(255,246,214,0.55)');
+        glow.addColorStop(1, 'rgba(255,246,214,0)');
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(lx, cy, 34, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#fff6d6';
+        ctx.beginPath();
+        ctx.arc(lx, cy, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  /** Advertising boards between the crowd and the court. */
+  private drawBarrier(ctx: CanvasRenderingContext2D, cam: Camera): void {
+    const x = STAND_FRONT - 0.35;
+    const top = cam.project(x, -34, 1.0);
+    const bottom = cam.project(x, -34, 0);
+    const right = cam.project(x, 34, 0);
+    const height = bottom.y - top.y;
+
+    ctx.save();
+    ctx.fillStyle = '#16203a';
+    ctx.fillRect(top.x, top.y, right.x - top.x, height);
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(top.x, top.y, right.x - top.x, height * 0.28);
+
+    // Repeating panels, so the boards read as boards and not a painted stripe.
+    const panels = 16;
+    const step = (right.x - top.x) / panels;
+    for (let i = 0; i < panels; i++) {
+      ctx.fillStyle = i % 2 ? 'rgba(90,140,220,0.16)' : 'rgba(255,190,90,0.14)';
+      ctx.fillRect(top.x + i * step + step * 0.1, top.y + height * 0.22, step * 0.8, height * 0.5);
     }
     ctx.restore();
   }
 
   private drawFloor(ctx: CanvasRenderingContext2D, cam: Camera): void {
-    const outX = COURT_HALF_WIDTH + 5.0;
-    const outY = COURT_HALF_LENGTH + 5.5;
+    const outX = STAND_FRONT - 0.3;
+    const outY = COURT_HALF_LENGTH + 9;
 
-    fillQuad(
-      ctx,
-      cam,
-      [
-        [-outX, -outY],
-        [outX, -outY],
-        [outX, outY],
-        [-outX, outY],
-      ],
-      SURROUND,
-    );
+    fillQuad(ctx, cam, [[-outX, -outY], [outX, -outY], [outX, outY], [-outX, outY]], SURROUND);
 
-    // Two-tone halves so the sides read apart at a glance.
+    // Subtle sheen bands along the hall floor, the way a lit sports surface
+    // catches the ceiling lights.
+    for (let i = 0; i < 5; i++) {
+      const x0 = -outX + (i * (2 * outX)) / 5;
+      const x1 = x0 + outX / 5;
+      fillQuad(
+        ctx,
+        cam,
+        [[x0, -outY], [x1, -outY], [x1, outY], [x0, outY]],
+        i % 2 ? 'rgba(255,255,255,0.018)' : 'rgba(0,0,0,0.02)',
+      );
+    }
+
     fillQuad(
       ctx,
       cam,
@@ -114,83 +283,71 @@ export class Arena {
       COURT_FAR,
     );
 
-    const centre = cam.projectFloor(0, 0);
-    if (!centre.behind) {
-      const r = 460 * centre.scale;
-      const glow = ctx.createRadialGradient(centre.x, centre.y, 0, centre.x, centre.y, r);
-      glow.addColorStop(0, 'rgba(255,236,196,0.18)');
-      glow.addColorStop(1, 'rgba(255,236,196,0)');
-      ctx.fillStyle = glow;
-      ctx.beginPath();
-      ctx.arc(centre.x, centre.y, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
     this.drawLines(ctx, cam);
   }
 
   private drawLines(ctx: CanvasRenderingContext2D, cam: Camera): void {
     const W = COURT_HALF_WIDTH;
     const L = COURT_HALF_LENGTH;
-    strokePath(ctx, cam, [
-      [-W, -L],
-      [W, -L],
-      [W, L],
-      [-W, L],
-      [-W, -L],
-    ]);
+    strokePath(ctx, cam, [[-W, -L], [W, -L], [W, L], [-W, L], [-W, -L]]);
     for (const y of [0, -ATTACK_LINE, ATTACK_LINE]) {
-      strokePath(ctx, cam, [
-        [-W, y],
-        [W, y],
-      ]);
+      strokePath(ctx, cam, [[-W, y], [W, y]]);
     }
   }
 
   /**
-   * From the side the net is edge-on: a narrow vertical band across the middle
-   * of the screen, with the white tape along its top. That tape is the single
-   * most useful reference in the game — every attack is a judgement about
-   * clearing it — so it is drawn bright and solid.
+   * The net, seen edge-on as a band across the middle of the screen. The white
+   * tape along its top is the most useful reference in the game — every attack
+   * is a judgement about clearing it — so it is drawn bright and solid.
    */
   drawNet(ctx: CanvasRenderingContext2D, cam: Camera): void {
     const W = COURT_HALF_WIDTH;
 
-    // Posts, just outside each sideline.
-    for (const x of [-W - 0.5, W + 0.5]) {
+    for (const x of [-W - 0.55, W + 0.55]) {
       const foot = cam.project(x, 0, 0);
-      const top = cam.project(x, 0, NET_HEIGHT + 0.35);
-      if (foot.behind || top.behind) continue;
-      ctx.strokeStyle = '#8b93a8';
-      ctx.lineWidth = Math.max(2, 7 * top.scale);
+      const top = cam.project(x, 0, NET_HEIGHT + 0.4);
+      ctx.strokeStyle = '#9aa3b8';
+      ctx.lineWidth = Math.max(2.5, 8 * top.scale);
+      ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(foot.x, foot.y);
       ctx.lineTo(top.x, top.y);
       ctx.stroke();
     }
 
-    // Mesh, drawn as strands running away from the camera plus horizontal rows.
+    // Net cloth: a translucent band, then the mesh over it.
+    const c1 = cam.project(-W, 0, NET_HEIGHT);
+    const c2 = cam.project(W, 0, NET_HEIGHT);
+    const c3 = cam.project(W, 0, NET_BOTTOM);
+    const c4 = cam.project(-W, 0, NET_BOTTOM);
+    ctx.beginPath();
+    ctx.moveTo(c1.x, c1.y);
+    ctx.lineTo(c2.x, c2.y);
+    ctx.lineTo(c3.x, c3.y);
+    ctx.lineTo(c4.x, c4.y);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(232,238,248,0.1)';
+    ctx.fill();
+
     ctx.save();
-    ctx.globalAlpha = 0.3;
+    ctx.globalAlpha = 0.32;
     ctx.strokeStyle = '#e8eef8';
     ctx.lineWidth = 1;
-    const cols = 34;
+    const cols = 30;
     for (let i = 0; i <= cols; i++) {
       const x = -W + (2 * W * i) / cols;
       const a = cam.project(x, 0, NET_BOTTOM);
       const b = cam.project(x, 0, NET_HEIGHT);
-      if (a.behind || b.behind) continue;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
     }
-    const rows = 9;
+    const rows = 8;
     for (let j = 0; j <= rows; j++) {
       const z = NET_BOTTOM + ((NET_HEIGHT - NET_BOTTOM) * j) / rows;
       const a = cam.project(-W, 0, z);
       const b = cam.project(W, 0, z);
-      if (a.behind || b.behind) continue;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
@@ -198,30 +355,23 @@ export class Arena {
     }
     ctx.restore();
 
-    // The tape along the top.
-    const tapeNear = cam.project(-W, 0, NET_HEIGHT);
-    const tapeFar = cam.project(W, 0, NET_HEIGHT);
-    if (!tapeNear.behind && !tapeFar.behind) {
-      ctx.strokeStyle = '#f7fbff';
-      ctx.lineWidth = Math.max(3, 10 * tapeNear.scale);
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(tapeNear.x, tapeNear.y);
-      ctx.lineTo(tapeFar.x, tapeFar.y);
-      ctx.stroke();
-    }
+    ctx.strokeStyle = '#f7fbff';
+    ctx.lineWidth = Math.max(3, 10 * c1.scale);
+    ctx.lineCap = 'square';
+    ctx.beginPath();
+    ctx.moveTo(c1.x, c1.y);
+    ctx.lineTo(c2.x, c2.y);
+    ctx.stroke();
 
-    // Antennae.
     for (const x of [-W, W]) {
       const a = cam.project(x, 0, NET_HEIGHT);
       const b = cam.project(x, 0, ANTENNA_HEIGHT);
-      if (a.behind || b.behind) continue;
       const segs = 5;
       for (let i = 0; i < segs; i++) {
         const t0 = i / segs;
         const t1 = (i + 1) / segs;
         ctx.strokeStyle = i % 2 === 0 ? '#ff4a3d' : '#ffffff';
-        ctx.lineWidth = Math.max(1.5, 4 * a.scale);
+        ctx.lineWidth = Math.max(2, 4.5 * a.scale);
         ctx.beginPath();
         ctx.moveTo(a.x + (b.x - a.x) * t0, a.y + (b.y - a.y) * t0);
         ctx.lineTo(a.x + (b.x - a.x) * t1, a.y + (b.y - a.y) * t1);
@@ -238,17 +388,11 @@ function fillQuad(
   color: string,
 ): void {
   ctx.beginPath();
-  let started = false;
-  for (const [x, y] of pts) {
+  pts.forEach(([x, y], i) => {
     const s = cam.projectFloor(x, y);
-    if (s.behind) return;
-    if (!started) {
-      ctx.moveTo(s.x, s.y);
-      started = true;
-    } else {
-      ctx.lineTo(s.x, s.y);
-    }
-  }
+    if (i === 0) ctx.moveTo(s.x, s.y);
+    else ctx.lineTo(s.x, s.y);
+  });
   ctx.closePath();
   ctx.fillStyle = color;
   ctx.fill();
@@ -256,20 +400,14 @@ function fillQuad(
 
 function strokePath(ctx: CanvasRenderingContext2D, cam: Camera, pts: [number, number][]): void {
   ctx.beginPath();
-  let started = false;
   let scale = 1;
-  for (const [x, y] of pts) {
+  pts.forEach(([x, y], i) => {
     const s = cam.projectFloor(x, y);
-    if (s.behind) return;
     scale = Math.max(scale, s.scale);
-    if (!started) {
-      ctx.moveTo(s.x, s.y);
-      started = true;
-    } else {
-      ctx.lineTo(s.x, s.y);
-    }
-  }
+    if (i === 0) ctx.moveTo(s.x, s.y);
+    else ctx.lineTo(s.x, s.y);
+  });
   ctx.strokeStyle = LINE;
-  ctx.lineWidth = Math.max(1.5, 4 * scale);
+  ctx.lineWidth = Math.max(2, 4.5 * scale);
   ctx.stroke();
 }

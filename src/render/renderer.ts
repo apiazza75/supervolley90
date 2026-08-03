@@ -50,6 +50,7 @@ export class Renderer {
           this.hitStop = Math.max(this.hitStop, 0.14);
           this.flash = 0.35;
           this.powerTrail = 0.9;
+          this.arena.cheer(1);
           break;
         }
         case 'powerReady': {
@@ -94,6 +95,7 @@ export class Renderer {
           this.effects.announce(at, label, team.config.colors[0], 46);
           this.effects.burst(at, 'rgba(255,220,140,0.55)');
           this.camera.addShake(9);
+          this.arena.cheer(0.75);
           this.hitStop = Math.max(this.hitStop, 0.07);
           break;
         }
@@ -133,6 +135,7 @@ export class Renderer {
     this.effects.update(dt);
 
     ctx.clearRect(0, 0, cam.viewWidth, cam.viewHeight);
+    this.arena.update(dt);
     this.arena.drawBackground(ctx, cam, state.time);
 
     this.drawLandingMarker(world);
@@ -154,9 +157,9 @@ export class Renderer {
             if (p.id === active) drawActiveRing(ctx, cam, p, '#7ef0ff', state.time);
             drawPlayer(ctx, cam, p, team.config.colors, {
               active: p.id === active,
-              far: side === 'away',
               charge: p.id === active ? p.charge : 0,
               time: state.time,
+              dt,
             });
           },
         });
