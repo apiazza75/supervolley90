@@ -49,9 +49,21 @@ notarisation are not configured; add your identity to `tauri.conf.json` when you
 need a distributable build.
 
 **Or skip the toolchain entirely.** CI builds the app on a macOS runner for
-every push; download `SuperVolley90-macos` from the run's artifacts. Because the
-app is unsigned, macOS will quarantine it on first launch — right-click the
-`.app` and choose Open, or run `xattr -dr com.apple.quarantine "Super Volley 90.app"`.
+every push; download `SuperVolley90-macos` from the run's artifacts. It contains
+a `.dmg` and a `.tar.gz`, deliberately not a bare `.app`: GitHub re-zips
+artifacts and drops Unix permission bits, which strips the executable flag off
+the binary inside a `.app` and makes macOS report it as damaged. A disk image
+and a tarball both carry their own permissions and survive intact.
+
+The build is unsigned, so Gatekeeper still blocks it on first launch:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Super Volley 90.app"
+```
+
+On macOS 15 and later the old right-click → Open bypass no longer works; use the
+command above, or open System Settings → Privacy & Security and click
+**Open Anyway** after the first blocked launch.
 
 ## Controls
 

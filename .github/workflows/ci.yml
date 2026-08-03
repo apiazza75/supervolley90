@@ -64,11 +64,29 @@ jobs:
       - name: Build the app
         run: npm run app:build
 
+      - name: Verify the app binary is executable before packaging
+        run: |
+          set -euo pipefail
+          binary="src-tauri/target/release/bundle/macos/Super Volley 90.app/Contents/MacOS/Super Volley 90"
+          test -x "$binary" || { echo "::error::app binary is not executable: $binary"; exit 1; }
+          echo "ok: $(ls -l "$binary")"
+
+      # `upload-artifact` re-zips whatever it is given and drops Unix permission
+      # bits, which strips the executable flag off the binary inside the .app
+      # and makes macOS report the downloaded app as damaged. A .dmg survives
+      # because it is a disk image, and a tarball survives because it records
+      # permissions itself — so ship those two and never a bare .app.
+      - name: Package the app so permissions survive the artifact zip
+        run: |
+          set -euo pipefail
+          cd src-tauri/target/release/bundle/macos
+          tar -czf "../SuperVolley90-macos-app.tar.gz" "Super Volley 90.app"
+
       - name: Upload the app bundle
         uses: actions/upload-artifact@v4
         with:
           name: SuperVolley90-macos
           path: |
-            src-tauri/target/release/bundle/macos/*.app
             src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/SuperVolley90-macos-app.tar.gz
           if-no-files-found: error
