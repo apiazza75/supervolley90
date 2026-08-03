@@ -64,23 +64,36 @@ jobs:
       - name: Build the app
         run: npm run app:build
 
-      - name: Verify the app binary is executable before packaging
+      # Two separate things make a downloaded build report as "damaged":
+      #
+      # 1. `upload-artifact` re-zips its input and drops Unix permission bits,
+      #    stripping the executable flag off the binary inside a .app.
+      # 2. On Apple Silicon every binary must carry a valid signature. The one
+      #    the linker applies does not survive that same zip round trip.
+      #
+      # So: sign explicitly, then package into containers that preserve their
+      # own contents — a disk image and a tarball — and never ship a bare .app.
+      - name: Sign, verify and package
         run: |
           set -euo pipefail
-          binary="src-tauri/target/release/bundle/macos/Super Volley 90.app/Contents/MacOS/Super Volley 90"
-          test -x "$binary" || { echo "::error::app binary is not executable: $binary"; exit 1; }
-          echo "ok: $(ls -l "$binary")"
+          cd src-tauri/target/release/bundle
+          app="macos/Super Volley 90.app"
 
-      # `upload-artifact` re-zips whatever it is given and drops Unix permission
-      # bits, which strips the executable flag off the binary inside the .app
-      # and makes macOS report the downloaded app as damaged. A .dmg survives
-      # because it is a disk image, and a tarball survives because it records
-      # permissions itself — so ship those two and never a bare .app.
-      - name: Package the app so permissions survive the artifact zip
-        run: |
-          set -euo pipefail
-          cd src-tauri/target/release/bundle/macos
-          tar -czf "../SuperVolley90-macos-app.tar.gz" "Super Volley 90.app"
+          binary="$app/Contents/MacOS/Super Volley 90"
+          test -x "$binary" || { echo "::error::app binary is not executable"; exit 1; }
+
+          # Ad-hoc signature. Not a Developer ID, so Gatekeeper still asks the
+          # user to allow it, but the binary itself is now valid and will run.
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+          tar -czf SuperVolley90-macos-app.tar.gz -C macos "Super Volley 90.app"
+
+          # Rebuild the disk image from the *signed* app: the one Tauri made
+          # during the build still holds the pre-signature copy.
+          mkdir -p dmg && rm -f dmg/*.dmg
+          hdiutil create -volname "Super Volley 90" -srcfolder "$app" \
+            -ov -format UDZO dmg/SuperVolley90.dmg
 
       - name: Upload the app bundle
         uses: actions/upload-artifact@v4
