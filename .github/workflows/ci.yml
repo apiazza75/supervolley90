@@ -66,22 +66,30 @@ jobs:
         id: signing
         env:
           IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
         run: |
-          if [ -n "${IDENTITY:-}" ]; then
+          if [ -n "${IDENTITY:-}" ] && [ -n "${CERTIFICATE:-}" ]; then
             echo "mode=developer-id" >> "$GITHUB_OUTPUT"
             echo "Signing with a Developer ID; the build will also be notarised."
           else
             echo "mode=ad-hoc" >> "$GITHUB_OUTPUT"
-            echo "No APPLE_SIGNING_IDENTITY secret; falling back to an ad-hoc signature."
+            echo "No Apple credentials configured; falling back to an ad-hoc signature."
           fi
 
       # `app:build` derives the full macOS icon set from the source PNG first,
       # so the .icns the bundler needs is never missing.
       #
-      # When the Apple secrets are present Tauri does the whole job itself:
-      # imports the certificate into a temporary keychain, signs with hardened
-      # runtime, submits to Apple's notary service and staples the ticket.
-      - name: Build the app
+      # There are two build steps rather than one because a missing secret still
+      # produces a *defined but empty* environment variable, and Tauri treats a
+      # defined APPLE_CERTIFICATE as "a certificate exists" and tries to import
+      # it — which fails the whole bundle. The unsigned path must therefore not
+      # mention these variables at all.
+      #
+      # In signed mode Tauri does everything itself: imports the certificate
+      # into a temporary keychain, signs with hardened runtime, submits to
+      # Apple's notary service and staples the ticket.
+      - name: Build the app (signed and notarised)
+        if: steps.signing.outputs.mode == 'developer-id'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -89,6 +97,10 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run app:build
+
+      - name: Build the app (unsigned)
+        if: steps.signing.outputs.mode == 'ad-hoc'
         run: npm run app:build
 
       # Two separate things make a downloaded build report as "damaged":
