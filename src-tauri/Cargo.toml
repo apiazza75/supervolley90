@@ -1,0 +1,25 @@
+[package]
+name = "supervolley90"
+version = "0.1.0"
+description = "Arcade 2D volleyball for macOS"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "supervolley90_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+
+[profile.release]
+# The whole app is the web view plus a thin shell, so optimise for a small,
+# fast-launching binary rather than for compile time.
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
