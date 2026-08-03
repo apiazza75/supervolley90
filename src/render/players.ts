@@ -60,12 +60,18 @@ const blend = (a: Pose, b: Pose, t: number): Pose => ({
 const clonePose = (p: Pose): Pose => blend(p, p, 0);
 
 /**
- * Per-player pose state, smoothed towards the target every frame.
+ * Per-player animation state, smoothed towards its target every frame.
  *
- * Snapping straight to a pose reads as stop-motion. Easing into it is what
- * makes a run cycle flow into a jump and a jump into a swing.
+ * Snapping straight to a pose reads as stop-motion; easing is what makes a run
+ * flow into a jump and a jump into a swing. The run-cycle phase accumulates
+ * from the player's actual ground speed, because a fixed-rate cycle stops
+ * matching the floor the moment the speed changes — the classic moonwalk.
  */
-const poseState = new Map<number, Pose>();
+interface AnimState {
+  pose: Pose;
+  runPhase: number;
+}
+const animState = new Map<number, AnimState>();
 
 const SKINS = ['#f6cca9', '#e8b184', '#c98d5c', '#9a6238', '#6f4527'];
 const HAIRS = ['#2a1f1a', '#141013', '#5b3a1e', '#8a5a2b', '#3a2a20', '#1c1c22'];
@@ -147,12 +153,22 @@ export function drawPlayer(
   if (unit < 6) return;
 
   // ---- pose selection and smoothing
+  let st = animState.get(p.id);
+  if (!st) {
+    st = { pose: clonePose(POSES[p.anim] ?? POSES.idle), runPhase: p.id * 1.7 };
+    animState.set(p.id, st);
+  }
+  const groundSpeed = Math.hypot(p.vel.x, p.vel.y);
+  st.runPhase += opts.dt * (5 + groundSpeed * 2.6);
+
   let target = POSES[p.anim] ?? POSES.idle;
   if (p.anim === 'run') {
-    const phase = Math.sin(opts.time * 13 + p.id * 1.7);
+    const phase = Math.sin(st.runPhase);
     const lift = Math.max(0, -phase);
     target = {
       ...target,
+      // A touch of vertical bob per stride sells the footfalls.
+      crouch: target.crouch + Math.abs(Math.cos(st.runPhase)) * 0.05,
       legFar: [0.72 * phase, 0.15 + lift * 1.1],
       legNear: [-0.72 * phase, 0.15 + Math.max(0, phase) * 1.1],
       armFar: [0.95 * -phase, 0.85],
@@ -172,15 +188,10 @@ export function drawPlayer(
     };
   }
 
-  let current = poseState.get(p.id);
-  if (!current) {
-    current = clonePose(target);
-    poseState.set(p.id, current);
-  }
   // Fast enough to feel responsive, slow enough to remove the stepping.
   const k = 1 - Math.exp(-26 * Math.max(0.0001, opts.dt));
-  current = blend(current, target, k);
-  poseState.set(p.id, current);
+  st.pose = blend(st.pose, target, k);
+  const current = st.pose;
 
   // ---- geometry
   const facing = p.facing >= 0 ? 1 : -1;

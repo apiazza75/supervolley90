@@ -37,6 +37,9 @@ export interface PlayerStats {
   reaction: number;
 }
 
+/** Poses that depict a single action and must relax back to idle afterwards. */
+const TRANSIENT_ANIMS: readonly PlayerAnim[] = ['spike', 'bump', 'set', 'block', 'land', 'serve'];
+
 export const defaultStats = (): PlayerStats => ({
   speed: 0.6,
   jump: 0.6,
@@ -175,6 +178,22 @@ export class Player {
       }
     }
 
+    // A finished action must not linger: a player who bumped and then stood
+    // still used to hold the bump pose indefinitely, which froze the court
+    // into a waxwork between touches. The serve pose is held only while the
+    // button is, so a charging server is unaffected.
+    if (
+      !this.airborne &&
+      !this.diving &&
+      this.downTime <= 0 &&
+      this.swing <= 0 &&
+      !this.heldAction &&
+      this.animTime > 0.45 &&
+      TRANSIENT_ANIMS.includes(this.anim)
+    ) {
+      this.setAnim('idle');
+    }
+
     const grounded = !this.airborne;
     const controllable = grounded && this.downTime <= 0 && !this.diving;
 
@@ -186,8 +205,19 @@ export class Player {
         const target = this.runSpeed;
         this.vel.x = approach(this.vel.x, nx * target, PLAYER_ACCEL * dt);
         this.vel.y = approach(this.vel.y, ny * target, PLAYER_ACCEL * dt);
-        if (Math.abs(nx) > 0.2) this.facing = Math.sign(nx);
-        if (this.anim === 'idle' || this.anim === 'run') this.setAnim('run');
+        // Facing mirrors the figure along the screen's horizontal axis, which
+        // is the court's length — so it follows movement along the court, not
+        // across it. Using the cross-court axis here was one of the things
+        // that made movement look wrong after the camera changed.
+        if (Math.abs(ny) > 0.2) this.facing = Math.sign(ny);
+        if (
+          this.anim !== 'run' &&
+          this.swing <= 0 &&
+          !this.heldAction &&
+          (this.anim === 'idle' || TRANSIENT_ANIMS.includes(this.anim))
+        ) {
+          this.setAnim('run');
+        }
       } else {
         this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * dt);
         this.vel.y = approach(this.vel.y, 0, PLAYER_FRICTION * dt);

@@ -187,11 +187,13 @@ export class Hud {
     const ready = world.humanTeam?.powerReady ?? false;
     const lines =
       world.phase === 'serve'
-        ? [`HOLD ${a} to charge, release to serve`, 'STICK aims the serve']
+        ? [`HOLD ${a} to charge, release to serve`, '→ deep · ← short · ↑↓ pick the sideline']
         : [
             `${a} play the ball (hold = power)`,
             `${b} jump  ·  ${b} again in mid-air = LETHAL MANEUVER`,
-            ready ? 'GAUGE FULL — stick picks the move' : 'STICK moves and aims',
+            ready
+              ? `GAUGE FULL — jump, then ${b} again in the air!`
+              : '←→ run along the court · ↑↓ step across it',
           ];
 
     lines.forEach((line, i) => ctx.fillText(line, 22, height - 22 - (lines.length - 1 - i) * 16));

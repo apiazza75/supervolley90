@@ -15,6 +15,8 @@ export interface RenderState {
   alpha: number;
   /** Wall-clock seconds since the game started. */
   time: number;
+  /** Label of the jump button on the current input device, for coaching text. */
+  jumpLabel?: string;
 }
 
 export class Renderer {
@@ -30,6 +32,8 @@ export class Renderer {
   private flash = 0;
   /** Seconds remaining of the fiery ball trail after a power move. */
   private powerTrail = 0;
+  /** Coaching banner countdown, started when the human's gauge fills. */
+  private promptTimer = 0;
 
   constructor(private readonly ctx: CanvasRenderingContext2D) {}
 
@@ -43,11 +47,11 @@ export class Renderer {
       switch (ev.type) {
         case 'powerMove': {
           // The screen should tell you, unmistakably, that a gauge was spent.
-          this.effects.announce({ x: 0, y: 0, z: 3.6 }, ev.name, '#ff8a3d', 44);
+          this.effects.announce({ x: 0, y: 0, z: 3.6 }, ev.name, '#ff8a3d', 54);
           this.effects.burst(ev.at, 'rgba(255,180,80,0.8)');
           this.effects.impact(ev.at, 30, this.rand, 'rgba(255,150,60,');
           this.camera.addShake(26);
-          this.hitStop = Math.max(this.hitStop, 0.14);
+          this.hitStop = Math.max(this.hitStop, 0.2);
           this.flash = 0.35;
           this.powerTrail = 0.9;
           this.arena.cheer(1);
@@ -61,6 +65,9 @@ export class Renderer {
             team.config.colors[0],
             26,
           );
+          // The maneuver spans two inputs separated in time, which no gauge
+          // can explain by itself — so when the human's fills, say the words.
+          if (world.humanTeam?.side === ev.side) this.promptTimer = 5;
           break;
         }
         case 'contact': {
@@ -129,6 +136,7 @@ export class Renderer {
     if (this.hitStop > 0) this.hitStop = Math.max(0, this.hitStop - dt);
     if (this.flash > 0) this.flash = Math.max(0, this.flash - dt * 2.4);
     if (this.powerTrail > 0) this.powerTrail = Math.max(0, this.powerTrail - dt);
+    if (this.promptTimer > 0) this.promptTimer = Math.max(0, this.promptTimer - dt);
 
     cam.follow(world.ball.pos, dt);
     this.effects.pushTrail(world.ball.pos, Math.hypot(world.ball.vel.x, world.ball.vel.y, world.ball.vel.z));
@@ -177,6 +185,7 @@ export class Renderer {
 
     this.effects.draw(ctx, cam);
     this.drawVignette();
+    this.drawPowerCoach(world, state.time, state.jumpLabel ?? 'SHIFT');
     if (this.flash > 0) {
       ctx.fillStyle = `rgba(255,236,196,${this.flash})`;
       ctx.fillRect(0, 0, cam.viewWidth, cam.viewHeight);
@@ -305,6 +314,68 @@ export class Renderer {
       }
     }
     ctx.restore();
+  }
+
+  /**
+   * On-screen coaching for the Lethal Maneuver.
+   *
+   * The mechanic is jump, then the jump button again in mid-air — two inputs
+   * separated in time. That is undiscoverable from a gauge alone, so the game
+   * says exactly what to press and marks the moment the window is open.
+   */
+  private drawPowerCoach(world: World, time: number, jumpLabel: string): void {
+    const ctx = this.ctx;
+    const cam = this.camera;
+    const team = world.humanTeam;
+
+    if (team?.powerReady && world.phase === 'rally') {
+      const p = team.active;
+      if (p.specialArmed) {
+        // Armed: the player burns until the strike lands.
+        const body = cam.project(p.pos.x, p.pos.y, p.height + 0.9);
+        const r = (46 + Math.sin(time * 12) * 7) * body.scale;
+        const halo = ctx.createRadialGradient(body.x, body.y, r * 0.2, body.x, body.y, r);
+        halo.addColorStop(0, 'rgba(255,170,70,0.5)');
+        halo.addColorStop(1, 'rgba(255,90,30,0)');
+        ctx.fillStyle = halo;
+        ctx.beginPath();
+        ctx.arc(body.x, body.y, r, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (p.airborne) {
+        // The window is open right now: name the button, loudly.
+        const s = cam.project(p.pos.x, p.pos.y, p.height + 2.35);
+        const bounce = Math.sin(time * 14) * 4;
+        ctx.save();
+        ctx.font = '900 26px "Arial Black", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 7;
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = 'rgba(6,8,18,0.9)';
+        ctx.strokeText(`${jumpLabel}!`, s.x, s.y + bounce);
+        ctx.fillStyle = '#ffe27a';
+        ctx.fillText(`${jumpLabel}!`, s.x, s.y + bounce);
+        ctx.restore();
+      }
+    }
+
+    if (this.promptTimer > 0) {
+      const text = `GAUGE FULL!  JUMP, THEN PRESS ${jumpLabel} IN MID-AIR`;
+      const x = cam.viewWidth / 2;
+      const y = cam.viewHeight - 148;
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, this.promptTimer);
+      ctx.font = '800 19px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      const w = ctx.measureText(text).width + 44;
+      ctx.fillStyle = 'rgba(8,11,24,0.86)';
+      ctx.fillRect(x - w / 2, y - 27, w, 40);
+      ctx.strokeStyle = `rgba(255,226,122,${0.45 + 0.55 * Math.abs(Math.sin(time * 6))})`;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x - w / 2, y - 27, w, 40);
+      ctx.fillStyle = '#ffe27a';
+      ctx.fillText(text, x, y);
+      ctx.restore();
+    }
   }
 
   private drawVignette(): void {

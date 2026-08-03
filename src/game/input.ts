@@ -127,13 +127,12 @@ export class InputManager {
     return this.pauseEdge;
   }
 
-  /** Raw analogue stick / d-pad direction, in world axes for the home team. */
+  /** Raw input direction in screen axes: x is right-positive, y up-positive. */
   direction(): { x: number; y: number } {
     let x = 0;
     let y = 0;
     if (this.anyHeld(this.bindings.left)) x -= 1;
     if (this.anyHeld(this.bindings.right)) x += 1;
-    // Screen "up" is towards the net, which is +y for the home team.
     if (this.anyHeld(this.bindings.up)) y += 1;
     if (this.anyHeld(this.bindings.down)) y -= 1;
 
@@ -161,24 +160,37 @@ export class InputManager {
   /**
    * Build the command for this frame.
    *
-   * The same stick drives movement and aim: where you are pushing when you
-   * strike is where the ball goes. That is what makes the two-button scheme
-   * expressive rather than limiting.
+   * The screen is a side elevation: left/right runs along the court, up/down
+   * steps across it. World axes are the other way round — x is court width,
+   * y is court length — so screen x feeds moveY and screen y feeds moveX.
+   *
+   * This mapping is what silently rotated 90 degrees when the camera changed
+   * from behind-the-court to side-on: the simulation stayed correct, the
+   * renderer stayed correct, and the controls stopped matching the picture.
+   * `tools/input-e2e.ts` now drives the real game and asserts each arrow key
+   * moves the player the way the screen implies, so it cannot happen again.
+   *
+   * The same stick aims: for the left-side team, right is deep into the
+   * opponent's court, left is short over the net, and up/down pick the far or
+   * near sideline. Where you are pushing when you strike is where the ball
+   * goes, in screen terms.
    */
   command(): Command {
     const dir = this.direction();
     const action = this.actionActive;
 
     return {
-      moveX: dir.x,
-      moveY: dir.y,
+      moveX: dir.y,
+      moveY: dir.x,
       actionPressed: this.actionEdge || action,
       actionHeld: action,
       jumpPressed: this.jumpEdge,
       aim: {
-        x: clamp(dir.x, -1, 1),
-        // Neutral stick aims at a sensible depth rather than at the net.
-        depth: Math.abs(dir.y) < 0.15 ? 0.4 : clamp(dir.y, -1, 1),
+        // Lateral aim across the court: up is the far sideline.
+        x: clamp(dir.y, -1, 1),
+        // Depth along the attack. Neutral stick aims at a sensible depth
+        // rather than at the net.
+        depth: Math.abs(dir.x) < 0.15 ? 0.4 : clamp(dir.x, -1, 1),
       },
     };
   }

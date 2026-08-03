@@ -105,6 +105,9 @@ Two buttons carry everything, exactly as the cabinets did:
 
 - **Hold to charge.** A tap is a controlled pass or a tip; a full hold is a
   power swing or a jump serve. The meter above your player shows it.
+- **Left/right run along the court; up/down step across it.** The same axes
+  aim your shots: right is deep, left is short over the net, up and down pick
+  the far or near sideline.
 - **The stick aims.** Where you are pushing when you make contact is where the
   ball goes — wide or line, short or deep.
 - **Jump early.** Contact quality peaks at the top of your reach, so the spike
@@ -193,7 +196,13 @@ npm run typecheck
 npm run sim -- --matches 6          # headless AI-vs-AI matches with statistics
 npm run trace -- --seconds 20       # step-by-step rally trace
 npm run shots -- shots/             # drive the real game in Chromium, capture frames
+npm run e2e:input                   # press the actual arrow keys, assert the player moves
 ```
+
+`e2e:input` exists because the input mapping once rotated 90 degrees when the
+camera changed and nothing noticed: simulation correct, renderer correct, every
+unit test green, game unplayable. Only pressing real keys catches that class of
+bug.
 
 `npm run sim` is the balance harness. A healthy build looks roughly like this:
 

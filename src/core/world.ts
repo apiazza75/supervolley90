@@ -243,6 +243,19 @@ export class World {
       p.step(dt, cmd.moveX, cmd.moveY);
     }
 
+    // Grounded players who are not running square up to the ball, the way real
+    // players track it between actions. Facing is purely presentational, so
+    // this changes nothing physical — but it is most of what makes the court
+    // read as people playing rather than mannequins pointed at random.
+    if (this.phase === 'serve' || this.phase === 'rally') {
+      for (const p of this.allPlayers()) {
+        if (p.airborne || p.diving || p.downTime > 0) continue;
+        if (Math.hypot(p.vel.x, p.vel.y) > 1.4) continue;
+        const dy = this.ball.pos.y - p.pos.y;
+        if (Math.abs(dy) > 0.25) p.facing = Math.sign(dy);
+      }
+    }
+
     switch (this.phase) {
       case 'serve':
         this.stepServe(commands, dt);

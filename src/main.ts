@@ -136,7 +136,15 @@ class Game {
 
     this.hitStop = Math.max(
       this.hitStop,
-      this.renderer.draw(this.world, { alpha: 0, time: this.elapsed }, dt),
+      this.renderer.draw(
+        this.world,
+        {
+          alpha: 0,
+          time: this.elapsed,
+          jumpLabel: this.input.hasGamepad ? 'B' : 'SHIFT',
+        },
+        dt,
+      ),
     );
     this.hud.draw(this.world, w, h, { gamepad: this.input.hasGamepad, time: this.elapsed });
 
@@ -153,7 +161,7 @@ class Game {
     ctx.fillText('PAUSED', w / 2, h / 2 - 6);
     ctx.font = '600 15px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(220,230,255,0.7)';
-    ctx.fillText('ESC to resume  ·  hold ESC then SPACE to quit to menu', w / 2, h / 2 + 30);
+    ctx.fillText('ESC to resume', w / 2, h / 2 + 30);
   }
 
   private startMatch(): void {
@@ -194,4 +202,11 @@ const canvas = document.getElementById('game');
 if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error('Missing <canvas id="game"> in the page.');
 }
-new Game(canvas).start();
+const game = new Game(canvas);
+game.start();
+
+// Exposed for the browser-driven control harness (tools/input-e2e.ts), which
+// asserts that the arrow keys move the active player the way the screen
+// implies. TypeScript's `private` is compile-time only, so the harness can
+// reach the world through this handle at runtime.
+(window as unknown as Record<string, unknown>).__sv90 = game;

@@ -16,7 +16,8 @@
     "app:build": "tauri icon src-tauri/icons/icon.png && tauri build",
     "icon": "tsx tools/make-icon.ts src-tauri/icons/icon.png",
     "shots": "tsx tools/screenshot.ts",
-    "trace": "tsx tools/trace.ts"
+    "trace": "tsx tools/trace.ts",
+    "e2e:input": "tsx tools/input-e2e.ts"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
