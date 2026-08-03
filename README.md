@@ -37,17 +37,21 @@ shell around a WKWebView, so it is Metal-backed, Apple-Silicon-native and a few
 megabytes rather than a bundled browser.
 
 ```sh
-# One-time: derive the full macOS icon set from the generated source icon
-npm run icon
-npx tauri icon src-tauri/icons/icon.png
-
 npm run app:dev      # run the native app with hot reload
 npm run app:build    # produces src-tauri/target/release/bundle/{macos,dmg}
 ```
 
+Both derive the macOS icon set from `src-tauri/icons/icon.png` first, so the
+`.icns` the bundler needs is never missing — only the source PNG is in git.
+
 Requires Rust (`rustup`) and the Xcode command line tools. Signing and
 notarisation are not configured; add your identity to `tauri.conf.json` when you
 need a distributable build.
+
+**Or skip the toolchain entirely.** CI builds the app on a macOS runner for
+every push; download `SuperVolley90-macos` from the run's artifacts. Because the
+app is unsigned, macOS will quarantine it on first launch — right-click the
+`.app` and choose Open, or run `xattr -dr com.apple.quarantine "Super Volley 90.app"`.
 
 ## Controls
 
@@ -127,9 +131,9 @@ balls outside the antennae, and the plane-crossing fault under the net.
 
 ## Known gaps
 
-- The native macOS build is unverified: this was developed on Linux, where
-  Tauri's GTK/WebKit backend cannot compile. Dependency resolution and the web
-  build are verified; the `.app` bundling step needs a Mac to confirm.
+- The native macOS build was not verifiable during development (built on Linux,
+  where Tauri's GTK/WebKit backend cannot compile). The `macos-app` CI job now
+  covers it — treat a green run there as the confirmation, not local testing.
 - No local two-player mode yet — the second side is always AI.
 - No "Hyper League" special-attack mode.
 - Audio is a synthesised placeholder: functional, not composed.

@@ -12,8 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sim": "tsx tools/headless.ts",
-    "app:dev": "tauri dev",
-    "app:build": "tauri build",
+    "app:dev": "tauri icon src-tauri/icons/icon.png && tauri dev",
+    "app:build": "tauri icon src-tauri/icons/icon.png && tauri build",
     "icon": "tsx tools/make-icon.ts src-tauri/icons/icon.png",
     "shots": "tsx tools/screenshot.ts",
     "trace": "tsx tools/trace.ts"

@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# A newer push makes an in-flight run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Types, tests and web build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit and simulation tests
+        run: npm test
+
+      - name: Web build
+        run: npx vite build
+
+      # The balance harness doubles as an integration test: if a tuning change
+      # collapses rallies or stops matches from finishing, it fails here rather
+      # than being noticed weeks later while playing.
+      - name: Headless match simulation
+        run: npm run sim -- --matches 2 --seed 1337
+
+  macos-app:
+    name: macOS app bundle
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # `app:build` derives the full macOS icon set from the source PNG first,
+      # so the .icns the bundler needs is never missing.
+      - name: Build the app
+        run: npm run app:build
+
+      - name: Upload the app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: SuperVolley90-macos
+          path: |
+            src-tauri/target/release/bundle/macos/*.app
+            src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error

@@ -4,3 +4,7 @@ src-tauri/target/
 .DS_Store
 *.log
 shots/
+
+# Icon variants are derived from src-tauri/icons/icon.png by `tauri icon`.
+src-tauri/icons/*
+!src-tauri/icons/icon.png
