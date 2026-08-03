@@ -79,8 +79,15 @@ jobs:
           cd src-tauri/target/release/bundle
           app="macos/Super Volley 90.app"
 
-          binary="$app/Contents/MacOS/Super Volley 90"
-          test -x "$binary" || { echo "::error::app binary is not executable"; exit 1; }
+          # The executable inside the bundle is named after the Cargo crate,
+          # not the product, so discover it rather than assuming either name.
+          binary="$(find "$app/Contents/MacOS" -maxdepth 1 -type f -perm -u+x | head -1)"
+          if [ -z "$binary" ]; then
+            echo "::error::no executable found in $app/Contents/MacOS"
+            ls -l "$app/Contents/MacOS" || true
+            exit 1
+          fi
+          echo "executable: $(ls -l "$binary")"
 
           # Ad-hoc signature. Not a Developer ID, so Gatekeeper still asks the
           # user to allow it, but the binary itself is now valid and will run.
