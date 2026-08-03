@@ -23,6 +23,9 @@ interface Cell {
 const CELLS: Cell[] = [
   { label: 'idle', anim: 'idle' },
   { label: 'run', anim: 'run' },
+  { label: 'run 2', anim: 'run' },
+  { label: 'run 3', anim: 'run' },
+  { label: 'run 4', anim: 'run' },
   {
     label: 'jump rise',
     anim: 'jump',

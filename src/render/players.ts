@@ -326,16 +326,35 @@ export function drawPlayer(
 
   let target = POSES[animKey] ?? POSES.idle;
   if (p.anim === 'run') {
+    // A stride is contralateral: the leg that swings forward pairs with the
+    // arm on the OTHER side. `phase` drives the far leg; the far arm takes
+    // the opposite sign, the near pair mirrors both.
     const phase = Math.sin(st.runPhase);
-    const lift = Math.max(0, -phase);
+    // Each foot is planted at the back of its stride and lifts through the
+    // front of it, so the run is driven by the floor like the other grounded
+    // poses instead of floating on joint angles.
+    const stride = 0.26;
+    // A foot is planted while it travels BACKWARD under the body and lifts
+    // while it swings forward. Lifting it at the front of the stride instead
+    // — where it should be reaching for the floor — is what turns a run into
+    // a skate. The foot moves forward when cos(phase) is positive.
+    const swingPhase = Math.cos(st.runPhase);
+    const farLift = Math.max(0, swingPhase) * 0.15;
+    const nearLift = Math.max(0, -swingPhase) * 0.15;
     target = {
       ...target,
       // A touch of vertical bob per stride sells the footfalls.
-      crouch: target.crouch + Math.abs(Math.cos(st.runPhase)) * 0.05,
-      legFar: [0.72 * phase, 0.15 + lift * 1.1],
-      legNear: [-0.72 * phase, 0.15 + Math.max(0, phase) * 1.1],
-      armFar: [0.95 * -phase, 0.85],
-      armNear: [-0.95 * -phase, 0.85],
+      crouch: target.crouch + Math.abs(Math.cos(st.runPhase)) * 0.06,
+      // Elbows fold FORWARD, so their bend is negative. This override kept the
+      // positive value the whole pose table was corrected away from, which is
+      // why a running player's forearms pointed the wrong way and the arms
+      // read as fighting the legs.
+      armFar: [-0.9 * phase, -0.95],
+      armNear: [0.9 * phase, -0.95],
+      feet: [
+        [stride * phase, farLift],
+        [-stride * phase, nearLift],
+      ],
     };
   } else if (p.anim === 'idle') {
     const breathe = Math.sin(opts.time * 2.1 + p.id) * 0.025;
