@@ -175,7 +175,7 @@ class Game {
     // A running replay replaces the live view entirely.
     const frame = this.replay.step(dt);
     if (frame) {
-      this.renderer.drawReplay(this.world, frame, this.replay.title, dt, this.elapsed);
+      this.renderer.drawReplay(this.world, frame, this.replay.title, this.replay.age, dt, this.elapsed);
       return;
     }
 

@@ -22,6 +22,14 @@ interface Crack {
   maxLife: number;
 }
 
+const CONFETTI = [
+  'rgba(255,90,77,',
+  'rgba(255,209,102,',
+  'rgba(126,240,255,',
+  'rgba(160,255,180,',
+  'rgba(240,160,255,',
+];
+
 interface FloatingText {
   pos: Vec3;
   text: string;
@@ -67,7 +75,7 @@ export class Effects {
 
   /** Floor dust, thrown up by a landing, a dive or a ball hitting the boards. */
   dust(at: Vec3, amount: number, rng: () => number, color = 'rgba(255,240,214,'): void {
-    const n = Math.min(34, Math.round(amount));
+    const n = Math.min(48, Math.round(amount * 1.5));
     for (let i = 0; i < n; i++) {
       const a = rng() * Math.PI * 2;
       const speed = 0.7 + rng() * 2.6;
@@ -84,9 +92,39 @@ export class Effects {
     }
   }
 
-  /** Sharp radial sparks for a hard contact. */
+  /** An expanding shockwave ring — the loudest cheap way to sell a big hit. */
+  shockwave(at: Vec3, color = 'rgba(255,220,150,'): void {
+    this.particles.push({
+      pos: v3(at.x, at.y, at.z),
+      vel: v3(),
+      life: 0.45,
+      maxLife: 0.45,
+      size: 1,
+      color,
+      gravity: 0,
+      kind: 'ring',
+    });
+  }
+
+  /** Confetti and streamers from the stands, for a set or a match. */
+  confetti(rng: () => number, amount = 60): void {
+    for (let i = 0; i < amount; i++) {
+      const x = (rng() - 0.5) * 18;
+      this.particles.push({
+        pos: v3(x, (rng() - 0.5) * 20, 6 + rng() * 3),
+        vel: v3((rng() - 0.5) * 1.2, (rng() - 0.5) * 1.2, -0.6 - rng() * 1.2),
+        life: 2.4 + rng() * 1.4,
+        maxLife: 3.8,
+        size: 2 + rng() * 3,
+        color: CONFETTI[Math.floor(rng() * CONFETTI.length) % CONFETTI.length],
+        gravity: -1.2,
+        kind: 'dust',
+      });
+    }
+  }
+
   impact(at: Vec3, power: number, rng: () => number, color = 'rgba(255,214,120,'): void {
-    const n = Math.min(26, Math.round(6 + power));
+    const n = Math.min(48, Math.round(12 + power * 1.8));
     for (let i = 0; i < n; i++) {
       const a = rng() * Math.PI * 2;
       const b = (rng() - 0.5) * 2;

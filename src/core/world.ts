@@ -133,7 +133,14 @@ export class World {
   lastTouchWasBlock = false;
   /** Serve phase: ball in hand, or tossed and waiting for the strike. */
   private serveStage: 'hold' | 'toss' = 'hold';
+  /** How long the action button has been held with the ball still in hand. */
+  private serveHold = 0;
   private tossedAt = 0;
+
+  /** How far into an underarm serve hold we are, 0..1. */
+  get serveHoldFraction(): number {
+    return clamp(this.serveHold / UNDERARM_HOLD, 0, 1);
+  }
 
   /** True while a served toss is in the air, for the HUD's timing cue. */
   get serveTossInFlight(): boolean {
@@ -222,6 +229,7 @@ export class World {
     this.rallyTime = 0;
     this.aimTarget = null;
     this.serveStage = 'hold';
+    this.serveHold = 0;
     this.tossedAt = 0;
     for (const p of this.allPlayers()) p.cheerTime = 0;
     this.phase = 'serve';
@@ -371,6 +379,7 @@ export class World {
         this.stepServe(commands, dt);
         break;
       case 'rally':
+        this.checkServeObstruction();
         this.stepRally(commands, dt);
         break;
       case 'dead':
@@ -431,16 +440,20 @@ export class World {
       // that, not `heldAction`, is what tells us a press has ended. Reading
       // `heldAction` here saw the value already overwritten for this step, and
       // the release was never noticed at all: the ball never left the hand.
-      if (cmd.actionHeld) return;
-      if (server.releasedCharge > 0) {
-        const held = server.releasedCharge;
+      if (cmd.actionHeld) {
+        this.serveHold += dt;
+        return;
+      }
+      if (this.serveHold > 0) {
+        const held = this.serveHold;
+        this.serveHold = 0;
         server.releasedCharge = 0;
         server.charge = 0;
         server.actionBuffer = 0;
         if (held > UNDERARM_HOLD) {
           // Underarm serve: slow, safe, and aimed, with the power dosed by
           // how long the button was down.
-          this.strikeServe(server, cmd, clamp(held * 0.4, 0, 0.42));
+          this.strikeServe(server, cmd, clamp((held - UNDERARM_HOLD) * 0.5, 0, 0.42));
           return;
         }
         this.ball.frozen = false;
@@ -483,6 +496,7 @@ export class World {
       this.serveStage = 'hold';
       this.ball.vel = v3();
       server.charge = 0;
+      this.serveHold = 0;
     }
   }
 
@@ -504,6 +518,27 @@ export class World {
     this.aimTarget = res.target;
     this.phase = 'rally';
     this.phaseTimer = 0;
+  }
+
+  /**
+   * A serve that hits one of your own players is a fault.
+   *
+   * The serving team may not touch the ball, so without this the served ball
+   * simply passed through a team-mate standing in front of the server and
+   * carried on over the net — a serve that visibly went through a body and was
+   * scored as good.
+   */
+  private checkServeObstruction(): void {
+    if (!this.serveInFlight || this.ball.grounded) return;
+    for (const p of this.team(this.servingSide).players) {
+      if (p.id === this.lastToucherId) continue;
+      if (distXY(p.pos, this.ball.pos) > 0.45) continue;
+      const low = p.height;
+      const high = p.height + PLAYER_REACH * 0.9;
+      if (this.ball.pos.z < low || this.ball.pos.z > high) continue;
+      this.awardPoint(otherSide(this.servingSide), 'serveFault');
+      return;
+    }
   }
 
   private stepRally(commands: Map<number, Command>, _dt: number): void {
@@ -826,13 +861,16 @@ export class World {
     team.points += 1;
     this.events.push({ type: 'point', side, reason, rallyLength: this.rallyTime });
 
-    // Celebrate: a point worth having, a set, a match. Longer and wider as the
-    // moment gets bigger — a rally point is a fist from whoever made it, a set
-    // is the whole bench.
-    const big = reason === 'kill' && this.rallyTime > 6;
-    for (const p of team.players) {
-      if (big || p.id === this.lastToucherId) p.celebrate(big ? 1.6 : 1.1);
-    }
+    // Celebrate. Every point is worth something, so somebody always reacts:
+    // the three players nearest the ball on an ordinary point, the whole team
+    // on a kill or a long rally. Keying this off the last toucher alone meant
+    // most points — the ones won by an opponent's error — passed in silence.
+    const big = reason === 'kill' || this.rallyTime > 6;
+    const nearest = team.players
+      .slice()
+      .sort((a, b) => distXY(a.pos, this.ball.pos) - distXY(b.pos, this.ball.pos));
+    const celebrating = big ? nearest : nearest.slice(0, 3);
+    for (const p of celebrating) p.celebrate(big ? 1.8 : 1.3);
 
     if (reason === 'kill') this.awardPower(side, POWER_GAIN.kill);
     // A small consolation to the side that just conceded: a losing run should

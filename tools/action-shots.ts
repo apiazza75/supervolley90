@@ -77,7 +77,15 @@ async function main(): Promise<void> {
   await page.screenshot({ path: `${OUT}/serve-struck.png` });
 
   // ---- 2. Watch AI play and snap labelled action frames.
-  const wanted = new Set(['spike-cock', 'spike-hit', 'block', 'bump', 'timing-cue', 'replay']);
+  const wanted = new Set([
+    'spike-cock',
+    'spike-hit',
+    'block',
+    'bump',
+    'timing-cue',
+    'replay',
+    'cheer',
+  ]);
   const deadline = Date.now() + 75000;
   while (wanted.size > 0 && Date.now() < deadline) {
     const s = await snap();
@@ -94,6 +102,17 @@ async function main(): Promise<void> {
         await page.screenshot({ path: `${OUT}/block.png` });
         wanted.delete('block');
         console.log('captured block');
+      }
+    }
+    if (wanted.has('cheer')) {
+      const cheering = await page.evaluate(() => {
+        const w = (window as unknown as { __sv90: { world: any } }).__sv90.world;
+        return w.allPlayers().filter((p: any) => p.anim === 'cheer').length;
+      });
+      if (cheering >= 2) {
+        await page.screenshot({ path: `${OUT}/cheer.png` });
+        wanted.delete('cheer');
+        console.log(`captured cheer (${cheering} players celebrating)`);
       }
     }
     if (wanted.has('replay')) {

@@ -70,11 +70,17 @@ export const TOSS_SPEED = 6.4;
 export const TOSS_FORWARD = 0.35;
 
 /**
- * Hold the action button longer than this on the serve and it becomes an
- * underarm serve whose power is the charge; a shorter press tosses the ball
- * for the overhand or jump serve.
+ * SECONDS of holding, after which the serve becomes an underarm serve whose
+ * power is how long it was held; anything shorter tosses the ball for the
+ * overhand or jump serve.
+ *
+ * This has to be well clear of an ordinary tap. It was previously expressed in
+ * charge units that corresponded to 0.15 s of holding — shorter than most
+ * people press a key — so a normal tap served underarm, the toss never
+ * happened, and the jump serve was unreachable. Automated tests never caught
+ * it because a synthetic key press lasts about ten milliseconds.
  */
-export const UNDERARM_HOLD = 0.26;
+export const UNDERARM_HOLD = 0.5;
 
 /**
  * Seconds after the toss at which the server's approach jump fires.

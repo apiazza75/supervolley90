@@ -140,7 +140,9 @@ export class TeamBrain {
         s.job = 'idle';
         s.wantsAction = false;
         s.holdAction = false;
-        s.goal = copy(p.home);
+        // Someone celebrating stays where they are: jogging back to a
+        // formation spot cancels the celebration the moment it starts.
+        s.goal = p.cheerTime > 0 ? copy(p.pos) : copy(p.home);
       }
       return;
     }

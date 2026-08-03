@@ -19,7 +19,8 @@
     "trace": "tsx tools/trace.ts",
     "e2e:input": "tsx tools/input-e2e.ts",
     "shots:action": "tsx tools/action-shots.ts",
-    "poses": "tsx tools/pose-sheet.ts"
+    "poses": "tsx tools/pose-sheet.ts",
+    "serve:lab": "tsx tools/serve-lab.ts"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",

@@ -50,8 +50,15 @@ export const NEUTRAL_AIM: Aim = { x: 0, depth: 0.35 };
  * moment, still watched the ball land — which reads as the game being broken
  * rather than hard.
  */
-export function contactRadius(p: Player): number {
-  return PLAYER_RADIUS + (p.diving ? 1.3 : 0.95);
+export function contactRadius(p: Player, ball?: Ball): number {
+  const base = PLAYER_RADIUS + (p.diving ? 1.3 : 0.95);
+  if (!ball) return base;
+  // A ball travelling at thirty metres a second cannot be casually scooped
+  // from a metre and a half away. Reach shrinks with pace, which is what makes
+  // a hard attack an actual weapon: with a flat radius, a full-power spike was
+  // dug as easily as a free ball and rallies ran on forever.
+  const pace = clamp((Math.hypot(ball.vel.x, ball.vel.y, ball.vel.z) - 15) / 18, 0, 1);
+  return base * (1 - 0.42 * pace);
 }
 
 /** Vertical window in which a player can play the ball. */
@@ -63,7 +70,7 @@ export function contactWindow(p: Player): { lo: number; hi: number } {
 
 export function canReach(p: Player, ball: Ball): boolean {
   if (p.downTime > 0 && !p.diving) return false;
-  if (distXY(p.pos, ball.pos) > contactRadius(p)) return false;
+  if (distXY(p.pos, ball.pos) > contactRadius(p, ball)) return false;
   const { lo, hi } = contactWindow(p);
   return ball.pos.z >= lo && ball.pos.z <= hi;
 }
@@ -77,7 +84,7 @@ export function contactQuality(p: Player, ball: Ball): number {
   const { lo, hi } = contactWindow(p);
   const span = Math.max(0.3, hi - lo);
   const vertical = clamp((ball.pos.z - lo) / span, 0, 1);
-  const horizontal = 1 - clamp(distXY(p.pos, ball.pos) / contactRadius(p), 0, 1);
+  const horizontal = 1 - clamp(distXY(p.pos, ball.pos) / contactRadius(p, ball), 0, 1);
   return clamp(0.35 + 0.4 * vertical + 0.35 * horizontal, 0, 1);
 }
 
@@ -174,10 +181,12 @@ export function performBump(ctx: StrikeContext): StrikeResult {
   target.z = Math.max(2.3, target.z);
 
   const s = scatter(ctx, 0.9);
-  // Incoming pace makes a pass harder to control.
+  // Incoming pace makes a pass much harder to control. Without this weighting
+  // a full-power spike was dug as cleanly as a free ball, and rallies ran on
+  // for four and five exchanges because nothing an attacker did could end one.
   const pace = clamp(Math.hypot(ball.vel.x, ball.vel.y, ball.vel.z) / 22, 0, 1);
-  target.x += s.x * (1 + pace);
-  target.y += s.y * (1 + pace);
+  target.x += s.x * (1 + pace * 2.4);
+  target.y += s.y * (1 + pace * 2.4);
 
   const flight = player.diving ? 1.35 : 1.05;
   const vel = solveArc(from, target, flight);
@@ -295,7 +304,7 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
   const target = aimToTarget(player.side, aim);
   // Enough spread that hard swings genuinely go long or wide sometimes;
   // an attack that can never miss makes the defence pointless.
-  const s = scatter(ctx, 0.95 * (1.25 - charge * 0.4));
+  const s = scatter(ctx, 0.78 * (1.25 - charge * 0.4));
   target.x = clamp(target.x + s.x, -COURT_HALF_WIDTH - 0.9, COURT_HALF_WIDTH + 0.9);
   target.y += s.y;
 

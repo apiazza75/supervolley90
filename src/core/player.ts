@@ -239,6 +239,7 @@ export class Player {
         if (
           this.anim !== 'run' &&
           this.swing <= 0 &&
+          this.cheerTime <= 0 &&
           !this.heldAction &&
           (this.anim === 'idle' || TRANSIENT_ANIMS.includes(this.anim))
         ) {
@@ -247,7 +248,7 @@ export class Player {
       } else {
         this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * dt);
         this.vel.y = approach(this.vel.y, 0, PLAYER_FRICTION * dt);
-        if (this.anim === 'run') this.setAnim('idle');
+        if (this.anim === 'run' && this.cheerTime <= 0) this.setAnim('idle');
       }
     } else if (this.diving) {
       this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * 0.55 * dt);
@@ -285,10 +286,14 @@ export class Player {
     const limitY = COURT_HALF_LENGTH + OUT_MARGIN_Y;
     this.pos.x = clamp(this.pos.x, -limitX, limitX);
 
+    // A diving body is laid out flat and is nearly two metres long, so a
+    // dive that stops with its feet legally on our side still puts its head
+    // and arms in the opponent's court. Diving players are held further back.
+    const near = this.diving || this.downTime > 0 ? 0.85 : 0.12;
     if (this.side === 'home') {
-      this.pos.y = clamp(this.pos.y, -limitY, -0.12);
+      this.pos.y = clamp(this.pos.y, -limitY, -near);
     } else {
-      this.pos.y = clamp(this.pos.y, 0.12, limitY);
+      this.pos.y = clamp(this.pos.y, near, limitY);
     }
   }
 }

@@ -825,26 +825,6 @@ export function drawPlayer(
   }
   ctx.restore();
 
-  // Charge glow on the hitting hand — only for the player the human is
-  // steering. The AI holds its button constantly while setting up contacts,
-  // and drawing its charge wrapped half the court in a permanent blue aura.
-  if (opts.active && p.charge > 0.15) {
-    const { ex, ey } = limbPoints(
-      shoulderX - unit * 0.026,
-      shoulderY + unit * 0.012,
-      current.armFar[0],
-      current.armFar[1],
-      upperArm,
-      foreArm,
-    );
-    ctx.globalAlpha = 0.3 + 0.5 * p.charge;
-    ctx.fillStyle = p.charge > 0.75 ? '#ffe27a' : '#8fd8ff';
-    ctx.beginPath();
-    ctx.arc(ex, ey, unit * (0.06 + 0.06 * p.charge), 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  }
-
   ctx.restore();
 
   if (opts.charge > 0.05) drawChargeMeter(ctx, feet.x, feet.y - unit * 1.16, unit, opts.charge);

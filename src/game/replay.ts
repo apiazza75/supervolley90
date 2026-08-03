@@ -26,10 +26,13 @@ export interface ReplayFrame {
   }[];
 }
 
+/** How long the opening card holds before the action rolls. */
+export const INTRO = 0.75;
+
 /** Seconds of play kept available, and how fast the replay is played back. */
-const WINDOW = 2.0;
+const WINDOW = 2.2;
 const RATE = 40;
-const PLAYBACK = 0.7;
+const PLAYBACK = 0.5;
 
 /**
  * A rolling two seconds of play, replayed after the points worth seeing again.
@@ -44,6 +47,12 @@ export class Replay {
   private playhead = 0;
   private playing: ReplayFrame[] | null = null;
   private label = '';
+  /** Seconds since playback began, for the intro card and the wipe. */
+  private elapsed = 0;
+
+  get age(): number {
+    return this.elapsed;
+  }
 
   get isPlaying(): boolean {
     return this.playing !== null;
@@ -90,6 +99,7 @@ export class Replay {
     if (this.frames.length < RATE * 0.8) return false;
     this.playing = this.frames.slice();
     this.playhead = 0;
+    this.elapsed = 0;
     this.label = label;
     return true;
   }
@@ -102,6 +112,10 @@ export class Replay {
   /** Advance playback; returns the frame to draw, or null when it is over. */
   step(dt: number): ReplayFrame | null {
     if (!this.playing) return null;
+    this.elapsed += dt;
+    // A beat on the opening card before the action rolls, so the replay
+    // announces itself instead of looking like the game stuttering.
+    if (this.elapsed < INTRO) return this.playing[0];
     this.playhead += dt * RATE * PLAYBACK;
     const i = Math.floor(this.playhead);
     if (i >= this.playing.length) {

@@ -8,7 +8,7 @@ import { Arena } from './arena';
 import { Camera } from './camera';
 import { Effects } from './fx';
 import { drawActiveRing, drawPlayer, drawPlayerShadow, shade } from './players';
-import type { ReplayFrame } from '../game/replay';
+import { INTRO as REPLAY_INTRO, type ReplayFrame } from '../game/replay';
 
 /** Interpolated view of a rally, so rendering is smooth between sim steps. */
 export interface RenderState {
@@ -52,10 +52,12 @@ export class Renderer {
       switch (ev.type) {
         case 'powerMove': {
           // The screen should tell you, unmistakably, that a gauge was spent.
-          this.effects.announce({ x: 0, y: 0, z: 3.6 }, ev.name, '#ff8a3d', 54);
+          this.effects.announce({ x: 0, y: 0, z: 3.6 }, ev.name, '#ff8a3d', 66);
           this.effects.burst(ev.at, 'rgba(255,180,80,0.8)');
-          this.effects.impact(ev.at, 30, this.rand, 'rgba(255,150,60,');
-          this.camera.addShake(26);
+          this.effects.impact(ev.at, 40, this.rand, 'rgba(255,150,60,');
+          this.effects.shockwave(ev.at, 'rgba(255,150,60,');
+          this.effects.shockwave({ x: ev.at.x, y: ev.at.y, z: ev.at.z + 0.4 }, 'rgba(255,220,140,');
+          this.camera.addShake(30);
           this.hitStop = Math.max(this.hitStop, 0.2);
           this.flash = 0.35;
           this.powerTrail = 0.9;
@@ -86,22 +88,25 @@ export class Renderer {
             // A swing hit at full stretch deserves to be named.
             if (ev.speed > 26) {
               this.effects.announce(
-                { x: ev.at.x, y: ev.at.y, z: ev.at.z + 0.9 },
+                { x: ev.at.x, y: ev.at.y, z: ev.at.z + 1.1 },
                 SPIKE_CALLS[this.callIndex++ % SPIKE_CALLS.length],
                 '#ffd166',
-                34,
+                48,
               );
+              this.effects.shockwave(ev.at, 'rgba(255,214,120,');
             }
           } else if (ev.kind === 'block') {
             this.effects.impact(ev.at, power, this.rand, 'rgba(150,220,255,');
             this.camera.addShake(6);
             if (ev.speed > 17) {
               this.effects.announce(
-                { x: ev.at.x, y: ev.at.y, z: ev.at.z + 0.9 },
+                { x: ev.at.x, y: ev.at.y, z: ev.at.z + 1.1 },
                 'MONSTER BLOCK',
                 '#8fd8ff',
-                34,
+                48,
               );
+              this.effects.shockwave(ev.at, 'rgba(150,220,255,');
+              this.camera.addShake(12);
             }
           } else if (ev.kind === 'save') {
             this.effects.dust(ev.at, 16, this.rand);
@@ -116,7 +121,9 @@ export class Renderer {
           // Only a ball buried hard enough to end the rally marks the floor.
           if (ev.speed > 21) {
             this.effects.crack(ev.at, clamp(ev.speed / 26, 0.6, 1.6), this.rand);
-            this.camera.addShake(clamp(ev.speed * 0.3, 6, 16));
+            this.effects.shockwave(ev.at, 'rgba(255,240,214,');
+            this.effects.impact(ev.at, ev.speed * 0.6, this.rand, 'rgba(255,240,214,');
+            this.camera.addShake(clamp(ev.speed * 0.34, 8, 20));
           }
           break;
         }
@@ -134,15 +141,21 @@ export class Renderer {
           break;
         }
         case 'setWon':
-          this.effects.announce({ x: 0, y: 0, z: 3.4 }, `SET ${ev.setNumber}`, '#ffe27a', 54);
+          this.effects.announce({ x: 0, y: 0, z: 3.4 }, `SET ${ev.setNumber}`, '#ffe27a', 62);
+          this.effects.confetti(this.rand, 90);
+          this.arena.cheer(1);
+          this.camera.addShake(10);
           break;
         case 'matchWon':
           this.effects.announce(
             { x: 0, y: 0, z: 3.6 },
             `${world.team(ev.side).config.name.toUpperCase()} WIN`,
             '#ffe27a',
-            56,
+            70,
           );
+          this.effects.confetti(this.rand, 160);
+          this.arena.cheer(1);
+          this.flash = 0.3;
           break;
         default:
           break;
@@ -158,7 +171,14 @@ export class Renderer {
    * to `Player` because `drawPlayer` only ever reads the fields a snapshot
    * carries.
    */
-  drawReplay(world: World, frame: ReplayFrame, label: string, dt: number, time: number): void {
+  drawReplay(
+    world: World,
+    frame: ReplayFrame,
+    label: string,
+    age: number,
+    dt: number,
+    time: number,
+  ): void {
     const ctx = this.ctx;
     const cam = this.camera;
 
@@ -191,24 +211,67 @@ export class Renderer {
     const ballPos = { x: frame.ball.x, y: frame.ball.y, z: frame.ball.z };
     this.drawBall({ pos: ballPos, vel: { x: 0, y: 0, z: 0 }, roll: frame.ball.roll } as Ball);
 
-    // Broadcast furniture: letterbox bars, the label, and how to get out.
-    const bar = cam.viewHeight * 0.08;
+    // Broadcast furniture. A replay has to announce itself: played straight,
+    // it just looks like the game stuttering and repeating itself.
+    const w = cam.viewWidth;
+    const h = cam.viewHeight;
+    const grow = clamp(age / 0.18, 0, 1);
+    const bar = h * 0.09 * grow;
     ctx.save();
-    ctx.fillStyle = 'rgba(4,6,14,0.82)';
-    ctx.fillRect(0, 0, cam.viewWidth, bar);
-    ctx.fillRect(0, cam.viewHeight - bar, cam.viewWidth, bar);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#ff5a4d';
+
+    // Bars wipe in from the edges.
+    ctx.fillStyle = 'rgba(4,6,14,0.9)';
+    ctx.fillRect(0, 0, w, bar);
+    ctx.fillRect(0, h - bar, w, bar);
+    ctx.strokeStyle = 'rgba(255,90,77,0.8)';
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(38, bar / 2, 8 + Math.sin(time * 8) * 1.6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.font = '900 26px "Arial Black", system-ui, sans-serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(`REPLAY — ${label}`, 60, bar / 2 + 9);
-    ctx.textAlign = 'right';
-    ctx.font = '700 16px system-ui, sans-serif';
-    ctx.fillStyle = 'rgba(255,255,255,0.75)';
-    ctx.fillText('any key to skip', cam.viewWidth - 30, bar / 2 + 6);
+    ctx.moveTo(0, bar);
+    ctx.lineTo(w, bar);
+    ctx.moveTo(0, h - bar);
+    ctx.lineTo(w, h - bar);
+    ctx.stroke();
+
+    // The opening card: a full-width slab that slams in and slides away.
+    if (age < REPLAY_INTRO + 0.35) {
+      const k = clamp((REPLAY_INTRO + 0.35 - age) / 0.35, 0, 1);
+      const slabH = h * 0.2;
+      const y = h / 2 - slabH / 2;
+      ctx.globalAlpha = k;
+      ctx.fillStyle = 'rgba(8,10,22,0.88)';
+      ctx.fillRect(0, y, w, slabH);
+      ctx.fillStyle = '#ff5a4d';
+      ctx.fillRect(0, y, w, 5);
+      ctx.fillRect(0, y + slabH - 5, w, 5);
+      ctx.textAlign = 'center';
+      const pop = 1 + (1 - clamp(age / 0.2, 0, 1)) * 0.5;
+      ctx.font = `900 ${Math.round(58 * pop)}px "Arial Black", system-ui, sans-serif`;
+      ctx.lineWidth = 8;
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(6,8,18,0.95)';
+      ctx.strokeText('INSTANT REPLAY', w / 2, h / 2 + 6);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('INSTANT REPLAY', w / 2, h / 2 + 6);
+      ctx.font = '800 22px system-ui, sans-serif';
+      ctx.fillStyle = '#ffd166';
+      ctx.fillText(label, w / 2, h / 2 + 44);
+      ctx.globalAlpha = 1;
+    }
+
+    if (bar > 18) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#ff5a4d';
+      ctx.beginPath();
+      ctx.arc(38, bar / 2, 9 + Math.sin(time * 9) * 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = '900 26px "Arial Black", system-ui, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(`REPLAY — ${label}`, 62, bar / 2 + 9);
+      ctx.textAlign = 'right';
+      ctx.font = '800 17px system-ui, sans-serif';
+      ctx.fillStyle = `rgba(255,255,255,${0.55 + 0.35 * Math.sin(time * 5)})`;
+      ctx.fillText('ANY KEY TO SKIP', w - 30, bar / 2 + 6);
+    }
     ctx.restore();
   }
 
@@ -256,7 +319,10 @@ export class Renderer {
             if (p.id === active) drawActiveRing(ctx, cam, p, '#7ef0ff', state.time);
             drawPlayer(ctx, cam, p, team.config.colors, {
               active: p.id === active,
-              charge: p.id === active ? p.charge : 0,
+              // The only thing still worth charging is the underarm serve, so
+              // that is the only time a meter appears over anyone's head.
+              charge:
+                p.id === active && world.phase === 'serve' ? world.serveHoldFraction : 0,
               time: state.time,
               dt,
             });
