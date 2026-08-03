@@ -265,14 +265,20 @@ export function performPowerMove(ctx: StrikeContext): StrikeResult & { move: Pow
 }
 
 export function performAttack(ctx: StrikeContext): StrikeResult {
-  const { player, ball, aim, charge } = ctx;
+  const { player, ball, aim } = ctx;
   const from = contactPoint(player, ball);
   const q = contactQuality(player, ball);
 
-  // A tip is a short press with the ball still reachable but not above the net
-  // line; it drops just behind the block.
+  // Power is TIMING, not a held button. Meeting the ball at the top of the
+  // reach is the hard part and is what should be rewarded; a charge meter on
+  // top of it asked the player to fill a bar during a jump that was already
+  // over. `charge` survives only for the serve.
+  const charge = clamp(0.35 + 0.65 * q, 0, 1);
+
+  // A tip is what you get when the ball is not above the net line: it drops
+  // just behind the block.
   const overNet = from.z > NET_HEIGHT + 0.18;
-  const tip = charge < 0.22 || !overNet;
+  const tip = !overNet;
 
   if (tip) {
     const target = aimToTarget(player.side, { x: aim.x * 0.75, depth: -0.55 + aim.depth * 0.4 });

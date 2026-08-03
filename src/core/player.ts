@@ -26,6 +26,7 @@ export type PlayerAnim =
   | 'bump'
   | 'serve'
   | 'land'
+  | 'cheer'
   | 'down';
 
 /** Per-player attributes, 0..1. The AI and the strike solver both read these. */
@@ -74,6 +75,8 @@ export class Player {
   lockout = 0;
   /** Counts down while the player is sprawled after a dive or a knockdown. */
   downTime = 0;
+  /** Counts down while the player is celebrating a point, set or match. */
+  cheerTime = 0;
   /** Set during a dive; adds reach and forward momentum. */
   diving = false;
   /** Non-zero right after a successful hit, used for the arm-swing pose. */
@@ -152,6 +155,13 @@ export class Player {
     return true;
   }
 
+  /** Throw the arms up. Purely for show, and it stops the moment play resumes. */
+  celebrate(duration: number): void {
+    if (this.downTime > 0) return;
+    this.cheerTime = Math.max(this.cheerTime, duration);
+    this.setAnim('cheer');
+  }
+
   knockDown(duration = 0.85): void {
     this.downTime = Math.max(this.downTime, duration);
     this.diving = false;
@@ -177,6 +187,12 @@ export class Player {
     this.animTime += dt;
     if (this.lockout > 0) this.lockout -= dt;
     if (this.swing > 0) this.swing -= dt;
+
+    if (this.cheerTime > 0) {
+      this.cheerTime -= dt;
+      if (this.cheerTime <= 0 && this.anim === 'cheer') this.setAnim('idle');
+      else if (this.anim !== 'cheer') this.cheerTime = 0;
+    }
 
     if (this.downTime > 0) {
       this.downTime -= dt;

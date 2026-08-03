@@ -119,6 +119,11 @@ const POSES: Record<string, Pose> = {
     [-0.14, 0],
     [0.15, 0],
   ]),
+  // Both fists thrown up. Feet planted, chest open, head back.
+  cheer: pose(0.16, -0.16, [2.85, -0.5], [3.05, -0.42], [0.2, 0.4], [-0.18, 0.4], -0.3, 0.3, 1.1, [
+    [-0.11, 0],
+    [0.12, 0],
+  ]),
   // Sprawled on the floor after the dive, pushing up on one arm.
   down: pose(0.8, 1.5, [1.2, -0.55], [0.5, -0.9], [-0.3, 0.7], [-0.55, 0.5], -0.5, -0.1),
 };

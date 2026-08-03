@@ -123,6 +123,11 @@ export class InputManager {
     return this.actionEdge;
   }
 
+  /** True on the frame the jump button went down. */
+  get jumpPressed(): boolean {
+    return this.jumpEdge;
+  }
+
   get pausePressed(): boolean {
     return this.pauseEdge;
   }

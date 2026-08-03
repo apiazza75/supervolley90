@@ -13,6 +13,15 @@ interface Particle {
   kind: 'dust' | 'spark' | 'ring' | 'burst';
 }
 
+/** A star of cracks left in the floor where a hard ball landed. */
+interface Crack {
+  pos: Vec3;
+  /** Endpoint offsets in metres, drawn from the impact point. */
+  arms: { dx: number; dy: number }[];
+  life: number;
+  maxLife: number;
+}
+
 interface FloatingText {
   pos: Vec3;
   text: string;
@@ -30,12 +39,30 @@ interface FloatingText {
 export class Effects {
   private particles: Particle[] = [];
   private texts: FloatingText[] = [];
+  private cracks: Crack[] = [];
   private trail: { pos: Vec3; life: number }[] = [];
 
   clear(): void {
     this.particles.length = 0;
     this.texts.length = 0;
+    this.cracks.length = 0;
     this.trail.length = 0;
+  }
+
+  /**
+   * Crack the floor. Reserved for a ball buried hard enough to end the rally,
+   * because a mark that appears every rally stops meaning anything.
+   */
+  crack(at: Vec3, power: number, rng: () => number): void {
+    const arms: { dx: number; dy: number }[] = [];
+    const n = 5 + Math.round(rng() * 3);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + rng() * 0.6;
+      const len = (0.5 + rng() * 0.9) * power;
+      arms.push({ dx: Math.cos(a) * len, dy: Math.sin(a) * len * 0.55 });
+    }
+    this.cracks.push({ pos: v3(at.x, at.y, 0), arms, life: 2.6, maxLife: 2.6 });
+    if (this.cracks.length > 6) this.cracks.shift();
   }
 
   /** Floor dust, thrown up by a landing, a dive or a ball hitting the boards. */
@@ -116,6 +143,10 @@ export class Effects {
   }
 
   update(dt: number): void {
+    for (let i = this.cracks.length - 1; i >= 0; i--) {
+      this.cracks[i].life -= dt;
+      if (this.cracks[i].life <= 0) this.cracks.splice(i, 1);
+    }
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
       p.life -= dt;
@@ -165,6 +196,36 @@ export class Effects {
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** Floor cracks are drawn under everything, so bodies stand on top of them. */
+  drawFloor(ctx: CanvasRenderingContext2D, cam: Camera): void {
+    if (!this.cracks.length) return;
+    ctx.save();
+    for (const c of this.cracks) {
+      const t = c.life / c.maxLife;
+      const o = cam.projectFloor(c.pos.x, c.pos.y);
+      ctx.globalAlpha = Math.min(1, t * 1.6) * 0.85;
+      ctx.strokeStyle = 'rgba(24,14,10,0.9)';
+      ctx.lineCap = 'round';
+      for (const arm of c.arms) {
+        const e = cam.projectFloor(c.pos.x + arm.dx, c.pos.y + arm.dy);
+        const mx = (o.x + e.x) / 2 + (e.y - o.y) * 0.18;
+        const my = (o.y + e.y) / 2 + (o.x - e.x) * 0.18;
+        ctx.lineWidth = Math.max(1, 2.6 * o.scale);
+        ctx.beginPath();
+        ctx.moveTo(o.x, o.y);
+        ctx.quadraticCurveTo(mx, my, e.x, e.y);
+        ctx.stroke();
+      }
+      // A pale dust halo, as if the boards had been scuffed.
+      ctx.globalAlpha = t * 0.28;
+      ctx.fillStyle = 'rgba(255,240,220,1)';
+      ctx.beginPath();
+      ctx.ellipse(o.x, o.y, 26 * o.scale, 9 * o.scale, 0, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.restore();
   }

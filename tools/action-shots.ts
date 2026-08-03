@@ -61,16 +61,14 @@ async function main(): Promise<void> {
       };
     });
 
-  // ---- 1. A human jump serve, through the keys: toss, jump, hold to hit.
-  await page.keyboard.press('Space'); // toss
-  await page.waitForTimeout(180);
-  await page.keyboard.press('ShiftLeft'); // jump
-  await page.waitForTimeout(260);
+  // ---- 1. A human jump serve, through the keys. Two taps: the approach jump
+  // between them is the game's job, so this is the whole player input.
+  await page.keyboard.press('Space'); // tap: toss
+  await page.waitForTimeout(420);
   await page.screenshot({ path: `${OUT}/serve-toss-airborne.png` });
   const midJump = await snap();
-  await page.keyboard.down('Space'); // hit at the first strikeable frame
-  await page.waitForTimeout(350);
-  await page.keyboard.up('Space');
+  await page.keyboard.press('Space'); // tap: strike
+  await page.waitForTimeout(200);
   const afterServe = await snap();
   console.log(
     `jump serve: mid-air=${midJump.serverAirborne} tossUp=${midJump.tossInFlight} ` +
@@ -79,7 +77,7 @@ async function main(): Promise<void> {
   await page.screenshot({ path: `${OUT}/serve-struck.png` });
 
   // ---- 2. Watch AI play and snap labelled action frames.
-  const wanted = new Set(['spike-cock', 'spike-hit', 'block', 'bump', 'timing-cue']);
+  const wanted = new Set(['spike-cock', 'spike-hit', 'block', 'bump', 'timing-cue', 'replay']);
   const deadline = Date.now() + 75000;
   while (wanted.size > 0 && Date.now() < deadline) {
     const s = await snap();
@@ -96,6 +94,16 @@ async function main(): Promise<void> {
         await page.screenshot({ path: `${OUT}/block.png` });
         wanted.delete('block');
         console.log('captured block');
+      }
+    }
+    if (wanted.has('replay')) {
+      const replaying = await page.evaluate(() =>
+        Boolean((window as unknown as { __sv90: { replay?: { isPlaying: boolean } } }).__sv90.replay?.isPlaying),
+      );
+      if (replaying) {
+        await page.screenshot({ path: `${OUT}/replay.png` });
+        wanted.delete('replay');
+        console.log('captured replay');
       }
     }
     if (wanted.has('timing-cue')) {

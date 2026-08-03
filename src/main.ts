@@ -1,4 +1,5 @@
-import { FIXED_DT } from './core/rules';
+import { FIXED_DT, GAME_SPEED } from './core/rules';
+import { Replay } from './game/replay';
 import { World } from './core/world';
 import { Audio } from './game/audio';
 import { InputManager } from './game/input';
@@ -29,6 +30,10 @@ class Game {
   private world: World | null = null;
   private screen: Screen = 'menu';
   private accumulator = 0;
+  /** Rolling recording of the last couple of seconds, for replays. */
+  private readonly replay = new Replay();
+  /** Set when something replay-worthy happened; fires once the rally is dead. */
+  private pendingReplay: string | null = null;
   private lastFrame = 0;
   private elapsed = 0;
   private hitStop = 0;
@@ -99,13 +104,24 @@ class Game {
         const world = this.world;
         if (!world) break;
 
+        // A replay owns the screen while it runs, and any input cuts it short.
+        if (this.replay.isPlaying) {
+          if (this.input.actionPressed || this.input.jumpPressed || this.input.pausePressed) {
+            this.replay.stop();
+          }
+          break;
+        }
+        this.replay.record(world, dt * GAME_SPEED);
+
         // Hit-stop: hold the world still for a few frames after a big impact.
         if (this.hitStop > 0) {
           this.hitStop = Math.max(0, this.hitStop - dt);
           break;
         }
 
-        this.accumulator += dt;
+        // Everything runs at GAME_SPEED: the exchanges around the net were
+        // arriving faster than a player could read them.
+        this.accumulator += dt * GAME_SPEED;
         // Edges belong to ONE simulation step. A display frame usually spans
         // two fixed steps, and feeding the same command to both replayed every
         // press: the toss press was still "pressed" on the next step, which is
@@ -126,6 +142,21 @@ class Game {
         const events = world.drainEvents();
         this.renderer.handleEvents(world, events);
         this.audio.handle(events);
+
+        // Worth seeing again: a rally that was won by an attack, or a Lethal
+        // Maneuver. Anything else would make replays routine, and a replay you
+        // see every point is an interruption.
+        for (const ev of events) {
+          if (ev.type === 'powerMove') {
+            this.pendingReplay = ev.name;
+          } else if (ev.type === 'point' && ev.reason === 'kill' && ev.rallyLength > 5) {
+            this.pendingReplay = this.pendingReplay ?? 'THE POINT';
+          }
+        }
+        if (this.pendingReplay && world.phase !== 'rally') {
+          if (this.replay.start(this.pendingReplay)) this.hitStop = 0;
+          this.pendingReplay = null;
+        }
         break;
       }
       default:
@@ -138,6 +169,13 @@ class Game {
 
     if (this.screen === 'menu' || !this.world) {
       this.menu.draw(this.ctx, w, h, this.input.hasGamepad);
+      return;
+    }
+
+    // A running replay replaces the live view entirely.
+    const frame = this.replay.step(dt);
+    if (frame) {
+      this.renderer.drawReplay(this.world, frame, this.replay.title, dt, this.elapsed);
       return;
     }
 

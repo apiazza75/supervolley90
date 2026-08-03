@@ -67,7 +67,31 @@ export const TOSS_SPEED = 6.4;
  * Forward component of the serve toss, m/s. A jump serve is struck moving
  * into the court, so the ball has to be thrown ahead of the server.
  */
-export const TOSS_FORWARD = 0.55;
+export const TOSS_FORWARD = 0.35;
+
+/**
+ * Hold the action button longer than this on the serve and it becomes an
+ * underarm serve whose power is the charge; a shorter press tosses the ball
+ * for the overhand or jump serve.
+ */
+export const UNDERARM_HOLD = 0.26;
+
+/**
+ * Seconds after the toss at which the server's approach jump fires.
+ *
+ * The approach is the game's job. A jump serve asks the player to time a jump
+ * to a toss they did not throw and then land a swing inside a narrow window;
+ * asking for both is why the serve could not be executed. Press once to toss,
+ * once to hit — the footwork in between happens on its own.
+ */
+export const SERVE_APPROACH = 0.2;
+
+/**
+ * Global pace multiplier. Everything — ball, players, timers — runs this much
+ * slower than real time, because at 1.0 the exchanges around the net came and
+ * went faster than a player could read them.
+ */
+export const GAME_SPEED = 0.87;
 
 /** Fixed simulation timestep (120 Hz) — rendering interpolates between steps. */
 export const FIXED_DT = 1 / 120;

@@ -8,6 +8,7 @@ import { Arena } from './arena';
 import { Camera } from './camera';
 import { Effects } from './fx';
 import { drawActiveRing, drawPlayer, drawPlayerShadow, shade } from './players';
+import type { ReplayFrame } from '../game/replay';
 
 /** Interpolated view of a rally, so rendering is smooth between sim steps. */
 export interface RenderState {
@@ -36,6 +37,8 @@ export class Renderer {
   private promptTimer = 0;
   /** Clock for the landing-marker arrow bounce. */
   private markerTime = 0;
+  /** Rotates the spike shout, so the same words never land twice running. */
+  private callIndex = 0;
 
   constructor(private readonly ctx: CanvasRenderingContext2D) {}
 
@@ -80,9 +83,26 @@ export class Renderer {
             this.effects.impact(ev.at, power * 1.4, this.rand, 'rgba(255,196,90,');
             this.camera.addShake(clamp(ev.speed * 0.28, 2, 12));
             this.hitStop = Math.max(this.hitStop, clamp(ev.speed * 0.0025, 0, 0.05));
+            // A swing hit at full stretch deserves to be named.
+            if (ev.speed > 26) {
+              this.effects.announce(
+                { x: ev.at.x, y: ev.at.y, z: ev.at.z + 0.9 },
+                SPIKE_CALLS[this.callIndex++ % SPIKE_CALLS.length],
+                '#ffd166',
+                34,
+              );
+            }
           } else if (ev.kind === 'block') {
             this.effects.impact(ev.at, power, this.rand, 'rgba(150,220,255,');
             this.camera.addShake(6);
+            if (ev.speed > 17) {
+              this.effects.announce(
+                { x: ev.at.x, y: ev.at.y, z: ev.at.z + 0.9 },
+                'MONSTER BLOCK',
+                '#8fd8ff',
+                34,
+              );
+            }
           } else if (ev.kind === 'save') {
             this.effects.dust(ev.at, 16, this.rand);
           } else {
@@ -93,6 +113,11 @@ export class Renderer {
         case 'bounce': {
           this.effects.dust(ev.at, 10 + ev.speed, this.rand);
           this.camera.addShake(clamp(ev.speed * 0.14, 0, 7));
+          // Only a ball buried hard enough to end the rally marks the floor.
+          if (ev.speed > 21) {
+            this.effects.crack(ev.at, clamp(ev.speed / 26, 0.6, 1.6), this.rand);
+            this.camera.addShake(clamp(ev.speed * 0.3, 6, 16));
+          }
           break;
         }
         case 'point': {
@@ -126,6 +151,68 @@ export class Renderer {
   }
 
   /**
+   * Draw a recorded frame instead of the live world.
+   *
+   * Only the court, the bodies and the ball: no markers, no cues, no gauges —
+   * a replay is for watching, not for playing. The recorded players are cast
+   * to `Player` because `drawPlayer` only ever reads the fields a snapshot
+   * carries.
+   */
+  drawReplay(world: World, frame: ReplayFrame, label: string, dt: number, time: number): void {
+    const ctx = this.ctx;
+    const cam = this.camera;
+
+    cam.follow(frame.ball, dt);
+    ctx.clearRect(0, 0, cam.viewWidth, cam.viewHeight);
+    this.arena.update(dt);
+    this.arena.drawBackground(ctx, cam, time);
+    this.effects.drawFloor(ctx, cam);
+
+    const drawables: { depth: number; draw: () => void }[] = [];
+    for (const rp of frame.players) {
+      const colors = world.team(rp.side).config.colors;
+      const proj = cam.project(rp.pos.x, rp.pos.y, rp.height);
+      // A separate id space, so replay bodies do not disturb the smoothing
+      // state of the live figures they are copies of.
+      const ghost = { ...rp, id: rp.id + 1000 } as unknown as Player;
+      drawables.push({
+        depth: proj.depth,
+        draw: () => {
+          drawPlayerShadow(ctx, cam, ghost);
+          drawPlayer(ctx, cam, ghost, colors, { active: false, charge: 0, time, dt });
+        },
+      });
+    }
+    const netProj = cam.project(0, 0, NET_HEIGHT / 2);
+    drawables.push({ depth: netProj.depth, draw: () => this.arena.drawNet(ctx, cam) });
+    drawables.sort((a, b) => b.depth - a.depth);
+    for (const d of drawables) d.draw();
+
+    const ballPos = { x: frame.ball.x, y: frame.ball.y, z: frame.ball.z };
+    this.drawBall({ pos: ballPos, vel: { x: 0, y: 0, z: 0 }, roll: frame.ball.roll } as Ball);
+
+    // Broadcast furniture: letterbox bars, the label, and how to get out.
+    const bar = cam.viewHeight * 0.08;
+    ctx.save();
+    ctx.fillStyle = 'rgba(4,6,14,0.82)';
+    ctx.fillRect(0, 0, cam.viewWidth, bar);
+    ctx.fillRect(0, cam.viewHeight - bar, cam.viewWidth, bar);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ff5a4d';
+    ctx.beginPath();
+    ctx.arc(38, bar / 2, 8 + Math.sin(time * 8) * 1.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.font = '900 26px "Arial Black", system-ui, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(`REPLAY — ${label}`, 60, bar / 2 + 9);
+    ctx.textAlign = 'right';
+    ctx.font = '700 16px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillText('any key to skip', cam.viewWidth - 30, bar / 2 + 6);
+    ctx.restore();
+  }
+
+  /**
    * Draw one frame.
    *
    * Returns the remaining hit-stop, which the game loop uses to briefly hold
@@ -149,6 +236,7 @@ export class Renderer {
     this.arena.update(dt);
     this.arena.drawBackground(ctx, cam, state.time);
 
+    this.effects.drawFloor(ctx, cam);
     this.drawLandingMarker(world);
     this.drawBallShadow(world.ball);
     for (const p of world.allPlayers()) drawPlayerShadow(ctx, cam, p);
@@ -181,7 +269,8 @@ export class Renderer {
     drawables.push({ depth: netProj.depth, draw: () => this.arena.drawNet(ctx, cam) });
 
     const ballProj = cam.projectVec(world.ball.pos);
-    drawables.push({ depth: ballProj.depth, draw: () => this.drawBall(world.ball) });
+    const hot = world.playCue?.ready === true || world.serveStrikeReady;
+    drawables.push({ depth: ballProj.depth, draw: () => this.drawBall(world.ball, hot) });
 
     drawables.sort((a, b) => b.depth - a.depth);
     for (const d of drawables) d.draw();
@@ -315,7 +404,7 @@ export class Renderer {
     this.ctx.restore();
   }
 
-  private drawBall(ball: Ball): void {
+  private drawBall(ball: Ball, hot = false): void {
     const ctx = this.ctx;
     const s = this.camera.projectVec(ball.pos);
     if (s.behind) return;
@@ -372,9 +461,10 @@ export class Renderer {
       return;
     }
 
-    // An actual volleyball: white ball, blue and yellow panel bands curving
-    // around it, rotating with the ball's roll so spin is visible. The classic
-    // tri-colour every 90s arcade game used.
+    // A real volleyball's panels: three parallel stripes wrapping the ball,
+    // white / blue / yellow, rotating with the spin. Overlapping ellipses at
+    // three different angles — the previous attempt — draw a rosette, not a
+    // ball: on a sphere the seams you can see all run the SAME way.
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.fillStyle = '#f4f5f8';
@@ -382,24 +472,43 @@ export class Renderer {
 
     ctx.save();
     ctx.clip();
-    // Two coloured bands and their seams; the third band stays white.
-    const bands: [number, string][] = [
-      [ball.roll, '#2a5bd7'],
-      [ball.roll + Math.PI / 3, '#ffc531'],
+    ctx.rotate(ball.roll * 0.6);
+    // Stripe boundaries as fractions of the diameter, and the colour of the
+    // stripe below each one. The seams bow, because they are drawn on a ball.
+    const stripes: [number, number, string][] = [
+      [-1.05, -0.34, '#f4f5f8'],
+      [-0.34, 0.3, '#2a5bd7'],
+      [0.3, 1.05, '#ffc531'],
     ];
-    for (const [a, color] of bands) {
+    for (const [top, bottom, color] of stripes) {
       ctx.beginPath();
-      ctx.ellipse(0, 0, r * 0.98, r * 0.4, a, 0, Math.PI * 2);
+      ctx.moveTo(-r * 1.1, top * r);
+      ctx.quadraticCurveTo(0, top * r - r * 0.16, r * 1.1, top * r);
+      ctx.lineTo(r * 1.1, bottom * r);
+      ctx.quadraticCurveTo(0, bottom * r - r * 0.16, -r * 1.1, bottom * r);
+      ctx.closePath();
       ctx.fillStyle = color;
       ctx.fill();
     }
-    ctx.strokeStyle = 'rgba(24,32,52,0.55)';
+    // Seams between the panels.
+    ctx.strokeStyle = 'rgba(24,32,52,0.5)';
     ctx.lineWidth = Math.max(0.7, r * 0.05);
-    for (let i = 0; i < 3; i++) {
+    for (const edge of [-0.34, 0.3]) {
       ctx.beginPath();
-      ctx.ellipse(0, 0, r * 0.98, r * 0.4, ball.roll + (i * Math.PI) / 3, 0, Math.PI * 2);
+      ctx.moveTo(-r * 1.1, edge * r);
+      ctx.quadraticCurveTo(0, edge * r - r * 0.16, r * 1.1, edge * r);
       ctx.stroke();
     }
+    // The cross seams that split each stripe into panels, only where a real
+    // ball shows them: a short arc near the middle of the visible face.
+    if (r > 7) {
+      ctx.lineWidth = Math.max(0.6, r * 0.04);
+      ctx.beginPath();
+      ctx.moveTo(r * 0.12, -r * 1.05);
+      ctx.quadraticCurveTo(r * 0.3, 0, r * 0.12, r * 1.05);
+      ctx.stroke();
+    }
+    ctx.rotate(-ball.roll * 0.6);
     // Volume: a highlight where the light hits and a shaded lower-right limb.
     const sh = ctx.createRadialGradient(-r * 0.4, -r * 0.45, r * 0.15, 0, 0, r * 1.05);
     sh.addColorStop(0, 'rgba(255,255,255,0.6)');
@@ -411,8 +520,20 @@ export class Renderer {
     ctx.fill();
     ctx.restore();
 
-    ctx.strokeStyle = 'rgba(20,26,42,0.8)';
-    ctx.lineWidth = Math.max(0.9, r * 0.07);
+    // THE moment: the ball goes red when the player you are steering can
+    // actually hit it. A ring beside the ball is something to notice; the ball
+    // changing colour is impossible to miss.
+    if (hot) {
+      ctx.globalAlpha = 0.72;
+      ctx.fillStyle = '#ff3b30';
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.strokeStyle = hot ? '#ffe6e0' : 'rgba(20,26,42,0.8)';
+    ctx.lineWidth = Math.max(0.9, r * (hot ? 0.11 : 0.07));
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.stroke();
@@ -553,6 +674,9 @@ export class Renderer {
 
 
 }
+
+/** Shouts for a full-power swing, in the spirit of the era's arcade games. */
+const SPIKE_CALLS = ['KILLER SPIKE', 'THUNDER HIT', 'ROLLING SMASH', 'BLAZE SPIKE'];
 
 const POINT_LABEL: Record<string, string> = {
   kill: 'POINT!',

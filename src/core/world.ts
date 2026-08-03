@@ -31,8 +31,10 @@ import {
   OUT_MARGIN_Y,
   SETS_TO_WIN,
   Side,
+  SERVE_APPROACH,
   TOSS_FORWARD,
   TOSS_SPEED,
+  UNDERARM_HOLD,
   attackDir,
   isSetWon,
   otherSide,
@@ -221,6 +223,7 @@ export class World {
     this.aimTarget = null;
     this.serveStage = 'hold';
     this.tossedAt = 0;
+    for (const p of this.allPlayers()) p.cheerTime = 0;
     this.phase = 'serve';
     this.phaseTimer = 0;
 
@@ -270,6 +273,29 @@ export class World {
       // punished. Cleared on contact, in registerTouch.
       if (cmd.actionPressed) p.actionBuffer = ACTION_BUFFER;
       else if (p.actionBuffer > 0) p.actionBuffer = Math.max(0, p.actionBuffer - dt);
+
+      // The action button is the whole attack: press it on the ground with the
+      // ball still high and out of reach and it JUMPS; press it again in the
+      // air and the swing happens. Charging a meter for power, then finding
+      // the jump was already over, was the worst of both worlds.
+      // Human-steered player only: the AI decides its own jumps, and letting
+      // this rule fire for all six sent the whole team into the air whenever
+      // they meant to pass.
+      if (
+        cmd.actionPressed &&
+        human !== null &&
+        p.id === human.activeId &&
+        p.side === human.side &&
+        !p.airborne &&
+        p.canAct &&
+        this.phase === 'rally' &&
+        !canReach(p, this.ball) &&
+        this.ball.pos.z > 1.9 &&
+        distXY(p.pos, this.ball.pos) < 3.2
+      ) {
+        p.jump();
+        if (this.possession !== p.side && Math.abs(p.pos.y) < 2.2) p.setAnim('block');
+      }
 
       // On the ground the jump button jumps; in the air it calls for a Lethal
       // Maneuver, which is only honoured if the team's gauge is full.
@@ -397,21 +423,35 @@ export class World {
       );
       server.setAnim('serve');
 
-      if (cmd.actionPressed) {
+      // Two serves, one button, told apart by how long it is held:
+      //   tap  -> toss the ball up and go for the overhand or jump serve
+      //   hold -> an underarm serve whose power is the charge, hit on release
+      // The charge itself is accumulated by the main step loop, which also
+      // parks it in `releasedCharge` on the frame the button comes up — so
+      // that, not `heldAction`, is what tells us a press has ended. Reading
+      // `heldAction` here saw the value already overwritten for this step, and
+      // the release was never noticed at all: the ball never left the hand.
+      if (cmd.actionHeld) return;
+      if (server.releasedCharge > 0) {
+        const held = server.releasedCharge;
+        server.releasedCharge = 0;
+        server.charge = 0;
+        server.actionBuffer = 0;
+        if (held > UNDERARM_HOLD) {
+          // Underarm serve: slow, safe, and aimed, with the power dosed by
+          // how long the button was down.
+          this.strikeServe(server, cmd, clamp(held * 0.4, 0, 0.42));
+          return;
+        }
         this.ball.frozen = false;
-        // The toss goes UP AND FORWARD, into the court, which is what makes a
-        // jump serve a jump serve: the server runs under the ball and hits it
-        // moving forward. A toss straight up left the server rooted, and the
-        // jump read as a hop on the spot.
+        // Straight up, with only a hint of drift into the court. A toss thrown
+        // well ahead of the server cannot be reached without stepping over the
+        // line, which is a fault — and made the serve unhittable.
         this.ball.vel = v3(0, attackDir(this.servingSide) * TOSS_FORWARD, TOSS_SPEED);
         this.ball.spin = v3();
         this.serveStage = 'toss';
         this.tossedAt = this.phaseTimer;
         server.setAnim('set');
-        // The toss press must not also count as the swing: without clearing
-        // the buffer here the serve fired itself the instant the strike window
-        // opened, and the player never got to jump.
-        server.actionBuffer = 0;
       }
       return;
     }
@@ -429,17 +469,20 @@ export class World {
       return;
     }
 
-    // Chasing the toss: a server who jumps after tossing carries a little
-    // forward momentum, enough to read as an approach without stranding them
-    // metres from a ball they can no longer reach.
+    // The approach jump is the game's, not the player's: one press tosses,
+    // one press hits, and the footwork happens on its own.
+    if (!server.airborne && server.canAct && this.phaseTimer - this.tossedAt > SERVE_APPROACH) {
+      server.jump();
+    }
     if (server.airborne && Math.abs(server.vel.y) < 0.2) {
-      server.vel.y = attackDir(this.servingSide) * 1.1;
+      server.vel.y = attackDir(this.servingSide) * 1.0;
     }
 
     // Dropped toss: catch it and go again, no fault.
     if (this.ball.vel.z < 0 && this.ball.pos.z < 0.95) {
       this.serveStage = 'hold';
       this.ball.vel = v3();
+      server.charge = 0;
     }
   }
 
@@ -492,6 +535,10 @@ export class World {
   private resolveContacts(commands: Map<number, Command>): void {
     if (this.ball.grounded || this.ball.frozen) return;
     if (this.ball.touchCooldown > 0) return;
+    // A serve toss belongs to the server and nobody else. Without this a
+    // team-mate standing near the server could pluck the ball out of the toss
+    // and put it over the net — a serve that was never served.
+    if (this.phase === 'serve') return;
 
     let best: { player: Player; quality: number } | null = null;
     for (const p of this.allPlayers()) {
@@ -779,6 +826,14 @@ export class World {
     team.points += 1;
     this.events.push({ type: 'point', side, reason, rallyLength: this.rallyTime });
 
+    // Celebrate: a point worth having, a set, a match. Longer and wider as the
+    // moment gets bigger — a rally point is a fist from whoever made it, a set
+    // is the whole bench.
+    const big = reason === 'kill' && this.rallyTime > 6;
+    for (const p of team.players) {
+      if (big || p.id === this.lastToucherId) p.celebrate(big ? 1.6 : 1.1);
+    }
+
     if (reason === 'kill') this.awardPower(side, POWER_GAIN.kill);
     // A small consolation to the side that just conceded: a losing run should
     // trend towards having a Lethal Maneuver available, not away from it.
@@ -799,6 +854,7 @@ export class World {
       team.setScores.push(team.points);
       opponent.setScores.push(opponent.points);
       this.events.push({ type: 'setWon', side, setNumber: this.setNumber });
+      for (const p of team.players) p.celebrate(3.2);
       if (team.setsWon >= SETS_TO_WIN) {
         this.phase = 'matchOver';
         this.events.push({ type: 'matchWon', side });
