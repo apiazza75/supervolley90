@@ -269,6 +269,38 @@ export class World {
       p.step(dt, cmd.moveX, cmd.moveY);
     }
 
+    // Teammates keep personal space. Converging assignments used to stack two
+    // players on the same spot, which on screen fused them into one deformed
+    // figure — the single ugliest thing on the court. A gentle symmetric push
+    // separates grounded teammates without fighting whoever is running to
+    // play the ball.
+    for (const side of ['home', 'away'] as const) {
+      const ps = this.team(side).players;
+      for (let i = 0; i < ps.length; i++) {
+        for (let j = i + 1; j < ps.length; j++) {
+          const a = ps[i];
+          const b = ps[j];
+          if (a.airborne || b.airborne || a.diving || b.diving) continue;
+          const dx = b.pos.x - a.pos.x;
+          const dy = b.pos.y - a.pos.y;
+          // The flat side view compresses court depth to almost nothing, so
+          // two players a metre apart across the court still overlap on
+          // screen. Distance is therefore measured the way the screen shows
+          // it — depth heavily discounted — and the push runs along the
+          // court, the axis the viewer can actually see.
+          const d = Math.hypot(dx * 0.3, dy);
+          const MIN_GAP = 0.85;
+          if (d >= MIN_GAP) continue;
+          const push = ((MIN_GAP - d) / 2) * Math.min(1, dt * 14);
+          const dir = dy !== 0 ? Math.sign(dy) : i < j ? -1 : 1;
+          a.pos.y -= dir * push;
+          b.pos.y += dir * push;
+          a.clampToArena();
+          b.clampToArena();
+        }
+      }
+    }
+
     // Grounded players who are not running square up to the ball, the way real
     // players track it between actions. Facing is purely presentational, so
     // this changes nothing physical — but it is most of what makes the court

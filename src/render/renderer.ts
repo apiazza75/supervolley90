@@ -320,14 +320,9 @@ export class Renderer {
     ctx.scale(1 + stretch, 1 - stretch * 0.32);
     ctx.rotate(-angle);
 
-    const grad = ctx.createRadialGradient(-r * 0.35, -r * 0.4, r * 0.1, 0, 0, r);
-    grad.addColorStop(0, '#ffffff');
-    grad.addColorStop(0.55, this.powerTrail > 0 ? '#ffb040' : '#ffd873');
-    grad.addColorStop(1, this.powerTrail > 0 ? '#e04a12' : '#e08a2a');
-    ctx.fillStyle = grad;
-
     if (this.powerTrail > 0) {
-      // Halo around a live Lethal Maneuver, so it reads even against the crowd.
+      // A live Lethal Maneuver burns: fire ball with a halo, so it reads even
+      // against the crowd. This is the only time the ball glows.
       const halo = ctx.createRadialGradient(0, 0, r, 0, 0, r * 3.2);
       halo.addColorStop(0, 'rgba(255,150,60,0.55)');
       halo.addColorStop(1, 'rgba(255,80,30,0)');
@@ -335,23 +330,69 @@ export class Renderer {
       ctx.beginPath();
       ctx.arc(0, 0, r * 3.2, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = grad;
+      const fire = ctx.createRadialGradient(-r * 0.35, -r * 0.4, r * 0.1, 0, 0, r);
+      fire.addColorStop(0, '#ffffff');
+      fire.addColorStop(0.55, '#ffb040');
+      fire.addColorStop(1, '#e04a12');
+      ctx.fillStyle = fire;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(120,40,5,0.7)';
+      ctx.lineWidth = Math.max(0.8, r * 0.12);
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.ellipse(0, 0, r * 0.92, r * 0.32, ball.roll + (i * Math.PI) / 3, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+      return;
     }
+
+    // An actual volleyball: white ball, blue and yellow panel bands curving
+    // around it, rotating with the ball's roll so spin is visible. The classic
+    // tri-colour every 90s arcade game used.
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#f4f5f8';
+    ctx.fill();
+
+    ctx.save();
+    ctx.clip();
+    // Two coloured bands and their seams; the third band stays white.
+    const bands: [number, string][] = [
+      [ball.roll, '#2a5bd7'],
+      [ball.roll + Math.PI / 3, '#ffc531'],
+    ];
+    for (const [a, color] of bands) {
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.98, r * 0.4, a, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
+    ctx.strokeStyle = 'rgba(24,32,52,0.55)';
+    ctx.lineWidth = Math.max(0.7, r * 0.05);
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.98, r * 0.4, ball.roll + (i * Math.PI) / 3, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // Volume: a highlight where the light hits and a shaded lower-right limb.
+    const sh = ctx.createRadialGradient(-r * 0.4, -r * 0.45, r * 0.15, 0, 0, r * 1.05);
+    sh.addColorStop(0, 'rgba(255,255,255,0.6)');
+    sh.addColorStop(0.45, 'rgba(255,255,255,0)');
+    sh.addColorStop(1, 'rgba(18,26,48,0.4)');
+    ctx.fillStyle = sh;
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
 
-    // Panel seams, rotating with the ball so spin is visible.
-    if (r > 4) {
-      ctx.strokeStyle = 'rgba(120,60,10,0.6)';
-      ctx.lineWidth = Math.max(0.8, r * 0.14);
-      for (let i = 0; i < 3; i++) {
-        const a = ball.roll + (i * Math.PI) / 3;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, r * 0.92, r * 0.32, a, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-    }
+    ctx.strokeStyle = 'rgba(20,26,42,0.8)';
+    ctx.lineWidth = Math.max(0.9, r * 0.07);
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.restore();
   }
 

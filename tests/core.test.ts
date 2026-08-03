@@ -205,10 +205,17 @@ describe('match simulation', () => {
       world.step(null);
       for (const ev of world.drainEvents()) {
         if (ev.type !== 'contact') continue;
+        // A new rally's serve is legal whoever ended the previous rally, so
+        // it is never itself a violation — but the server still may not be
+        // the next toucher, which keeping them as `previous` verifies.
+        if (ev.kind === 'serve') {
+          previous = ev.playerId;
+          blockJustHappened = false;
+          continue;
+        }
         if (ev.playerId === previous && !blockJustHappened) violations++;
         blockJustHappened = ev.kind === 'block';
         previous = ev.playerId;
-        if (ev.kind === 'serve') previous = -1;
       }
     }
     expect(violations).toBe(0);

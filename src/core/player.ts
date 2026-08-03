@@ -254,7 +254,7 @@ export class Player {
   }
 
   /** Keep players inside the playable area, and out of the opponent's half. */
-  private clampToArena(): void {
+  clampToArena(): void {
     const limitX = COURT_HALF_WIDTH + OUT_MARGIN_X;
     const limitY = COURT_HALF_LENGTH + OUT_MARGIN_Y;
     this.pos.x = clamp(this.pos.x, -limitX, limitX);
@@ -273,12 +273,17 @@ export class Player {
  * (the server), then counter-clockwise.
  */
 const SLOT_LAYOUT: Record<number, { x: number; y: number }> = {
-  1: { x: 2.7, y: -6.6 },
-  2: { x: 2.7, y: -1.7 },
-  3: { x: 0.0, y: -1.5 },
-  4: { x: -2.7, y: -1.7 },
-  5: { x: -2.7, y: -6.6 },
-  6: { x: 0.0, y: -7.0 },
+  // The along-court distances are deliberately staggered within each row: the
+  // side-on view collapses court depth to a few pixels, so players standing
+  // at the same distance from the net fuse into a single deformed silhouette
+  // on screen. Every slot gets its own distance and the whole team stays
+  // readable at a glance.
+  1: { x: 2.7, y: -5.6 },
+  2: { x: 2.7, y: -1.2 },
+  3: { x: 0.0, y: -2.1 },
+  4: { x: -2.7, y: -3.0 },
+  5: { x: -2.7, y: -7.9 },
+  6: { x: 0.0, y: -6.7 },
 };
 
 /** Formation anchor for a slot on a given side. */

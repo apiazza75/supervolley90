@@ -284,8 +284,8 @@ export class TeamBrain {
     const reachable = gap < p.runSpeed * Math.max(0.05, timeToLand) + 0.9;
 
     // A ball that will drop out of reach is worth a dive.
-    if (!reachable && gap < 3.4 && timeToLand < 0.55 && !p.airborne && p.canAct) {
-      if (this.rng.chance(0.06 + this.difficulty * 0.05)) {
+    if (!reachable && gap < 4.0 && timeToLand < 0.7 && !p.airborne && p.canAct) {
+      if (this.rng.chance(0.08 + this.difficulty * 0.05)) {
         p.dive(s.goal.x - p.pos.x, s.goal.y - p.pos.y);
       }
     }
