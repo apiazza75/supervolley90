@@ -1,4 +1,4 @@
-import { Ball, solveArc, solveArcOverNet, solveDrive } from './ball';
+import { Ball, driveOverNet, solveArc, solveArcOverNet, solveDrive } from './ball';
 import { Vec3, v3, clamp, distXY, lerp } from './math3';
 import { Player } from './player';
 import { Rng } from './rng';
@@ -42,14 +42,21 @@ export interface Aim {
 
 export const NEUTRAL_AIM: Aim = { x: 0, depth: 0.35 };
 
-/** Horizontal grab radius; diving players stretch further. */
+/**
+ * Horizontal grab radius; diving players stretch further.
+ *
+ * Arcade-generous on purpose. A realistic envelope plus a one-frame input
+ * window meant a player standing in the right place, pressing at the right
+ * moment, still watched the ball land — which reads as the game being broken
+ * rather than hard.
+ */
 export function contactRadius(p: Player): number {
-  return PLAYER_RADIUS + (p.diving ? 1.15 : 0.72);
+  return PLAYER_RADIUS + (p.diving ? 1.3 : 0.95);
 }
 
 /** Vertical window in which a player can play the ball. */
 export function contactWindow(p: Player): { lo: number; hi: number } {
-  const lo = p.height + (p.diving ? -0.2 : 0.12);
+  const lo = p.height + (p.diving ? -0.25 : 0.02);
   const hi = p.height + PLAYER_REACH + (p.airborne ? 0.35 : 0.15);
   return { lo, hi };
 }
@@ -140,7 +147,7 @@ export function performServe(ctx: StrikeContext): StrikeResult {
   const jumpServe = charge > 0.5 && player.airborne;
   if (jumpServe) {
     const speed = lerp(15, 23, charge) * (0.85 + 0.3 * player.stats.power);
-    const vel = solveDrive(from, target, speed);
+    const vel = driveOverNet(from, target, speed, 0.2);
     const spin = v3(-3.2 * attackDir(player.side), 0, ctx.rng.spread(1.4));
     ball.strike(vel, spin);
     return { kind: 'serve', target, speed };
@@ -239,7 +246,7 @@ export function performPowerMove(ctx: StrikeContext): StrikeResult & { move: Pow
     const side = Math.sign(aim.x) || 1;
     const target = aimToTarget(player.side, { x: side * 0.95, depth: 0.55 });
     const launch = aimToTarget(player.side, { x: side * 1.9, depth: 0.75 });
-    const vel = solveDrive(from, launch, 30 * strength);
+    const vel = driveOverNet(from, launch, 30 * strength, 0.12);
     // Sidespin is scaled by the attack direction for the same reason as an
     // ordinary spike: Magnus depends on the sign of the velocity.
     ball.strike(vel, v3(-4 * dir, 0, -side * 13 * dir));
@@ -287,7 +294,11 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
   target.y += s.y;
 
   const power = lerp(17, 30, charge) * (0.8 + 0.4 * player.stats.power) * (0.75 + 0.35 * q);
-  const vel = solveDrive(from, target, power);
+  // A hitter well above the tape may drive the ball down through it — that is
+  // the shot. A hitter barely at net height gets the launch lifted just enough
+  // to clear, instead of burying a third of all attacks in the net.
+  const headroom = from.z - (NET_HEIGHT + 0.45);
+  const vel = headroom > 0 ? solveDrive(from, target, power) : driveOverNet(from, target, power, 0.1);
 
   // Topspin, plus a sidespin component matching how far the hitter cut the ball.
   //
@@ -321,7 +332,7 @@ export function performBlock(ctx: StrikeContext): StrikeResult {
       dir * depth,
       BALL_RADIUS,
     );
-    const vel = solveDrive(contactPoint(player, ball), target, incoming * 0.7 + 6);
+    const vel = driveOverNet(contactPoint(player, ball), target, incoming * 0.7 + 6, 0.25);
     ball.strike(vel, v3(-2 * dir, 0, 0));
     player.setAnim('block');
     return { kind: 'block', target, speed: incoming };

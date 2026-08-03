@@ -63,8 +63,24 @@ export const MIN_LEAD = 2;
  *  the ball near full reach — which is what makes a jump serve possible. */
 export const TOSS_SPEED = 6.4;
 
+/**
+ * Forward component of the serve toss, m/s. A jump serve is struck moving
+ * into the court, so the ball has to be thrown ahead of the server.
+ */
+export const TOSS_FORWARD = 1.6;
+
 /** Fixed simulation timestep (120 Hz) — rendering interpolates between steps. */
 export const FIXED_DT = 1 / 120;
+
+/**
+ * How long an action press stays armed while waiting for the ball, seconds.
+ *
+ * An arcade game must reward anticipation. Requiring the button on the exact
+ * frame the ball enters the contact envelope means a press a tenth of a second
+ * early is thrown away and the ball drops — which reads as the game ignoring
+ * good timing.
+ */
+export const ACTION_BUFFER = 0.28;
 
 /**
  * Power gauge, the "Lethal Maneuver" resource.

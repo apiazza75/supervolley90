@@ -85,6 +85,16 @@ export class Player {
   /** Charge captured on the step the button was released (serve power). */
   releasedCharge = 0;
   /**
+   * Seconds left on a buffered action press.
+   *
+   * Without this, a press only counts on the exact step the ball is inside
+   * the contact envelope: press a tenth of a second early — which is what
+   * good anticipation actually looks like — and the input is swallowed and
+   * the ball drops. The buffer keeps an early press armed until the ball
+   * arrives, the standard fix in every action game.
+   */
+  actionBuffer = 0;
+  /**
    * Set when the player calls for a Lethal Maneuver in mid-air. It survives
    * until the next contact or landing, so the input can be made a little early
    * without being swallowed.

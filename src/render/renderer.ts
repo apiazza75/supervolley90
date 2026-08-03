@@ -187,6 +187,7 @@ export class Renderer {
     for (const d of drawables) d.draw();
 
     this.effects.draw(ctx, cam);
+    this.drawTimingCue(world, state.time);
     this.drawPowerCoach(world, state.time, state.jumpLabel ?? 'SHIFT');
     if (this.flash > 0) {
       ctx.fillStyle = `rgba(255,236,196,${this.flash})`;
@@ -403,6 +404,59 @@ export class Renderer {
    * separated in time. That is undiscoverable from a gauge alone, so the game
    * says exactly what to press and marks the moment the window is open.
    */
+  /**
+   * The WHEN indicator.
+   *
+   * A ring around the ball closes as the ball drops into the active player's
+   * reach and snaps to a bright flash the moment it is actually playable, with
+   * PRESS! over the player. Before this the game only ever said *where* the
+   * ball would land, so a player standing in exactly the right place still had
+   * to guess the moment — and a press a fraction early was simply discarded.
+   */
+  private drawTimingCue(world: World, time: number): void {
+    const cue = world.playCue;
+    if (!cue) return;
+    const ctx = this.ctx;
+    const cam = this.camera;
+    const s = cam.projectVec(world.ball.pos);
+    const r = Math.max(11 * (cam.viewWidth / 1280), BALL_RADIUS * s.scale * 42 * 2.2);
+
+    ctx.save();
+    if (cue.ready) {
+      // Playable right now: a hard white ring, pulsing fast.
+      const pulse = 1 + Math.sin(time * 30) * 0.12;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = Math.max(3, 5 * s.scale);
+      ctx.globalAlpha = 0.95;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r * 1.5 * pulse, 0, Math.PI * 2);
+      ctx.stroke();
+
+      const p = world.humanTeam ? world.team(world.humanTeam.side).active : null;
+      if (p) {
+        const head = cam.project(p.pos.x, p.pos.y, p.height + 2.5);
+        ctx.font = '900 22px "Arial Black", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 6;
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = 'rgba(6,8,18,0.9)';
+        ctx.strokeText('PRESS!', head.x, head.y);
+        ctx.fillStyle = '#fff27a';
+        ctx.fillText('PRESS!', head.x, head.y);
+      }
+    } else if (cue.time < 1.1) {
+      // Closing in: the ring's radius IS the time left.
+      const k = clamp(cue.time / 1.1, 0, 1);
+      ctx.strokeStyle = '#7ef0ff';
+      ctx.globalAlpha = 0.35 + 0.5 * (1 - k);
+      ctx.lineWidth = Math.max(2, 3.5 * s.scale);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r * (1.5 + k * 5), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   private drawPowerCoach(world: World, time: number, jumpLabel: string): void {
     const ctx = this.ctx;
     const cam = this.camera;

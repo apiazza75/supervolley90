@@ -62,7 +62,7 @@ const pose = (
 const POSES: Record<string, Pose> = {
   // Volleyball ready stance: knees flexed, weight forward, hands ready in
   // front at hip height, feet staggered.
-  idle: pose(0.42, 0.2, [0.44, -0.78], [0.28, -0.94], [0.22, 0.62], [-0.2, 0.58], -0.06, -0.08),
+  idle: pose(0.58, 0.26, [0.46, -0.52], [0.3, -0.66], [0.16, 0.92], [-0.13, 0.86], -0.12, -0.14),
   // Sprint: high knee lift, elbows pumping at ninety degrees, torso driving.
   run: pose(0.2, 0.3, [1.0, -0.95], [-0.95, -0.95], [0.8, 0.2], [-0.6, 1.2], 0.04, -0.05),
   // Takeoff: both arms swinging up, legs tucking.

@@ -264,4 +264,33 @@ describe('match simulation', () => {
     // the ball is dying before anyone gets to play it.
     expect(avg).toBeGreaterThan(4);
   });
+
+  it('covers its own passes and sets instead of letting them hit the floor', () => {
+    const world = makeWorld(21);
+    let lastKind = 'none';
+    let dropped = 0;
+    let points = 0;
+
+    for (let i = 0; i < 120 * 60 * 25; i++) {
+      world.step(null);
+      for (const ev of world.drainEvents()) {
+        if (ev.type === 'contact') lastKind = ev.kind;
+        if (ev.type === 'point') {
+          points++;
+          // 'net' is the own-error reason: the ball landed on the floor of the
+          // side that touched it last. After a pass or a set that means nobody
+          // came for the next ball — a rally thrown away by the team's own
+          // organisation, not by the opponent.
+          if (ev.reason === 'net' && (lastKind === 'bump' || lastKind === 'set')) dropped++;
+        }
+      }
+      if (world.phase === 'matchOver') break;
+    }
+
+    expect(points).toBeGreaterThan(40);
+    // Jobs used to go to a fixed setter and a fixed attacker, so a setter who
+    // had just passed — or a hitter stranded across the court — left the ball
+    // unclaimed: roughly a quarter of all rallies ended that way.
+    expect(dropped / points).toBeLessThan(0.06);
+  });
 });

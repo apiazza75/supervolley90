@@ -7,7 +7,6 @@ import {
   GRAVITY,
   MAGNUS,
   NET_BAND_THICKNESS,
-  NET_BOTTOM,
   NET_HEIGHT,
   NET_RESTITUTION,
   SPIN_DECAY,
@@ -102,7 +101,10 @@ export class Ball {
     const crossedPlane = prevY !== 0 && Math.sign(prevY) !== Math.sign(this.pos.y);
     if (!insideBand && !crossedPlane) return;
     if (this.pos.z > NET_HEIGHT + BALL_RADIUS) return; // cleanly over the top
-    if (this.pos.z < NET_BOTTOM - BALL_RADIUS) return; // under the net, open space
+    // Everything below the tape is solid, right down to the floor. Real nets
+    // have a gap under the bottom band, but a ball skimming through it reads
+    // as the ball passing THROUGH the net, and the arcade original never let
+    // that happen: over the top, or not at all.
 
     // Which half the ball arrived from. It always gets sent back there.
     const fromSide = prevY !== 0 ? Math.sign(prevY) : Math.sign(this.pos.y) || -1;
@@ -187,7 +189,7 @@ export function predictLanding(ball: Ball, targetZ = BALL_RADIUS, horizon = 6): 
     // This threshold must match `Ball.collideNet` exactly — when it did not,
     // the landing marker happily promised a ball that the net was about to eat.
     const crossedNet = Math.sign(prevY) !== Math.sign(p.y);
-    if (crossedNet && p.z <= NET_HEIGHT + BALL_RADIUS && p.z >= NET_BOTTOM - BALL_RADIUS) {
+    if (crossedNet && p.z <= NET_HEIGHT + BALL_RADIUS) {
       return { point: v3(p.x, 0, p.z), time: t, valid: false };
     }
 
@@ -286,6 +288,75 @@ export function solveArcOverNet(
  * Launch velocity for a flat, fast strike towards `to` with a given speed.
  * Used by spikes and jump serves, where the player picks power, not arc.
  */
+/**
+ * Raise a launch velocity until its trajectory clears the tape by `margin`.
+ *
+ * Flat driven balls — jump serves, spikes — are solved for speed and
+ * direction, with nothing checking that they actually get over the net. While
+ * the net had an open gap underneath, a serve aimed too flat quietly sailed
+ * *through* it and was scored as a good serve. With the net solid to the
+ * floor those same trajectories became faults, which is the correct rule and
+ * the wrong feel; the fix is to launch them over the net in the first place.
+ *
+ * Uses the same closed-form drag integration as `Ball.step`, so the clearance
+ * it promises is the clearance the ball gets.
+ */
+export function clearsNet(from: Vec3, vel: Vec3, margin = 0.16): boolean {
+  if (from.y === 0 || Math.sign(vel.y) === Math.sign(from.y)) return true;
+  const k = AIR_DRAG;
+  const d = Math.abs(from.y);
+  const vy = Math.abs(vel.y);
+  if (vy < 1e-3) return true;
+  const ratio = (d * k) / vy;
+  if (ratio >= 1) return true;
+  const t = -Math.log(1 - ratio) / k;
+  const decay = (1 - Math.exp(-k * t)) / k;
+  const g = GRAVITY;
+  const zAtNet = from.z + (vel.z - g / k) * decay + (g / k) * t;
+  return zAtNet >= NET_HEIGHT + BALL_RADIUS + margin;
+}
+
+/**
+ * A fast, flat strike that is still guaranteed to arrive.
+ *
+ * Solving a drive for speed and direction alone says nothing about whether the
+ * ball gets over the net. While the net had an open gap underneath, a flat
+ * serve or spike quietly sailed *through* it and scored; with the net solid to
+ * the floor the same trajectories became faults — the correct rule and the
+ * wrong feel. Rather than simply tilting the launch up, which clears the tape
+ * but overshoots the court, this falls back to the arc solver so the ball both
+ * clears the net and lands where it was aimed.
+ */
+export function driveOverNet(from: Vec3, to: Vec3, speed: number, margin = 0.14): Vec3 {
+  const flat = solveDrive(from, to, speed);
+  if (clearsNet(from, flat, margin)) return flat;
+  const dist = Math.hypot(to.x - from.x, to.y - from.y);
+  const minFlight = Math.max(0.35, (dist / Math.max(6, speed)) * 1.05);
+  return solveArcOverNet(from, to, margin, minFlight, minFlight * 2.6);
+}
+
+export function clearNet(from: Vec3, vel: Vec3, margin = 0.16): Vec3 {
+  // Only balls actually heading across the net are concerned.
+  if (from.y === 0 || Math.sign(vel.y) === Math.sign(from.y)) return vel;
+  const k = AIR_DRAG;
+  const d = Math.abs(from.y);
+  const vy = Math.abs(vel.y);
+  if (vy < 1e-3) return vel;
+
+  // y(t) = y0 + vy (1 - e^-kt) / k  ->  invert for the crossing time.
+  const ratio = (d * k) / vy;
+  if (ratio >= 1) return vel; // drag stops it before the net; not our problem
+  const t = -Math.log(1 - ratio) / k;
+  const decay = (1 - Math.exp(-k * t)) / k;
+
+  const g = GRAVITY;
+  const zAtNet = from.z + (vel.z - g / k) * decay + (g / k) * t;
+  const needed = NET_HEIGHT + BALL_RADIUS + margin;
+  if (zAtNet >= needed) return vel;
+
+  return { x: vel.x, y: vel.y, z: vel.z + (needed - zAtNet) / decay };
+}
+
 export function solveDrive(from: Vec3, to: Vec3, speed: number): Vec3 {
   const dx = to.x - from.x;
   const dy = to.y - from.y;

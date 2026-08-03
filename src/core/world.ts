@@ -18,18 +18,20 @@ import { Vec3, clamp, copy, distXY, v3 } from './math3';
 import { Player } from './player';
 import { Rng } from './rng';
 import {
+  ACTION_BUFFER,
   BALL_RADIUS,
+  PLAYER_REACH,
   COURT_HALF_LENGTH,
   COURT_HALF_WIDTH,
   FIXED_DT,
   MAX_TOUCHES,
-  NET_BOTTOM,
   NET_HEIGHT,
   POWER_GAIN,
   OUT_MARGIN_X,
   OUT_MARGIN_Y,
   SETS_TO_WIN,
   Side,
+  TOSS_FORWARD,
   TOSS_SPEED,
   attackDir,
   isSetWon,
@@ -126,7 +128,7 @@ export class World {
   /** True between the serve contact and the ball crossing the net. */
   private serveInFlight = false;
   /** Whether the most recent touch was a block (blocks are free touches). */
-  private lastTouchWasBlock = false;
+  lastTouchWasBlock = false;
   /** Serve phase: ball in hand, or tossed and waiting for the strike. */
   private serveStage: 'hold' | 'toss' = 'hold';
   private tossedAt = 0;
@@ -253,6 +255,11 @@ export class World {
       }
       p.heldAction = cmd.actionHeld;
 
+      // Buffer the press so anticipating the ball is rewarded rather than
+      // punished. Cleared on contact, in registerTouch.
+      if (cmd.actionPressed) p.actionBuffer = ACTION_BUFFER;
+      else if (p.actionBuffer > 0) p.actionBuffer = Math.max(0, p.actionBuffer - dt);
+
       // On the ground the jump button jumps; in the air it calls for a Lethal
       // Maneuver, which is only honoured if the team's gauge is full.
       if (cmd.jumpPressed) {
@@ -373,7 +380,11 @@ export class World {
 
       if (cmd.actionPressed) {
         this.ball.frozen = false;
-        this.ball.vel = v3(0, 0, TOSS_SPEED);
+        // The toss goes UP AND FORWARD, into the court, which is what makes a
+        // jump serve a jump serve: the server runs under the ball and hits it
+        // moving forward. A toss straight up left the server rooted, and the
+        // jump read as a hop on the spot.
+        this.ball.vel = v3(0, attackDir(this.servingSide) * TOSS_FORWARD, TOSS_SPEED);
         this.ball.spin = v3();
         this.serveStage = 'toss';
         this.tossedAt = this.phaseTimer;
@@ -393,9 +404,16 @@ export class World {
       return;
     }
 
+    // Chasing the toss: a server who jumps after tossing carries forward
+    // momentum into the court, so the strike happens on the way in.
+    if (server.airborne && Math.abs(server.vel.y) < 0.3) {
+      server.vel.y = attackDir(this.servingSide) * 2.4;
+    }
+
     // Dropped toss: catch it and go again, no fault.
     if (this.ball.vel.z < 0 && this.ball.pos.z < 0.95) {
       this.serveStage = 'hold';
+      this.ball.vel = v3();
     }
   }
 
@@ -440,7 +458,9 @@ export class World {
     const opponent = p.side !== (this.humanTeam?.side ?? 'home');
     // Higher difficulty makes the opponent cleaner and the AI teammates sloppier
     // only in the sense that the player is expected to carry more of the load.
-    return opponent ? 1.15 - diff * 0.25 : 1.0;
+    // The opponent gets sharper with difficulty, but ARCADE is meant to be
+    // enjoyable rather than punishing.
+    return opponent ? 1.4 - diff * 0.3 : 1.0;
   }
 
   private resolveContacts(commands: Map<number, Command>): void {
@@ -461,7 +481,7 @@ export class World {
       // on our own side — instead of a bookkeeping "four touches" fault.
       if (this.possession === p.side && this.touches >= MAX_TOUCHES) continue;
       const cmd = commands.get(p.id);
-      if (!cmd?.actionPressed && !cmd?.actionHeld) continue;
+      if (!cmd?.actionPressed && !cmd?.actionHeld && p.actionBuffer <= 0) continue;
       const q = contactQuality(p, this.ball);
       if (!best || q > best.quality) best = { player: p, quality: q };
     }
@@ -607,6 +627,7 @@ export class World {
   }
 
   private registerTouch(p: Player, kind: ContactKind, speed: number): void {
+    p.actionBuffer = 0;
     this.events.push({
       type: 'contact',
       kind,
@@ -654,11 +675,11 @@ export class World {
     if (sign === this.crossedNetSign) return;
     this.crossedNetSign = sign;
 
-    // Outside the antennae — or under the net, through the open space below
-    // the band — is a fault against whoever hit it.
+    // Outside the antennae is a fault against whoever hit it. There is no
+    // under-the-net case any more: the net is solid down to the floor, so a
+    // low ball rebounds instead of sneaking through.
     const outsideAntennae = Math.abs(this.ball.pos.x) > COURT_HALF_WIDTH;
-    const underTheNet = this.ball.pos.z < NET_BOTTOM - BALL_RADIUS;
-    if ((outsideAntennae || underTheNet) && this.lastToucherSide) {
+    if (outsideAntennae && this.lastToucherSide) {
       this.antennaFaultSide = this.lastToucherSide;
     }
 
@@ -784,13 +805,24 @@ export class World {
       const mine = attackDir(side) > 0 ? aim.y < 0.4 : aim.y > -0.4;
       const focus = mine ? aim : this.ball.pos;
 
+      // Time to get there, not raw distance: the player who can arrive in
+      // time is the one worth steering, even if someone else stands closer.
+      const flight = mine && this.prediction.valid ? this.prediction.time : 0.4;
+
       let bestId = team.activeId;
       let bestScore = Infinity;
       for (const p of team.players) {
         if (p.downTime > 0) continue;
-        const d = distXY(p.pos, focus);
+        // The last toucher may not play the ball again, so handing them
+        // control means steering a player who physically cannot make the
+        // next contact — the player sets, control stays with them, and they
+        // run in to spike a ball the rules will not let them touch.
+        const ineligible = p.id === this.lastToucherId && !this.lastTouchWasBlock;
+        const travel = distXY(p.pos, focus) / Math.max(2, p.runSpeed);
+        const late = Math.max(0, travel - flight);
         // Sticky: the current player keeps a small bonus so control is stable.
-        const score = d - (p.id === team.activeId ? 0.9 : 0);
+        const score =
+          travel + late * 2 + (ineligible ? 6 : 0) - (p.id === team.activeId ? 0.25 : 0);
         if (score < bestScore) {
           bestScore = score;
           bestId = p.id;
@@ -798,6 +830,33 @@ export class World {
       }
       team.activeId = bestId;
     }
+  }
+
+  /**
+   * Timing cue for the player the human is steering: how long until the ball
+   * is playable, and whether it is playable right now.
+   *
+   * The landing marker says WHERE the ball goes. Nothing said WHEN to press,
+   * so a well-positioned player still watched the ball drop past them. This
+   * drives the closing ring on the ball and the PRESS! prompt.
+   */
+  get playCue(): { time: number; ready: boolean } | null {
+    const team = this.humanTeam;
+    if (!team) return null;
+    if (this.phase !== 'rally') return null;
+    if (this.ball.grounded || this.ball.frozen) return null;
+    const p = team.active;
+    if (p.id === this.lastToucherId && !this.lastTouchWasBlock) return null;
+    if (this.possession === p.side && this.touches >= MAX_TOUCHES) return null;
+    if (this.serveInFlight && p.side === this.servingSide) return null;
+
+    if (canReach(p, this.ball)) return { time: 0, ready: true };
+    // Where the ball will be at hand height for this player.
+    const target = p.height + PLAYER_REACH * 0.6;
+    if (this.ball.pos.z < target && this.ball.vel.z <= 0) return null;
+    const pred = predictLanding(this.ball, target, 2.5);
+    if (!pred.valid) return null;
+    return { time: pred.time, ready: false };
   }
 
   /** Drain accumulated events; the presentation layer calls this once a frame. */

@@ -1,5 +1,5 @@
 import { predictLanding } from './ball';
-import { Aim } from './contact';
+import { Aim, canReach } from './contact';
 import { Vec3, clamp, copy, distXY, v3 } from './math3';
 import { Player } from './player';
 import { Rng } from './rng';
@@ -96,6 +96,29 @@ export class TeamBrain {
   think(dt: number): void {
     for (const s of this.states.values()) if (s.reactionDelay > 0) s.reactionDelay -= dt;
     this.assignJobs();
+    this.playAnythingInReach();
+  }
+
+  /**
+   * Last-resort rule: a player who can physically touch the ball, and is
+   * allowed to, plays it — whatever job they were given.
+   *
+   * Jobs are assigned from a prediction made a moment earlier, so a ball that
+   * ends up somewhere else leaves a player standing inside arm's reach of it
+   * doing nothing while it lands. Nobody plays volleyball that way.
+   */
+  private playAnythingInReach(): void {
+    const w = this.world;
+    if (w.phase !== 'rally' || w.ball.grounded || w.ball.frozen) return;
+    for (const p of this.team.players) {
+      if (p.id === this.suppressedId) continue;
+      if (p.id === w.lastToucherId && !w.lastTouchWasBlock) continue;
+      if (w.possession === p.side && w.touches >= 3) continue;
+      if (!canReach(p, w.ball)) continue;
+      const s = this.stateOf(p);
+      s.wantsAction = true;
+      s.holdAction = false;
+    }
   }
 
   // --------------------------------------------------------------- assignment
@@ -192,6 +215,13 @@ export class TeamBrain {
     // Contact height for a set-up attack: the top of the hitting window.
     const attackPred = predictLanding(w.ball, NET_HEIGHT + 0.85);
     const floorPred = predictLanding(w.ball);
+    // Who takes the second and third balls. Both fall back to whoever can
+    // actually get there: the designated player is a preference, not a
+    // promise, because the ball does not always go where the plan assumed.
+    const setterId = this.pickBallHandler(floorPred, (p) => (p.role === 'setter' ? 2.2 : 0));
+    const attackerId = this.pickBallHandler(attackPred.valid ? attackPred : floorPred, (p) =>
+      p.id === this.designatedAttacker ? 2.6 : this.team.isFrontRow(p) ? 0.8 : 0,
+    );
 
     for (const p of this.team.players) {
       const s = this.stateOf(p);
@@ -199,14 +229,14 @@ export class TeamBrain {
       s.holdAction = false;
       s.armSpecial = false;
 
-      const isAttacker = p.id === this.designatedAttacker;
+      const isAttacker = p.id === attackerId;
 
       if (touches === 0 && p.id === this.designatedReceiver) {
         s.job = 'receive';
         s.goal = floorPred.valid ? copy(floorPred.point) : copy(w.ball.pos);
         s.goal.z = 0;
         this.driveReceive(p, s, floorPred.valid ? floorPred.time : 0.4);
-      } else if (touches === 1 && p.role === 'setter' && !isAttacker) {
+      } else if (touches === 1 && p.id === setterId) {
         s.job = 'set';
         s.goal = floorPred.valid ? copy(floorPred.point) : copy(w.ball.pos);
         s.goal.z = 0;
@@ -226,6 +256,41 @@ export class TeamBrain {
         s.goal = this.coverSpot(p, touches);
       }
     }
+  }
+
+  /**
+   * Who plays the second ball.
+   *
+   * The setter takes it whenever they can, which is the whole point of having
+   * one. But a setter who just made the pass may not touch the ball again, and
+   * a setter stranded on the far side of the court will not arrive: in both
+   * cases the job used to go unassigned and the pass simply hit the floor —
+   * about forty rallies a match ended that way. Real teams do the obvious
+   * thing instead: whoever can get there sets.
+   */
+  private pickBallHandler(
+    pred: { valid: boolean; point: Vec3; time: number },
+    prefer: (p: Player) => number,
+  ): number {
+    const w = this.world;
+    const goal = pred.valid ? pred.point : w.ball.pos;
+    const time = pred.valid ? pred.time : 0.4;
+
+    let bestId = -1;
+    let bestScore = Infinity;
+    for (const p of this.team.players) {
+      if (p.downTime > 0) continue;
+      // Ineligible: a player may not touch the ball twice in a row.
+      if (p.id === w.lastToucherId && !w.lastTouchWasBlock) continue;
+      const reach = p.runSpeed * Math.max(0.1, time) + 1.1;
+      const gap = distXY(p.pos, goal);
+      const score = gap - prefer(p) + (gap > reach ? 8 : 0);
+      if (score < bestScore) {
+        bestScore = score;
+        bestId = p.id;
+      }
+    }
+    return bestId;
   }
 
   /** Opponent has the ball: block at the net, dig behind it. */
