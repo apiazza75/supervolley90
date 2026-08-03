@@ -34,6 +34,19 @@ interface Pose {
    * clip-art.
    */
   arch?: number;
+  /**
+   * Where the feet are, as [forward offset, height above the floor] in units
+   * of standing height — far foot then near foot.
+   *
+   * Grounded poses specify FEET, not joint angles, and the knee is solved to
+   * match. Driving the legs from fixed angles while the crouch depth moved the
+   * hips independently meant nothing held the feet on the floor: a deep ready
+   * stance folded the leg into a Z with the shin swinging out behind, which is
+   * exactly the "knees bent forwards, unnatural" look. Real stance geometry is
+   * the other way round — the floor and the hips are given, and the knee goes
+   * wherever it must.
+   */
+  feet?: [[number, number], [number, number]];
 }
 
 const pose = (
@@ -46,7 +59,8 @@ const pose = (
   head = 0,
   arch = 0,
   armSpread = 1,
-): Pose => ({ crouch, lean, armFar, armNear, legFar, legNear, head, arch, armSpread });
+  feet?: [[number, number], [number, number]],
+): Pose => ({ crouch, lean, armFar, armNear, legFar, legNear, head, arch, armSpread, feet });
 
 /**
  * The pose library.
@@ -62,7 +76,10 @@ const pose = (
 const POSES: Record<string, Pose> = {
   // Volleyball ready stance: knees flexed, weight forward, hands ready in
   // front at hip height, feet staggered.
-  idle: pose(0.58, 0.26, [0.46, -0.52], [0.3, -0.66], [0.16, 0.92], [-0.13, 0.86], -0.12, -0.14),
+  idle: pose(0.58, 0.3, [0.46, -0.52], [0.3, -0.66], [0.16, 0.92], [-0.13, 0.86], -0.12, -0.16, 1, [
+    [-0.09, 0],
+    [0.1, 0],
+  ]),
   // Sprint: high knee lift, elbows pumping at ninety degrees, torso driving.
   run: pose(0.2, 0.3, [1.0, -0.95], [-0.95, -0.95], [0.8, 0.2], [-0.6, 1.2], 0.04, -0.05),
   // Takeoff: both arms swinging up, legs tucking.
@@ -79,17 +96,29 @@ const POSES: Record<string, Pose> = {
   // Penetrating block: both arms rammed straight up, body a plank.
   block: pose(0.0, 0.04, [3.16, -0.04], [2.88, -0.08], [0.12, 0.45], [-0.12, 0.45], -0.16, 0.08, 0.9),
   // Overhead set: hands above the forehead, elbows out, knees loaded.
-  set: pose(0.3, 0.0, [2.3, -0.62], [2.68, -0.46], [0.26, 0.5], [-0.26, 0.5], -0.2, 0.12, 0.8),
+  set: pose(0.34, 0.02, [2.3, -0.62], [2.68, -0.46], [0.26, 0.5], [-0.26, 0.5], -0.2, 0.12, 0.8, [
+    [-0.07, 0],
+    [0.08, 0],
+  ]),
   // The platform: both arms dead straight, locked together, angled to the
   // ball; deep staggered squat, eyes up.
-  bump: pose(0.5, 0.32, [1.0, -0.02], [0.9, -0.02], [0.55, 0.8], [-0.5, 0.75], -0.14, -0.28, 0.5),
+  bump: pose(0.62, 0.34, [1.0, -0.02], [0.9, -0.02], [0.55, 0.8], [-0.5, 0.75], -0.14, -0.3, 0.5, [
+    [-0.13, 0],
+    [0.14, 0],
+  ]),
   // Holding the ball out front, ready to toss.
-  serve: pose(0.24, 0.1, [0.3, -0.7], [1.5, -0.15], [0.3, 0.4], [-0.22, 0.35], -0.06, 0.05),
+  serve: pose(0.3, 0.12, [0.3, -0.7], [1.5, -0.15], [0.3, 0.4], [-0.22, 0.35], -0.06, 0.05, 1, [
+    [-0.1, 0],
+    [0.09, 0],
+  ]),
   // Full-extension dig: body laid out horizontal (the draw code rotates it
   // flat), both arms locked straight past the head, legs trailing.
   dive: pose(0.35, 1.35, [2.66, -0.06], [2.56, -0.1], [-0.35, 0.5], [-0.6, 0.35], -0.42, 0.25, 0.35),
   // Absorbing the landing: deep flex, arms out for balance.
-  land: pose(0.5, 0.18, [0.6, -0.7], [0.42, -0.8], [0.34, 0.95], [-0.3, 0.95], 0.06, -0.15),
+  land: pose(0.66, 0.2, [0.6, -0.7], [0.42, -0.8], [0.34, 0.95], [-0.3, 0.95], 0.06, -0.18, 1, [
+    [-0.14, 0],
+    [0.15, 0],
+  ]),
   // Sprawled on the floor after the dive, pushing up on one arm.
   down: pose(0.8, 1.5, [1.2, -0.55], [0.5, -0.9], [-0.3, 0.7], [-0.55, 0.5], -0.5, -0.1),
 };
@@ -104,6 +133,13 @@ const blend = (a: Pose, b: Pose, t: number): Pose => ({
   head: lerp(a.head, b.head, t),
   arch: lerp(a.arch ?? 0, b.arch ?? 0, t),
   armSpread: lerp(a.armSpread ?? 1, b.armSpread ?? 1, t),
+  feet:
+    a.feet && b.feet
+      ? [
+          [lerp(a.feet[0][0], b.feet[0][0], t), lerp(a.feet[0][1], b.feet[0][1], t)],
+          [lerp(a.feet[1][0], b.feet[1][0], t), lerp(a.feet[1][1], b.feet[1][1], t)],
+        ]
+      : (b.feet ?? a.feet),
 });
 
 const clonePose = (p: Pose): Pose => blend(p, p, 0);
@@ -185,6 +221,54 @@ function capsule(
     ctx.strokeStyle = OUTLINE;
     ctx.stroke();
   }
+}
+
+/**
+ * Two-bone inverse kinematics in the drawing plane.
+ *
+ * Given a hip and a foot, place the knee. `kneeDir` is +1 when the knee should
+ * bow towards the front of the figure, which for a leg it always does. When the
+ * target is further away than the leg is long the leg simply straightens
+ * towards it rather than tearing free of the foot.
+ */
+function solveLeg(
+  hx: number,
+  hy: number,
+  fx: number,
+  fy: number,
+  upper: number,
+  lower: number,
+  kneeDir: number,
+): { jx: number; jy: number; ex: number; ey: number } {
+  let dx = fx - hx;
+  let dy = fy - hy;
+  let d = Math.hypot(dx, dy);
+  const max = (upper + lower) * 0.999;
+  const min = Math.abs(upper - lower) * 1.001 + 1e-4;
+  if (d > max) {
+    const k = max / d;
+    dx *= k;
+    dy *= k;
+    d = max;
+  } else if (d < min) {
+    const k = min / Math.max(d, 1e-4);
+    dx *= k;
+    dy *= k;
+    d = min;
+  }
+  const ex = hx + dx;
+  const ey = hy + dy;
+  // Distance along the hip->foot line to the knee's projection.
+  const a = (upper * upper - lower * lower + d * d) / (2 * d);
+  const h = Math.sqrt(Math.max(0, upper * upper - a * a));
+  const ux = dx / d;
+  const uy = dy / d;
+  return {
+    jx: hx + ux * a + uy * h * kneeDir,
+    jy: hy + uy * a - ux * h * kneeDir,
+    ex,
+    ey,
+  };
 }
 
 /** Forward kinematics for a two-segment limb. Returns joint and end points. */
@@ -372,6 +456,7 @@ export function drawPlayer(
 
   const drawLeg = (
     spec: [number, number],
+    foot: [number, number] | null,
     side: number,
     legFill: string,
     shortsFill: string,
@@ -380,7 +465,12 @@ export function drawPlayer(
     // Legs hang from hip joints set apart across the pelvis, not from a single
     // point in the middle of the body.
     const hipX = side * unit * 0.016;
-    const { jx, jy, ex, ey } = limbPoints(hipX, hipY, spec[0], spec[1], thigh, shin);
+    // A planted foot wins over any joint angle: solve the knee to reach it.
+    // `facing` has already been applied to the canvas, so the foot's forward
+    // offset is in the figure's own frame and the knee always bows forward.
+    const { jx, jy, ex, ey } = foot
+      ? solveLeg(hipX, hipY, foot[0] * unit, -foot[1] * unit, thigh, shin, 1)
+      : limbPoints(hipX, hipY, spec[0], spec[1], thigh, shin);
     // Legs are bare skin — they are a volleyball player's, not a footballer's.
     // Painting them in the kit colour, as an earlier version did, fused torso,
     // shorts and legs into one solid block with no readable silhouette.
@@ -419,7 +509,7 @@ export function drawPlayer(
       outline * 0.8,
       true,
     );
-    drawShoe(ex, ey, spec[0] - spec[1], shoeFill);
+    drawShoe(ex, ey, Math.atan2(ex - jx, ey - jy), shoeFill);
   };
 
   /** A hand: a mitt aligned with the forearm, with a thumb — not a ball. */
@@ -473,7 +563,7 @@ export function drawPlayer(
 
   // Far side first, so the body reads with depth.
   drawArm(current.armFar, -1, shade(kit, -0.22));
-  drawLeg(current.legFar, -1, shade(skin, -0.14), shade(trim, -0.2), '#dfe4ee');
+  drawLeg(current.legFar, current.feet?.[0] ?? null, -1, shade(skin, -0.14), shade(trim, -0.2), '#dfe4ee');
 
   // ---- torso
   //
@@ -573,11 +663,12 @@ export function drawPlayer(
   ctx.fillRect(-halfChest * 1.6, chestY - unit * 0.01, halfChest * 3.2, unit * 0.026);
   ctx.fillStyle = 'rgba(255,255,255,0.26)';
   ctx.fillRect(-halfChest * 1.6, chestY + unit * 0.018, halfChest * 3.2, unit * 0.009);
-  ctx.restore();
-  // Waistband and collar.
+  // Waistband and collar stay INSIDE the clip. Drawn outside it, as they were,
+  // their ends projected past the body outline — the stray lines sticking out
+  // of the figures.
   ctx.beginPath();
-  ctx.moveTo(-halfPelvis * 1.1, shortsTop);
-  ctx.lineTo(halfPelvis * 1.1, shortsTop);
+  ctx.moveTo(-halfPelvis * 1.4, shortsTop);
+  ctx.lineTo(halfPelvis * 1.4, shortsTop);
   ctx.strokeStyle = shade(trim, -0.4);
   ctx.lineWidth = outline;
   ctx.stroke();
@@ -588,6 +679,7 @@ export function drawPlayer(
   ctx.strokeStyle = shade(kit, -0.35);
   ctx.lineWidth = outline;
   ctx.stroke();
+  ctx.restore();
 
   // Number on the chest, mirrored back so it never reads reversed.
   if (unit > 46) {
@@ -604,7 +696,7 @@ export function drawPlayer(
   }
 
   // Near side.
-  drawLeg(current.legNear, 1, skin, trim, '#f2f5fb');
+  drawLeg(current.legNear, current.feet?.[1] ?? null, 1, skin, trim, '#f2f5fb');
   drawArm(current.armNear, 1, kit);
 
   // ---- head
@@ -647,37 +739,64 @@ export function drawPlayer(
   ctx.lineWidth = outline * 0.7;
   ctx.strokeStyle = OUTLINE;
   ctx.stroke();
-  // Hair: a solid cap over the crown running down the back of the skull to
-  // the nape. Drawn as one convex outline — an earlier version doubled back
-  // on itself and left a notch cut out of the head.
+  // Hair. Four cuts, picked from the player id: a whole team wearing one
+  // haircut is the tell that these are copies of a single figure rather than
+  // twelve different people.
+  const cut = p.id % 4;
+  const nape = cut === 0 ? 0.5 : cut === 1 ? 0.16 : cut === 2 ? 0.72 : 0.28;
+  const volume = cut === 3 ? 1.3 : cut === 1 ? 1.0 : 1.14;
+  const brow = cut === 2 ? 0.3 : 0.44;
   ctx.beginPath();
-  ctx.moveTo(headW * 0.84, -headH * 0.44);
-  ctx.quadraticCurveTo(headW * 0.42, -headH * 1.18, -headW * 0.58, -headH * 0.92);
-  ctx.quadraticCurveTo(-headW * 1.16, -headH * 0.3, -headW * 0.8, headH * 0.42);
-  ctx.quadraticCurveTo(-headW * 0.5, headH * 0.2, -headW * 0.5, -headH * 0.16);
-  ctx.quadraticCurveTo(-headW * 0.3, -headH * 0.68, headW * 0.84, -headH * 0.44);
+  ctx.moveTo(headW * 0.84, -headH * brow);
+  ctx.quadraticCurveTo(
+    headW * 0.42,
+    -headH * (0.86 + 0.3 * volume),
+    -headW * 0.58,
+    -headH * 0.92 * volume,
+  );
+  ctx.quadraticCurveTo(-headW * 1.16 * volume, -headH * 0.3, -headW * 0.8, headH * nape);
+  ctx.quadraticCurveTo(-headW * 0.5, headH * (nape - 0.22), -headW * 0.5, -headH * 0.16);
+  ctx.quadraticCurveTo(-headW * 0.3, -headH * 0.68, headW * 0.84, -headH * brow);
   ctx.closePath();
   ctx.fillStyle = hair;
   ctx.fill();
-  // Face features, in profile.
-  if (unit > 40) {
-    // Brow ridge.
-    ctx.strokeStyle = '#20202c';
-    ctx.lineWidth = Math.max(0.8, headW * 0.12);
+  if (cut === 1) {
+    // A headband, for the sweatband generation.
     ctx.beginPath();
-    ctx.moveTo(headW * 0.44, -headH * 0.26);
-    ctx.lineTo(headW * 0.84, -headH * 0.2);
+    ctx.moveTo(headW * 0.92, -headH * 0.34);
+    ctx.lineTo(-headW * 0.9, -headH * 0.46);
+    ctx.lineWidth = headH * 0.19;
+    ctx.strokeStyle = '#e9eef7';
+    ctx.stroke();
+  }
+  // Face features, in profile.
+  //
+  // A heavy brow angled down towards the nose reads as a scowl, and every
+  // player wearing it made the whole court look furious. The brow is now a
+  // light, level accent and the mouth is relaxed.
+  if (unit > 40) {
+    ctx.strokeStyle = 'rgba(40,36,52,0.75)';
+    ctx.lineWidth = Math.max(0.7, headW * 0.085);
+    ctx.beginPath();
+    ctx.moveTo(headW * 0.48, -headH * 0.24);
+    ctx.lineTo(headW * 0.86, -headH * 0.26);
     ctx.stroke();
     // Eye, close to the nose the way a profile puts it.
     ctx.beginPath();
-    ctx.ellipse(headW * 0.66, -headH * 0.02, headW * 0.12, headH * 0.1, 0, 0, Math.PI * 2);
+    ctx.ellipse(headW * 0.66, -headH * 0.02, headW * 0.11, headH * 0.095, 0, 0, Math.PI * 2);
     ctx.fillStyle = '#20202c';
     ctx.fill();
-    // Mouth line.
+    // Mouth: a short relaxed line, with a hint of a smile on some players.
     ctx.beginPath();
-    ctx.moveTo(headW * 0.62, headH * 0.36);
-    ctx.lineTo(headW * 0.86, headH * 0.34);
-    ctx.lineWidth = Math.max(0.7, headW * 0.09);
+    ctx.moveTo(headW * 0.64, headH * 0.36);
+    ctx.quadraticCurveTo(
+      headW * 0.76,
+      headH * (p.id % 3 === 0 ? 0.42 : 0.36),
+      headW * 0.86,
+      headH * 0.33,
+    );
+    ctx.strokeStyle = 'rgba(40,36,52,0.7)';
+    ctx.lineWidth = Math.max(0.6, headW * 0.075);
     ctx.stroke();
   }
   ctx.restore();

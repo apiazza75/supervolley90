@@ -67,7 +67,7 @@ export const TOSS_SPEED = 6.4;
  * Forward component of the serve toss, m/s. A jump serve is struck moving
  * into the court, so the ball has to be thrown ahead of the server.
  */
-export const TOSS_FORWARD = 1.6;
+export const TOSS_FORWARD = 0.55;
 
 /** Fixed simulation timestep (120 Hz) — rendering interpolates between steps. */
 export const FIXED_DT = 1 / 120;

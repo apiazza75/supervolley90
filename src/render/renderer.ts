@@ -224,6 +224,28 @@ export class Renderer {
 
     ctx.save();
 
+    // A run guide: a line from the player you are steering to the spot they
+    // need to reach. In a side elevation the court's depth is only a few
+    // pixels, so "which way do I go, and how far" is genuinely hard to read
+    // from a marker alone — the line answers both at a glance.
+    if (yours && inCourt && world.humanTeam) {
+      const me = world.team(world.humanTeam.side).active;
+      const from = cam.projectFloor(me.pos.x, me.pos.y);
+      const dist = Math.hypot(pred.point.x - me.pos.x, pred.point.y - me.pos.y);
+      if (dist > 0.55) {
+        ctx.setLineDash([7, 6]);
+        ctx.lineDashOffset = -this.markerTime * 34;
+        ctx.strokeStyle = 'rgba(126,240,255,0.75)';
+        ctx.lineWidth = Math.max(1.6, 2.4 * s.scale);
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(s.x, s.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.lineDashOffset = 0;
+      }
+    }
+
     // Outer ring: where the ball will land.
     ctx.globalAlpha = 0.85;
     ctx.strokeStyle = color;

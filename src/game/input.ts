@@ -182,7 +182,10 @@ export class InputManager {
     return {
       moveX: dir.y,
       moveY: dir.x,
-      actionPressed: this.actionEdge || action,
+      // A press is an EDGE, never "the button happens to be down". Reporting a
+      // held button as a fresh press meant the serve struck itself the instant
+      // its window opened — you could toss, but never jump and then hit.
+      actionPressed: this.actionEdge,
       actionHeld: action,
       jumpPressed: this.jumpEdge,
       aim: {

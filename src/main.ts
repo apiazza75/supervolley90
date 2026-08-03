@@ -106,10 +106,17 @@ class Game {
         }
 
         this.accumulator += dt;
-        const command = this.input.command();
+        // Edges belong to ONE simulation step. A display frame usually spans
+        // two fixed steps, and feeding the same command to both replayed every
+        // press: the toss press was still "pressed" on the next step, which is
+        // half of why the serve fired itself.
+        let command = this.input.command();
         let steps = 0;
         while (this.accumulator >= FIXED_DT && steps < 8) {
           world.step(command);
+          if (command.actionPressed || command.jumpPressed) {
+            command = { ...command, actionPressed: false, jumpPressed: false };
+          }
           this.accumulator -= FIXED_DT;
           steps++;
         }

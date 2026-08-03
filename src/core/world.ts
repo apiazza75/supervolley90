@@ -138,14 +138,25 @@ export class World {
     return this.phase === 'serve' && this.serveStage === 'toss';
   }
 
-  /** True in the window where a press would strike the toss. */
+  /**
+   * True in the window where a press would strike the toss.
+   *
+   * Deliberately looser than an ordinary contact. The serve is the one moment
+   * the player is standing still with all the time in the world, so the game
+   * should not also demand that they be inside a 1.3 m bubble: with a toss
+   * drifting forward that test made the serve unhittable unless the server
+   * stepped into the court.
+   */
   get serveStrikeReady(): boolean {
     if (!this.serveTossInFlight) return false;
     const server = this.team(this.servingSide).server;
+    const reachTop = server.height + PLAYER_REACH + (server.airborne ? 0.7 : 0.35);
     return (
-      this.phaseTimer - this.tossedAt > 0.22 &&
-      (server.airborne || this.ball.vel.z < 1.2) &&
-      canReach(server, this.ball)
+      this.phaseTimer - this.tossedAt > 0.2 &&
+      (server.airborne || this.ball.vel.z < 1.6) &&
+      this.ball.pos.z > 1.2 &&
+      this.ball.pos.z < reachTop &&
+      distXY(server.pos, this.ball.pos) < 1.9
     );
   }
 
@@ -308,14 +319,22 @@ export class World {
       }
     }
 
-    // Grounded players who are not running square up to the ball, the way real
-    // players track it between actions. Facing is purely presentational, so
-    // this changes nothing physical — but it is most of what makes the court
-    // read as people playing rather than mannequins pointed at random.
+    // Where everyone is looking. Purely presentational, but it is most of what
+    // makes the court read as people playing rather than mannequins pointed at
+    // random.
     if (this.phase === 'serve' || this.phase === 'rally') {
       for (const p of this.allPlayers()) {
         if (p.airborne || p.diving || p.downTime > 0) continue;
         if (Math.hypot(p.vel.x, p.vel.y) > 1.4) continue;
+
+        // During a serve everyone except the server faces the net, ready for
+        // the rally. Tracking the ball here turned the serving team around to
+        // watch their own server, backs to the play.
+        if (this.phase === 'serve' && p.id !== this.team(this.servingSide).server.id) {
+          p.facing = attackDir(p.side);
+          continue;
+        }
+
         const dy = this.ball.pos.y - p.pos.y;
         if (Math.abs(dy) > 0.25) p.facing = Math.sign(dy);
       }
@@ -389,6 +408,10 @@ export class World {
         this.serveStage = 'toss';
         this.tossedAt = this.phaseTimer;
         server.setAnim('set');
+        // The toss press must not also count as the swing: without clearing
+        // the buffer here the serve fired itself the instant the strike window
+        // opened, and the player never got to jump.
+        server.actionBuffer = 0;
       }
       return;
     }
@@ -396,7 +419,9 @@ export class World {
     // Ball in the air. The short delay stops the toss press itself from
     // doubling as the hit; requiring the ball to have stopped rising keeps the
     // contact at the top of the arc, where a serve is actually struck.
-    if (cmd.actionPressed && this.serveStrikeReady) {
+    // A press that arrives before the window opens is held, not thrown away,
+    // so mistiming the swing by a fraction still produces a serve.
+    if ((cmd.actionPressed || server.actionBuffer > 0) && this.serveStrikeReady) {
       // Contact height decides the serve. 1.8 m is roughly a standing chest
       // strike; full jumping reach pushes the charge towards 1.
       const charge = clamp((this.ball.pos.z - 1.8) / 1.3, 0, 1);
@@ -404,10 +429,11 @@ export class World {
       return;
     }
 
-    // Chasing the toss: a server who jumps after tossing carries forward
-    // momentum into the court, so the strike happens on the way in.
-    if (server.airborne && Math.abs(server.vel.y) < 0.3) {
-      server.vel.y = attackDir(this.servingSide) * 2.4;
+    // Chasing the toss: a server who jumps after tossing carries a little
+    // forward momentum, enough to read as an approach without stranding them
+    // metres from a ball they can no longer reach.
+    if (server.airborne && Math.abs(server.vel.y) < 0.2) {
+      server.vel.y = attackDir(this.servingSide) * 1.1;
     }
 
     // Dropped toss: catch it and go again, no fault.
