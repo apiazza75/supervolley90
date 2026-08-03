@@ -30,6 +30,8 @@ interface Brainstate {
   aim: Aim;
   /** Serve timing: how long this server holds the ball. */
   serveHold: number;
+  /** Request a Lethal Maneuver on this step. */
+  armSpecial: boolean;
 }
 
 const newState = (): Brainstate => ({
@@ -40,6 +42,7 @@ const newState = (): Brainstate => ({
   holdAction: false,
   aim: { x: 0, depth: 0.4 },
   serveHold: 0.6,
+  armSpecial: false,
 });
 
 /**
@@ -136,7 +139,12 @@ export class TeamBrain {
         s.goal = copy(p.pos);
         // Pick a serve target once per serve: mostly deep, sometimes short.
         if (s.serveHold <= 0) {
-          s.serveHold = this.rng.range(0.45, 0.95) + this.difficulty * 0.25;
+          // Mostly a safe serve; occasionally go for the big one. Holding
+          // longer means more power and more risk, so a server that always
+          // maxed the charge simply handed points away.
+          s.serveHold = this.rng.chance(0.28)
+            ? this.rng.range(0.7, 1.05)
+            : this.rng.range(0.16, 0.42);
           s.aim = {
             x: this.rng.range(-0.8, 0.8),
             depth: this.rng.chance(0.25) ? this.rng.range(-0.5, 0) : this.rng.range(0.4, 0.95),
@@ -177,6 +185,7 @@ export class TeamBrain {
       const s = this.stateOf(p);
       s.wantsAction = false;
       s.holdAction = false;
+      s.armSpecial = false;
 
       const isAttacker = p.id === this.designatedAttacker;
 
@@ -304,6 +313,12 @@ export class TeamBrain {
     // Start charging early so the swing lands with real power.
     s.holdAction = timeToContact < 0.7;
 
+    // Spend a full gauge once airborne. Hold it back at low difficulty so a
+    // Lethal Maneuver still feels like an event rather than every third point.
+    if (p.airborne && !p.specialArmed && this.team.powerReady) {
+      s.armSpecial = this.rng.chance(0.35 + this.difficulty * 0.3);
+    }
+
     // Aim away from the block, and away from where the defence is standing.
     const opponent = w.team(otherSide(this.team.side));
     const blockers = opponent.players.filter((o) => o.airborne && Math.abs(o.pos.y) < 1.6);
@@ -423,7 +438,9 @@ export class TeamBrain {
       moveY: 0,
       actionPressed: false,
       actionHeld: false,
-      jumpPressed: false,
+      // The AI jumps by calling Player.jump directly, so this flag carries only
+      // the Lethal Maneuver request, which the world reads mid-air.
+      jumpPressed: s.armSpecial,
       aim: s.aim,
     };
     if (p.id === this.suppressedId) return cmd;

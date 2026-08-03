@@ -14,7 +14,24 @@ import {
   attackDir,
 } from './rules';
 
-export type ContactKind = 'serve' | 'bump' | 'set' | 'spike' | 'tip' | 'block' | 'save';
+export type ContactKind =
+  | 'serve'
+  | 'bump'
+  | 'set'
+  | 'spike'
+  | 'tip'
+  | 'block'
+  | 'save'
+  | 'power';
+
+/** The three Lethal Maneuvers, chosen by where the stick is pushed. */
+export type PowerMove = 'meteor' | 'comet' | 'phantom';
+
+export const POWER_MOVE_NAMES: Record<PowerMove, string> = {
+  meteor: 'METEOR SMASH',
+  comet: 'COMET DRIVE',
+  phantom: 'PHANTOM DROP',
+};
 
 export interface Aim {
   /** -1 .. +1 across the court, relative to the attacking direction. */
@@ -96,6 +113,8 @@ export interface StrikeContext {
   setterTarget?: Vec3;
   /** Attacker position for sets. */
   attackerTarget?: Vec3;
+  /** True when the player has armed a Lethal Maneuver and the gauge is full. */
+  special?: boolean;
 }
 
 /** Scatter added to a target, shrinking with the player's control stat. */
@@ -110,9 +129,11 @@ export function performServe(ctx: StrikeContext): StrikeResult {
   const { player, ball, aim, charge } = ctx;
   const from = contactPoint(player, ball);
   const target = aimToTarget(player.side, aim);
-  const s = scatter(ctx, 0.38);
-  target.x = clamp(target.x + s.x, -COURT_HALF_WIDTH + 0.2, COURT_HALF_WIDTH - 0.2);
-  target.y += s.y;
+  // Serving has to be a gamble, or there is no reason ever to hit a soft one.
+  // Both the spread and the risk of clipping the tape grow with the charge.
+  const s = scatter(ctx, 0.28 + 0.3 * charge);
+  target.x = clamp(target.x + s.x, -COURT_HALF_WIDTH - 0.4, COURT_HALF_WIDTH + 0.4);
+  target.y += s.y + charge * 0.22;
 
   // Below half charge it is a floater: slow, high, heavy wobble. Above, it
   // becomes a jump serve — flat, fast and much harder to pass.
@@ -126,7 +147,9 @@ export function performServe(ctx: StrikeContext): StrikeResult {
   }
 
   const flight = lerp(1.5, 1.05, charge);
-  const vel = solveArcOverNet(from, target, 0.45, flight, 2.2);
+  // A floater is lobbed safely over; a driven serve skims the tape and can
+  // catch it. The clearance the solver guarantees shrinks as power goes up.
+  const vel = solveArcOverNet(from, target, lerp(0.5, 0.22, charge), flight, 2.2);
   // Floaters get almost no spin but a randomised sideways nudge: that is what
   // makes them dip unpredictably in the real sport. Kept modest, because the
   // Magnus term is strong enough to bury the serve in the tape otherwise.
@@ -178,6 +201,62 @@ export function performSet(ctx: StrikeContext): StrikeResult {
   return { kind: 'set', target, speed: Math.hypot(vel.x, vel.y, vel.z) };
 }
 
+/** Which Lethal Maneuver the current aim selects. */
+export function powerMoveFor(aim: Aim): PowerMove {
+  if (aim.depth < -0.35) return 'phantom';
+  if (Math.abs(aim.x) > 0.45) return 'comet';
+  return 'meteor';
+}
+
+/**
+ * A Lethal Maneuver: the signature move of the genre's "hyper" modes.
+ *
+ * These are not just faster spikes. Each one breaks a different assumption the
+ * defence is making — where the ball is going, how it curves, or when it will
+ * arrive — which is what makes spending a full gauge feel decisive rather than
+ * merely strong.
+ */
+export function performPowerMove(ctx: StrikeContext): StrikeResult & { move: PowerMove } {
+  const { player, ball, aim } = ctx;
+  const from = contactPoint(player, ball);
+  const dir = attackDir(player.side);
+  const move = powerMoveFor(aim);
+  const strength = 0.85 + 0.3 * player.stats.power;
+
+  if (move === 'phantom') {
+    // Floats up, stalls, then drops almost vertically just past the block.
+    const target = aimToTarget(player.side, { x: aim.x * 0.8, depth: -0.75 });
+    const vel = solveArcOverNet(from, target, 0.45, 0.7, 1.3);
+    // Backspin fights gravity on the way over, then the ball falls off a cliff.
+    ball.strike(vel, v3(2.6 * dir, 0, 0));
+    player.swing = 0.34;
+    player.setAnim('spike');
+    return { kind: 'power', target, speed: 18, move };
+  }
+
+  if (move === 'comet') {
+    // Extreme sidespin: leaves towards one antenna and hooks back inside.
+    const side = Math.sign(aim.x) || 1;
+    const target = aimToTarget(player.side, { x: side * 0.95, depth: 0.55 });
+    const launch = aimToTarget(player.side, { x: side * 1.9, depth: 0.75 });
+    const vel = solveDrive(from, launch, 30 * strength);
+    // Sidespin is scaled by the attack direction for the same reason as an
+    // ordinary spike: Magnus depends on the sign of the velocity.
+    ball.strike(vel, v3(-4 * dir, 0, -side * 13 * dir));
+    player.swing = 0.34;
+    player.setAnim('spike');
+    return { kind: 'power', target, speed: 30 * strength, move };
+  }
+
+  // Meteor: straight down off the top of the reach, as fast as the ball goes.
+  const target = aimToTarget(player.side, { x: aim.x * 0.7, depth: -0.1 });
+  const vel = solveDrive(from, target, 38 * strength);
+  ball.strike(vel, v3(-9 * dir, 0, 0));
+  player.swing = 0.36;
+  player.setAnim('spike');
+  return { kind: 'power', target, speed: 38 * strength, move };
+}
+
 export function performAttack(ctx: StrikeContext): StrikeResult {
   const { player, ball, aim, charge } = ctx;
   const from = contactPoint(player, ball);
@@ -211,8 +290,13 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
   const vel = solveDrive(from, target, power);
 
   // Topspin, plus a sidespin component matching how far the hitter cut the ball.
+  //
+  // Both spins are multiplied by the attack direction. The Magnus force is
+  // spin x velocity, so without that factor an identical spin curves one way
+  // for the home team and the opposite way for the away team — which quietly
+  // made one side hit twice as many balls out as the other.
   const dir = attackDir(player.side);
-  const spin = v3(-5.5 * dir, 0, -aim.x * 3.4);
+  const spin = v3(-5.5 * dir, 0, -aim.x * 3.4 * dir);
   ball.strike(vel, spin);
   player.swing = 0.3;
   player.setAnim('spike');

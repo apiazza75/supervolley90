@@ -32,6 +32,8 @@ function parseArgs(argv: string[]): Args {
 }
 
 interface Stats {
+  /** Per-side tallies, to catch asymmetries between home and away. */
+  bySide: Record<string, Record<string, number>>;
   points: number;
   rallies: number[];
   touches: number[];
@@ -52,6 +54,7 @@ function runMatch(seed: number, difficulty: number, verbose: boolean): Stats {
   });
 
   const stats: Stats = {
+    bySide: { home: {}, away: {} },
     points: 0,
     rallies: [],
     touches: [],
@@ -73,16 +76,22 @@ function runMatch(seed: number, difficulty: number, verbose: boolean): Stats {
 
   function handle(ev: GameEvent): void {
     switch (ev.type) {
-      case 'contact':
+      case 'contact': {
         touchesThisRally++;
         stats.contacts[ev.kind] = (stats.contacts[ev.kind] ?? 0) + 1;
+        const side = stats.bySide[ev.side];
+        side[ev.kind] = (side[ev.kind] ?? 0) + 1;
         break;
+      }
       case 'point': {
         stats.points++;
         stats.rallies.push(ev.rallyLength);
         stats.touches.push(touchesThisRally);
         const r: PointReason = ev.reason;
         stats.reasons[r] = (stats.reasons[r] ?? 0) + 1;
+        const won = stats.bySide[ev.side];
+        won.points = (won.points ?? 0) + 1;
+        won[`won:${r}`] = (won[`won:${r}`] ?? 0) + 1;
         touchesThisRally = 0;
         if (verbose) {
           console.log(
@@ -125,7 +134,9 @@ function main(): void {
         `sim=${s.simSeconds.toFixed(0)}s`,
     );
     console.log(`  reasons: ${JSON.stringify(s.reasons)}`);
-    console.log(`  contacts: ${JSON.stringify(s.contacts)}\n`);
+    console.log(`  contacts: ${JSON.stringify(s.contacts)}`);
+    console.log(`  home: ${JSON.stringify(s.bySide.home)}`);
+    console.log(`  away: ${JSON.stringify(s.bySide.away)}\n`);
   }
 
   const totalPoints = all.reduce((a, s) => a + s.points, 0);

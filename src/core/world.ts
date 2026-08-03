@@ -2,6 +2,7 @@ import { Ball, Prediction, predictLanding } from './ball';
 import {
   Aim,
   ContactKind,
+  POWER_MOVE_NAMES,
   NEUTRAL_AIM,
   canAttackAboveNet,
   canReach,
@@ -9,6 +10,7 @@ import {
   performAttack,
   performBlock,
   performBump,
+  performPowerMove,
   performServe,
   performSet,
 } from './contact';
@@ -23,6 +25,7 @@ import {
   MAX_TOUCHES,
   NET_BOTTOM,
   NET_HEIGHT,
+  POWER_GAIN,
   OUT_MARGIN_X,
   OUT_MARGIN_Y,
   SETS_TO_WIN,
@@ -60,6 +63,8 @@ export const idleCommand = (): Command => ({
 
 export type GameEvent =
   | { type: 'contact'; kind: ContactKind; side: Side; playerId: number; speed: number; at: Vec3 }
+  | { type: 'powerMove'; side: Side; playerId: number; name: string; at: Vec3 }
+  | { type: 'powerReady'; side: Side }
   | { type: 'bounce'; at: Vec3; speed: number }
   | { type: 'net'; at: Vec3 }
   | { type: 'point'; side: Side; reason: PointReason; rallyLength: number }
@@ -226,7 +231,15 @@ export class World {
       }
       p.heldAction = cmd.actionHeld;
 
-      if (cmd.jumpPressed) p.jump();
+      // On the ground the jump button jumps; in the air it calls for a Lethal
+      // Maneuver, which is only honoured if the team's gauge is full.
+      if (cmd.jumpPressed) {
+        if (p.airborne) {
+          if (this.team(p.side).powerReady) p.specialArmed = true;
+        } else {
+          p.jump();
+        }
+      }
       p.step(dt, cmd.moveX, cmd.moveY);
     }
 
@@ -349,6 +362,9 @@ export class World {
     const cmd = commands.get(p.id) ?? idleCommand();
     const team = this.team(p.side);
     const kind = this.classifyContact(p, team);
+    // How hard the ball was travelling *into* this contact. Digging a rocket is
+    // worth far more gauge than passing a floater.
+    const incoming = Math.hypot(this.ball.vel.x, this.ball.vel.y, this.ball.vel.z);
     const charge = clamp(p.charge, 0, 1);
 
     const ctx = {
@@ -377,6 +393,26 @@ export class World {
         break;
       }
       case 'spike': {
+        if (p.specialArmed && team.powerReady) {
+          const r = performPowerMove({ ...ctx, special: true });
+          speed = r.speed;
+          target = r.target;
+          team.spendPower();
+          p.specialArmed = false;
+          this.events.push({
+            type: 'powerMove',
+            side: p.side,
+            playerId: p.id,
+            name: POWER_MOVE_NAMES[r.move],
+            at: copy(this.ball.pos),
+          });
+          // A Lethal Maneuver flattens anyone who gets a hand on it.
+          this.punishBlockers(p, 40);
+          this.registerTouch(p, 'power', speed);
+          p.charge = 0;
+          this.aimTarget = target;
+          return;
+        }
         const r = performAttack(ctx);
         speed = r.speed;
         target = r.target;
@@ -394,6 +430,29 @@ export class World {
     p.charge = 0;
     this.aimTarget = target;
     this.registerTouch(p, kind, speed);
+    this.rewardPlay(p.side, kind, incoming);
+  }
+
+  /**
+   * Feed the Lethal Maneuver gauge.
+   *
+   * It is deliberately fed by defence, not offence: digging a spike, getting a
+   * block up, laying out for a save. Winning points barely fills it. That way
+   * the gauge rewards surviving pressure, and the team on the back foot is the
+   * one most likely to earn a way out of it.
+   */
+  private rewardPlay(side: Side, kind: ContactKind, incoming: number): void {
+    let gain = 0;
+    if (kind === 'save') gain = POWER_GAIN.save;
+    else if (kind === 'block') gain = POWER_GAIN.block;
+    else if (kind === 'bump' && incoming > 18) gain = POWER_GAIN.dig;
+    if (gain > 0) this.awardPower(side, gain);
+  }
+
+  private awardPower(side: Side, amount: number): void {
+    if (this.team(side).addPower(amount)) {
+      this.events.push({ type: 'powerReady', side });
+    }
   }
 
   /** Decide what kind of contact this is from the game situation. */
@@ -495,6 +554,9 @@ export class World {
     }
 
     this.serveInFlight = false;
+    // Every exchange over the net feeds both sides a little, so long rallies
+    // build towards a Lethal Maneuver for whoever survives them.
+    if (this.lastToucherSide) this.awardPower(this.lastToucherSide, POWER_GAIN.rally);
     const newSide: Side = sign < 0 ? 'home' : 'away';
     if (this.possession !== newSide) {
       this.possession = newSide;
@@ -560,6 +622,11 @@ export class World {
     const team = this.team(side);
     team.points += 1;
     this.events.push({ type: 'point', side, reason, rallyLength: this.rallyTime });
+
+    if (reason === 'kill') this.awardPower(side, POWER_GAIN.kill);
+    // A small consolation to the side that just conceded: a losing run should
+    // trend towards having a Lethal Maneuver available, not away from it.
+    this.awardPower(otherSide(side), POWER_GAIN.conceded);
 
     if (this.servingSide !== side) {
       this.servingSide = side;

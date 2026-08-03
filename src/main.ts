@@ -138,7 +138,7 @@ class Game {
       this.hitStop,
       this.renderer.draw(this.world, { alpha: 0, time: this.elapsed }, dt),
     );
-    this.hud.draw(this.world, w, h, { gamepad: this.input.hasGamepad });
+    this.hud.draw(this.world, w, h, { gamepad: this.input.hasGamepad, time: this.elapsed });
 
     if (this.screen === 'paused') this.drawPauseOverlay(w, h);
   }

@@ -81,6 +81,12 @@ export class Player {
   heldAction = false;
   /** Charge captured on the step the button was released (serve power). */
   releasedCharge = 0;
+  /**
+   * Set when the player calls for a Lethal Maneuver in mid-air. It survives
+   * until the next contact or landing, so the input can be made a little early
+   * without being swallowed.
+   */
+  specialArmed = false;
 
   constructor(id: number, side: Side, role: PlayerRole, name: string, stats: PlayerStats) {
     this.id = id;
@@ -203,6 +209,7 @@ export class Player {
       if (this.height <= 0) {
         this.height = 0;
         this.vertVel = 0;
+        this.specialArmed = false;
         if (this.diving) {
           this.downTime = Math.max(this.downTime, 0.32);
           this.setAnim('down');

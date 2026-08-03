@@ -26,6 +26,10 @@ export class Renderer {
 
   /** Freeze-frame timer used to punctuate kills, as arcade games did. */
   private hitStop = 0;
+  /** Full-screen white flash, 0..1, for the moment a Lethal Maneuver lands. */
+  private flash = 0;
+  /** Seconds remaining of the fiery ball trail after a power move. */
+  private powerTrail = 0;
 
   constructor(private readonly ctx: CanvasRenderingContext2D) {}
 
@@ -37,9 +41,32 @@ export class Renderer {
   handleEvents(world: World, events: GameEvent[]): void {
     for (const ev of events) {
       switch (ev.type) {
+        case 'powerMove': {
+          // The screen should tell you, unmistakably, that a gauge was spent.
+          this.effects.announce({ x: 0, y: 0, z: 3.6 }, ev.name, '#ff8a3d', 44);
+          this.effects.burst(ev.at, 'rgba(255,180,80,0.8)');
+          this.effects.impact(ev.at, 30, this.rand, 'rgba(255,150,60,');
+          this.camera.addShake(26);
+          this.hitStop = Math.max(this.hitStop, 0.14);
+          this.flash = 0.35;
+          this.powerTrail = 0.9;
+          break;
+        }
+        case 'powerReady': {
+          const team = world.team(ev.side);
+          this.effects.announce(
+            { x: 0, y: ev.side === 'home' ? -5 : 5, z: 2.8 },
+            'POWER READY',
+            team.config.colors[0],
+            26,
+          );
+          break;
+        }
         case 'contact': {
           const power = clamp(ev.speed / 3, 1, 12);
-          if (ev.kind === 'spike') {
+          if (ev.kind === 'power') {
+            this.effects.impact(ev.at, 34, this.rand, 'rgba(255,190,90,');
+          } else if (ev.kind === 'spike') {
             this.effects.impact(ev.at, power * 1.4, this.rand, 'rgba(255,196,90,');
             this.camera.addShake(clamp(ev.speed * 0.28, 2, 12));
             this.hitStop = Math.max(this.hitStop, clamp(ev.speed * 0.0025, 0, 0.05));
@@ -98,6 +125,8 @@ export class Renderer {
     const cam = this.camera;
 
     if (this.hitStop > 0) this.hitStop = Math.max(0, this.hitStop - dt);
+    if (this.flash > 0) this.flash = Math.max(0, this.flash - dt * 2.4);
+    if (this.powerTrail > 0) this.powerTrail = Math.max(0, this.powerTrail - dt);
 
     cam.follow(world.ball.pos, dt);
     this.effects.pushTrail(world.ball.pos, Math.hypot(world.ball.vel.x, world.ball.vel.y, world.ball.vel.z));
@@ -145,6 +174,10 @@ export class Renderer {
 
     this.effects.draw(ctx, cam);
     this.drawVignette();
+    if (this.flash > 0) {
+      ctx.fillStyle = `rgba(255,236,196,${this.flash})`;
+      ctx.fillRect(0, 0, cam.viewWidth, cam.viewHeight);
+    }
 
     return this.hitStop;
   }
@@ -219,7 +252,12 @@ export class Renderer {
     const r = Math.max(2.5, BALL_RADIUS * s.scale * 42);
     const speed = Math.hypot(ball.vel.x, ball.vel.y, ball.vel.z);
 
-    this.effects.drawTrail(ctx, this.camera, 'rgba(255,236,180,0.9)');
+    // A power-move ball burns; an ordinary one leaves a pale streak.
+    this.effects.drawTrail(
+      ctx,
+      this.camera,
+      this.powerTrail > 0 ? 'rgba(255,140,50,0.95)' : 'rgba(255,236,180,0.9)',
+    );
 
     ctx.save();
     // Fast balls stretch along their direction of travel: cheap, and it reads
@@ -233,9 +271,21 @@ export class Renderer {
 
     const grad = ctx.createRadialGradient(-r * 0.35, -r * 0.4, r * 0.1, 0, 0, r);
     grad.addColorStop(0, '#ffffff');
-    grad.addColorStop(0.55, '#ffd873');
-    grad.addColorStop(1, '#e08a2a');
+    grad.addColorStop(0.55, this.powerTrail > 0 ? '#ffb040' : '#ffd873');
+    grad.addColorStop(1, this.powerTrail > 0 ? '#e04a12' : '#e08a2a');
     ctx.fillStyle = grad;
+
+    if (this.powerTrail > 0) {
+      // Halo around a live Lethal Maneuver, so it reads even against the crowd.
+      const halo = ctx.createRadialGradient(0, 0, r, 0, 0, r * 3.2);
+      halo.addColorStop(0, 'rgba(255,150,60,0.55)');
+      halo.addColorStop(1, 'rgba(255,80,30,0)');
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = grad;
+    }
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.fill();

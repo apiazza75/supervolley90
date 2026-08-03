@@ -58,6 +58,29 @@ export const MIN_LEAD = 2;
 /** Fixed simulation timestep (120 Hz) — rendering interpolates between steps. */
 export const FIXED_DT = 1 / 120;
 
+/**
+ * Power gauge, the "Lethal Maneuver" resource.
+ *
+ * It fills from play rather than from time, so it rewards staying in rallies
+ * instead of stalling: digging a hard spike is worth far more than winning a
+ * point off an opponent's error.
+ */
+export const POWER_MAX = 100;
+export const POWER_GAIN = {
+  /** Keeping a hard-driven ball alive. */
+  dig: 22,
+  /** Getting hands on an attack at the net. */
+  block: 18,
+  /** A dive that saves the rally. */
+  save: 30,
+  /** A clean kill. */
+  kill: 10,
+  /** Every exchange over the net during a long rally. */
+  rally: 4,
+  /** Losing a point gives a little back, so a run does not become hopeless. */
+  conceded: 8,
+} as const;
+
 export type Side = 'home' | 'away';
 
 export const otherSide = (s: Side): Side => (s === 'home' ? 'away' : 'home');

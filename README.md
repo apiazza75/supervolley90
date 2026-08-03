@@ -1,8 +1,8 @@
 # Super Volley 90
 
 Arcade 6-on-6 volleyball for macOS, built in the spirit of the early-90s coin-ops
-— two buttons, a landing marker on the floor, and rallies that resolve in a few
-loud seconds.
+— a side-on court with the net down the middle, two buttons, a landing marker on
+the floor, and rallies that resolve in a few loud seconds.
 
 Everything here is original: the code, the procedural art, the synthesised
 audio, the fictional teams. No assets or data from any existing game are used.
@@ -112,6 +112,26 @@ Two buttons carry everything, exactly as the cabinets did:
 - You steer one player; the ring on the floor shows who. Control hands over to
   whoever can realistically play the next ball, never mid-jump.
 
+### Lethal Maneuvers
+
+The gauge at the bottom of the screen fills from **defence** — digging a hard
+spike, getting a block up, laying out for a save — and barely at all from
+winning points. A team under pressure is therefore the one most likely to earn a
+way out of it.
+
+When it is full, jump and press the jump button **again in mid-air** to unleash
+one. Which of the three you get depends on where the stick is pushed at that
+moment:
+
+| Stick | Move | What it does |
+| --- | --- | --- |
+| Neutral / forward | **Meteor Smash** | Straight down off the top of the reach, at the fastest the ball travels |
+| Left or right | **Comet Drive** | Leaves towards the antenna and hooks violently back inside |
+| Back (short) | **Phantom Drop** | Floats over, stalls on backspin, then falls dead behind the block |
+
+A Lethal Maneuver flattens any blocker who gets a hand to it, and empties the
+gauge.
+
 ## Architecture
 
 ```
@@ -140,6 +160,17 @@ That is what makes `npm run sim` a usable balance tool and the tests meaningful.
 Physics and feel are identical either way, and there is no frame-rate-dependent
 behaviour to chase.
 
+That separation paid for itself when the camera changed. The simulation works in
+metres — x across the court, y along it, z up — and knows nothing about how any
+of it is drawn, so switching from a behind-the-baseline view to the side-on one
+this game needed was a change to the projection alone. Not a line of gameplay
+code moved.
+
+The camera is deliberately not *exactly* side-on. At a perfect right angle every
+point of the net shares a single screen column, so it collapses into a line and
+reads as a pole; a few degrees of yaw give it width and turn the court into a
+legible trapezoid.
+
 ## Tooling
 
 ```sh
@@ -153,9 +184,15 @@ npm run shots -- shots/             # drive the real game in Chromium, capture f
 `npm run sim` is the balance harness. A healthy build looks roughly like this:
 
 ```
-986 points, avg rally 6.5s, avg touches/rally 6.7
-reasons: kill ~80%, serveFault ~11%, own error ~9%
+1124 points, avg rally 6.5s, avg touches/rally 7.0
+reasons: kill ~68%, out ~13%, own error ~13%, serveFault ~5%
+power moves ~25 per side per match, home/away wins 3-3
 ```
+
+The home/away win split matters as much as the rates. Two asymmetries were found
+exactly this way: sidespin that curved one way for one team and the other way
+for the other, because the Magnus force depends on the sign of the velocity, and
+a serve that had become risk-free once the arc solver stopped undershooting.
 
 Rallies collapsing to one or two touches, or serve faults dominating, means a
 tuning constant has drifted — both failure modes happened during development and
@@ -176,5 +213,5 @@ balls outside the antennae, and the plane-crossing fault under the net.
 - Unless the Apple secrets are configured, builds are ad-hoc signed and need
   one Gatekeeper bypass on first launch.
 - No local two-player mode yet — the second side is always AI.
-- No "Hyper League" special-attack mode.
+
 - Audio is a synthesised placeholder: functional, not composed.

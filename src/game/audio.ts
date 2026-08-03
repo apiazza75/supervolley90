@@ -123,6 +123,12 @@ export class Audio {
       switch (ev.type) {
         case 'contact':
           switch (ev.kind) {
+            case 'power':
+              // Heavier, lower and longer than an ordinary swing.
+              this.thud(0.9, 3200, 0.2);
+              this.tone(140, 0.35, 'sawtooth', 0.12, 40);
+              this.tone(1200, 0.18, 'square', 0.06, 220);
+              break;
             case 'spike':
               this.thud(0.65, 2600, 0.12);
               this.tone(180, 0.1, 'square', 0.08, 60);
@@ -146,6 +152,12 @@ export class Audio {
           break;
         case 'bounce':
           this.thud(Math.min(0.7, 0.15 + ev.speed * 0.02), 700, 0.14);
+          break;
+        case 'powerMove':
+          this.cheer(0.2);
+          break;
+        case 'powerReady':
+          this.tone(760, 0.12, 'triangle', 0.06, 1140);
           break;
         case 'point':
           this.cheer(0.12);

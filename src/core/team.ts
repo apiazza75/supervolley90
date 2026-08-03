@@ -1,7 +1,7 @@
 import { Vec3, copy } from './math3';
 import { Player, PlayerRole, PlayerStats, defaultStats, isFrontRow, slotPosition } from './player';
 import { Rng } from './rng';
-import { Side, TEAM_SIZE } from './rules';
+import { POWER_MAX, Side, TEAM_SIZE } from './rules';
 
 export interface TeamConfig {
   name: string;
@@ -38,6 +38,11 @@ export class Team {
 
   points = 0;
   setsWon = 0;
+  /**
+   * Lethal Maneuver gauge, 0..POWER_MAX. Full means the next attack can be
+   * unleashed as a power move.
+   */
+  power = 0;
   /** Points won in each completed set, for the scoreboard. */
   setScores: number[] = [];
 
@@ -69,6 +74,21 @@ export class Team {
     }
     this.applyRotation();
     this.activeId = this.players[0].id;
+  }
+
+  /** Add to the gauge, clamped. Returns true if it just became full. */
+  addPower(amount: number): boolean {
+    const wasFull = this.power >= POWER_MAX;
+    this.power = Math.min(POWER_MAX, this.power + amount);
+    return !wasFull && this.power >= POWER_MAX;
+  }
+
+  get powerReady(): boolean {
+    return this.power >= POWER_MAX;
+  }
+
+  spendPower(): void {
+    this.power = 0;
   }
 
   get(id: number): Player | undefined {
