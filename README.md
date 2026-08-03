@@ -55,15 +55,42 @@ artifacts and drops Unix permission bits, which strips the executable flag off
 the binary inside a `.app` and makes macOS report it as damaged. A disk image
 and a tarball both carry their own permissions and survive intact.
 
-The build is unsigned, so Gatekeeper still blocks it on first launch:
+### Signing and notarisation
+
+The `macos-app` job has two modes, chosen by whether the repository has an
+`APPLE_SIGNING_IDENTITY` secret.
+
+**Without it** the app gets an ad-hoc signature. It runs, but nothing vouches
+for who built it, so Gatekeeper blocks the first launch:
 
 ```sh
 xattr -dr com.apple.quarantine "/Applications/Super Volley 90.app"
 ```
 
 On macOS 15 and later the old right-click → Open bypass no longer works; use the
-command above, or open System Settings → Privacy & Security and click
-**Open Anyway** after the first blocked launch.
+command above, or System Settings → Privacy & Security → **Open Anyway**.
+
+**With a Developer ID** Tauri signs with hardened runtime, submits the build to
+Apple's notary service and staples the ticket, so the app opens on a double
+click like any other download. Add these repository secrets
+(Settings → Secrets and variables → Actions):
+
+| Secret | What it is | Where it comes from |
+| --- | --- | --- |
+| `APPLE_CERTIFICATE` | Developer ID Application certificate, as base64 | Export it from Keychain Access as `.p12`, then `base64 -i cert.p12 \| pbcopy` |
+| `APPLE_CERTIFICATE_PASSWORD` | The password you set on that `.p12` | You choose it during the export |
+| `APPLE_SIGNING_IDENTITY` | e.g. `Developer ID Application: Your Name (TEAMID)` | `security find-identity -v -p codesigning` |
+| `APPLE_ID` | The Apple ID email on the developer account | — |
+| `APPLE_PASSWORD` | An **app-specific** password, not your Apple ID password | [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords |
+| `APPLE_TEAM_ID` | 10-character team identifier | [developer.apple.com/account](https://developer.apple.com/account) → Membership |
+
+The certificate must be a **Developer ID Application** certificate, not a Mac
+App Store or Apple Development one — only that kind is accepted for software
+distributed outside the App Store.
+
+Notarisation adds a few minutes to the job. The workflow verifies the result
+with `spctl --assess` and `stapler validate`, so a build that would still be
+blocked on a user's machine fails in CI rather than in a download.
 
 ## Controls
 
@@ -146,6 +173,8 @@ balls outside the antennae, and the plane-crossing fault under the net.
 - The native macOS build was not verifiable during development (built on Linux,
   where Tauri's GTK/WebKit backend cannot compile). The `macos-app` CI job now
   covers it — treat a green run there as the confirmation, not local testing.
+- Unless the Apple secrets are configured, builds are ad-hoc signed and need
+  one Gatekeeper bypass on first launch.
 - No local two-player mode yet — the second side is always AI.
 - No "Hyper League" special-attack mode.
 - Audio is a synthesised placeholder: functional, not composed.
