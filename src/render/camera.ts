@@ -16,17 +16,20 @@ export interface Projected {
 /** Pixels per metre along the court and vertically, at a 1280 px viewport. */
 const PIXELS_PER_METRE = 55;
 /**
- * Oblique projection of the court's width: each metre further from the viewer
- * moves a point this far up and this far right.
+ * Court width, projected as a pure vertical offset: each metre further from the
+ * viewer moves a point this far up the screen and no distance sideways.
  *
- * Mapping width to a purely vertical offset would be simpler, but then the net
- * — which runs along the width — becomes a vertical bar on screen. Sending it
- * diagonally instead is the trick 2D sports games have always used: depth is
- * legible, and because the offset is constant per metre, nothing converges and
- * nothing changes size with distance.
+ * This is a flat side elevation. The court is a horizontal band, its lines stay
+ * horizontal and vertical, and the net — which runs along the width — collapses
+ * to a narrow vertical post in the middle of the screen, which is exactly what
+ * the arcade original shows. An earlier version sheared width diagonally to
+ * give the net visible area; that read as an angled 3D scene and was wrong.
+ *
+ * The ratio to PIXELS_PER_METRE matters: the reference compresses the court's
+ * 9 m of depth to roughly a sixth of its 18 m of length on screen, and 22 px
+ * per metre against 55 is what reproduces that.
  */
 const DEPTH_RISE = 22;
-const DEPTH_SHEAR = 20;
 /**
  * How much smaller the far sideline is drawn than the near one. Applied to
  * sprite size only, never to position, so court lines stay exactly parallel.
@@ -109,7 +112,7 @@ export class Camera {
     const k = (this.viewWidth / 1280) * this.zoom;
 
     return {
-      x: this.viewWidth / 2 + (wy - this.panY) * u + wx * DEPTH_SHEAR * k + this.offsetX,
+      x: this.viewWidth / 2 + (wy - this.panY) * u + this.offsetX,
       y: this.baseline - wx * DEPTH_RISE * k - wz * u + this.offsetY,
       // Nearer the viewer means smaller x, and must be drawn last.
       depth: wx,

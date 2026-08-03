@@ -166,13 +166,19 @@ of it is drawn, so switching from a behind-the-baseline view to the side-on one
 this game needed was a change to the projection alone. Not a line of gameplay
 code moved.
 
-**The projection is oblique, not perspective.** There is no divide by depth
+**The projection is a flat side elevation.** There is no divide by depth
 anywhere in the renderer, and that single absence is what makes the picture read
-as a 2D game: court lines stay exactly parallel, and a player is the same size
-wherever they stand. Court width is mapped to a constant diagonal offset —
-22 px up and 20 px right per metre — which is the trick 2D sports games have
-always used. Sending width straight up instead would be simpler, but then the
-net, which runs along the width, becomes a vertical bar on screen.
+as a 2D game: court lines stay exactly parallel and a player is the same size
+wherever they stand. Court width maps to a pure vertical offset of 22 px per
+metre against 55 px per metre along the court, which compresses the court's 9 m
+of depth to about a sixth of its 18 m of length — the ratio the arcade original
+uses.
+
+The net therefore has no width at all on screen: every point of it shares one
+column, so it is drawn as a narrow vertical post. That is correct, and it is
+what the original does. An intermediate version sheared the width axis
+diagonally to give the net visible area, which produced a handsome picture that
+was unmistakably an angled 3D scene — the wrong game.
 
 Players are drawn as articulated vector figures rather than sprites: a skeleton
 of joint angles, limbs as tapered capsules with knees and elbows, flat colours

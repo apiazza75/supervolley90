@@ -4,7 +4,6 @@ import {
   ATTACK_LINE,
   COURT_HALF_LENGTH,
   COURT_HALF_WIDTH,
-  NET_BOTTOM,
   NET_HEIGHT,
 } from '../core/rules';
 import { Camera } from './camera';
@@ -296,88 +295,91 @@ export class Arena {
   }
 
   /**
-   * The net, seen edge-on as a band across the middle of the screen. The white
-   * tape along its top is the most useful reference in the game — every attack
-   * is a judgement about clearing it — so it is drawn bright and solid.
+   * The net.
+   *
+   * Seen from directly side-on it has no width at all: every point of it shares
+   * one screen column, so it is drawn as a narrow vertical post running from the
+   * top of the far antenna down to the near sideline. That is precisely how the
+   * arcade original renders it, and trying to give it visible area was what made
+   * the earlier version look like an angled 3D scene.
    */
   drawNet(ctx: CanvasRenderingContext2D, cam: Camera): void {
     const W = COURT_HALF_WIDTH;
+    const cx = cam.projectFloor(0, 0).x;
+    const u = cam.projectFloor(0, 0).scale * 42;
+    const half = Math.max(2.5, u * 0.055);
 
-    for (const x of [-W - 0.55, W + 0.55]) {
-      const foot = cam.project(x, 0, 0);
-      const top = cam.project(x, 0, NET_HEIGHT + 0.4);
-      ctx.strokeStyle = '#9aa3b8';
-      ctx.lineWidth = Math.max(2.5, 8 * top.scale);
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(foot.x, foot.y);
-      ctx.lineTo(top.x, top.y);
-      ctx.stroke();
-    }
-
-    // Net cloth: a translucent band, then the mesh over it.
-    const c1 = cam.project(-W, 0, NET_HEIGHT);
-    const c2 = cam.project(W, 0, NET_HEIGHT);
-    const c3 = cam.project(W, 0, NET_BOTTOM);
-    const c4 = cam.project(-W, 0, NET_BOTTOM);
-    ctx.beginPath();
-    ctx.moveTo(c1.x, c1.y);
-    ctx.lineTo(c2.x, c2.y);
-    ctx.lineTo(c3.x, c3.y);
-    ctx.lineTo(c4.x, c4.y);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(232,238,248,0.1)';
-    ctx.fill();
+    // Screen extents: far side is highest, near side lowest.
+    const tapeFar = cam.project(W, 0, NET_HEIGHT).y;
+    const tapeNear = cam.project(-W, 0, NET_HEIGHT).y;
+    const footFar = cam.project(W, 0, 0).y;
+    const footNear = cam.project(-W, 0, 0).y;
 
     ctx.save();
-    ctx.globalAlpha = 0.32;
-    ctx.strokeStyle = '#e8eef8';
-    ctx.lineWidth = 1;
-    const cols = 30;
-    for (let i = 0; i <= cols; i++) {
-      const x = -W + (2 * W * i) / cols;
-      const a = cam.project(x, 0, NET_BOTTOM);
-      const b = cam.project(x, 0, NET_HEIGHT);
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-    }
-    const rows = 8;
-    for (let j = 0; j <= rows; j++) {
-      const z = NET_BOTTOM + ((NET_HEIGHT - NET_BOTTOM) * j) / rows;
-      const a = cam.project(-W, 0, z);
-      const b = cam.project(W, 0, z);
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-    }
-    ctx.restore();
 
-    ctx.strokeStyle = '#f7fbff';
-    ctx.lineWidth = Math.max(3, 10 * c1.scale);
-    ctx.lineCap = 'square';
+    // Posts, standing just outside each sideline.
+    for (const [x, y] of [
+      [W + 0.55, cam.project(W + 0.55, 0, 0).y],
+      [-W - 0.55, cam.project(-W - 0.55, 0, 0).y],
+    ] as [number, number][]) {
+      const top = cam.project(x, 0, NET_HEIGHT + 0.35).y;
+      ctx.strokeStyle = '#9aa3b8';
+      ctx.lineWidth = half * 1.5;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx, y);
+      ctx.lineTo(cx, top);
+      ctx.stroke();
+    }
+
+    // The net itself: a pale vertical band from the far tape to the near floor.
+    const grad = ctx.createLinearGradient(cx - half, 0, cx + half, 0);
+    grad.addColorStop(0, 'rgba(214,224,240,0.55)');
+    grad.addColorStop(0.5, 'rgba(246,250,255,0.9)');
+    grad.addColorStop(1, 'rgba(214,224,240,0.55)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(cx - half, tapeFar, half * 2, footNear - tapeFar);
+
+    // Mesh, as fine horizontal ticks down the band.
+    ctx.strokeStyle = 'rgba(60,74,102,0.5)';
+    ctx.lineWidth = 1;
+    for (let y = tapeFar; y < footNear; y += Math.max(3, u * 0.09)) {
+      ctx.beginPath();
+      ctx.moveTo(cx - half, y);
+      ctx.lineTo(cx + half, y);
+      ctx.stroke();
+    }
+
+    // Bright tape along the run of the net's top edge, and the base line.
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = half * 1.5;
+    ctx.lineCap = 'butt';
     ctx.beginPath();
-    ctx.moveTo(c1.x, c1.y);
-    ctx.lineTo(c2.x, c2.y);
+    ctx.moveTo(cx, tapeFar);
+    ctx.lineTo(cx, tapeNear);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(150,164,190,0.8)';
+    ctx.lineWidth = half;
+    ctx.beginPath();
+    ctx.moveTo(cx, footFar);
+    ctx.lineTo(cx, footNear);
     ctx.stroke();
 
-    for (const x of [-W, W]) {
-      const a = cam.project(x, 0, NET_HEIGHT);
-      const b = cam.project(x, 0, ANTENNA_HEIGHT);
-      const segs = 5;
+    // Antennae: the striped markers at each sideline, above the tape.
+    for (const x of [W, -W]) {
+      const a = cam.project(x, 0, NET_HEIGHT).y;
+      const b = cam.project(x, 0, ANTENNA_HEIGHT).y;
+      const segs = 4;
+      ctx.lineWidth = half * 1.1;
       for (let i = 0; i < segs; i++) {
-        const t0 = i / segs;
-        const t1 = (i + 1) / segs;
         ctx.strokeStyle = i % 2 === 0 ? '#ff4a3d' : '#ffffff';
-        ctx.lineWidth = Math.max(2, 4.5 * a.scale);
         ctx.beginPath();
-        ctx.moveTo(a.x + (b.x - a.x) * t0, a.y + (b.y - a.y) * t0);
-        ctx.lineTo(a.x + (b.x - a.x) * t1, a.y + (b.y - a.y) * t1);
+        ctx.moveTo(cx, a + ((b - a) * i) / segs);
+        ctx.lineTo(cx, a + ((b - a) * (i + 1)) / segs);
         ctx.stroke();
       }
     }
+    ctx.restore();
   }
 }
 
