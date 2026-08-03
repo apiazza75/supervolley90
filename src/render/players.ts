@@ -21,6 +21,12 @@ interface Pose {
   /** Head tilt, radians. */
   head: number;
   /**
+   * How far apart the shoulder joints sit, 0..1 of the normal spacing. A
+   * bump platform and an overhead set bring the hands together, so the arms
+   * have to converge rather than run parallel from two wide sockets.
+   */
+  armSpread?: number;
+  /**
    * Curve of the spine, radians: positive arches the chest open (the drawn
    * bow of a spike), negative hunches forward (a dig). Applied as a bend
    * between the hips and the shoulders, so the torso is no longer a rigid
@@ -39,7 +45,8 @@ const pose = (
   legNear: [number, number],
   head = 0,
   arch = 0,
-): Pose => ({ crouch, lean, armFar, armNear, legFar, legNear, head, arch });
+  armSpread = 1,
+): Pose => ({ crouch, lean, armFar, armNear, legFar, legNear, head, arch, armSpread });
 
 /**
  * The pose library.
@@ -55,7 +62,7 @@ const pose = (
 const POSES: Record<string, Pose> = {
   // Volleyball ready stance: knees flexed, weight forward, hands ready in
   // front at hip height, feet staggered.
-  idle: pose(0.42, 0.22, [0.55, -0.6], [-0.4, -0.65], [0.3, 0.6], [-0.28, 0.55], -0.06, -0.08),
+  idle: pose(0.42, 0.2, [0.44, -0.78], [0.28, -0.94], [0.22, 0.62], [-0.2, 0.58], -0.06, -0.08),
   // Sprint: high knee lift, elbows pumping at ninety degrees, torso driving.
   run: pose(0.2, 0.3, [1.0, -0.95], [-0.95, -0.95], [0.8, 0.2], [-0.6, 1.2], 0.04, -0.05),
   // Takeoff: both arms swinging up, legs tucking.
@@ -65,24 +72,24 @@ const POSES: Record<string, Pose> = {
   spikeCock: pose(0.0, -0.42, [3.5, 0.95], [2.1, -0.35], [-0.55, 1.15], [-0.75, 1.0], -0.34, 0.5),
   // The hit itself: the bow releases — torso jackknifes, arm whips through,
   // legs pike forward.
-  spikeHit: pose(0.05, 0.5, [1.0, -0.1], [-0.7, -0.6], [0.55, 0.5], [0.3, 0.6], 0.2, -0.35),
+  spikeHit: pose(0.05, 0.34, [2.62, -0.08], [0.55, -0.85], [0.7, 0.45], [0.42, 0.62], 0.06, -0.3),
   // Grounded attack/tip follow-through shares the hit shape.
-  spike: pose(0.08, 0.34, [1.05, -0.15], [-0.6, -0.6], [0.4, 0.55], [-0.4, 0.5], 0.1, -0.2),
+  spike: pose(0.08, 0.3, [2.3, -0.2], [0.3, -0.8], [0.4, 0.55], [-0.4, 0.5], 0.06, -0.2),
   jump: pose(0.0, -0.1, [2.1, -0.45], [1.6, -0.55], [0.45, 0.9], [-0.3, 1.0], -0.12, 0.1),
   // Penetrating block: both arms rammed straight up, body a plank.
-  block: pose(0.0, 0.04, [3.1, -0.05], [2.98, -0.05], [0.12, 0.45], [-0.12, 0.45], -0.16, 0.08),
+  block: pose(0.0, 0.04, [3.16, -0.04], [2.88, -0.08], [0.12, 0.45], [-0.12, 0.45], -0.16, 0.08, 0.9),
   // Overhead set: hands above the forehead, elbows out, knees loaded.
-  set: pose(0.3, 0.0, [2.45, -0.55], [2.55, -0.5], [0.26, 0.5], [-0.26, 0.5], -0.2, 0.12),
+  set: pose(0.3, 0.0, [2.3, -0.62], [2.68, -0.46], [0.26, 0.5], [-0.26, 0.5], -0.2, 0.12, 0.8),
   // The platform: both arms dead straight, locked together, angled to the
   // ball; deep staggered squat, eyes up.
-  bump: pose(0.5, 0.32, [0.98, -0.02], [0.9, -0.02], [0.55, 0.8], [-0.5, 0.75], -0.14, -0.28),
+  bump: pose(0.5, 0.32, [1.0, -0.02], [0.9, -0.02], [0.55, 0.8], [-0.5, 0.75], -0.14, -0.28, 0.5),
   // Holding the ball out front, ready to toss.
   serve: pose(0.24, 0.1, [0.3, -0.7], [1.5, -0.15], [0.3, 0.4], [-0.22, 0.35], -0.06, 0.05),
   // Full-extension dig: body laid out horizontal (the draw code rotates it
   // flat), both arms locked straight past the head, legs trailing.
-  dive: pose(0.35, 1.35, [2.7, -0.06], [2.5, -0.1], [-0.35, 0.5], [-0.6, 0.35], -0.42, 0.25),
+  dive: pose(0.35, 1.35, [2.66, -0.06], [2.56, -0.1], [-0.35, 0.5], [-0.6, 0.35], -0.42, 0.25, 0.35),
   // Absorbing the landing: deep flex, arms out for balance.
-  land: pose(0.5, 0.18, [0.72, -0.55], [-0.6, -0.55], [0.34, 0.95], [-0.3, 0.95], 0.06, -0.15),
+  land: pose(0.5, 0.18, [0.6, -0.7], [0.42, -0.8], [0.34, 0.95], [-0.3, 0.95], 0.06, -0.15),
   // Sprawled on the floor after the dive, pushing up on one arm.
   down: pose(0.8, 1.5, [1.2, -0.55], [0.5, -0.9], [-0.3, 0.7], [-0.55, 0.5], -0.5, -0.1),
 };
@@ -96,6 +103,7 @@ const blend = (a: Pose, b: Pose, t: number): Pose => ({
   legNear: [lerp(a.legNear[0], b.legNear[0], t), lerp(a.legNear[1], b.legNear[1], t)],
   head: lerp(a.head, b.head, t),
   arch: lerp(a.arch ?? 0, b.arch ?? 0, t),
+  armSpread: lerp(a.armSpread ?? 1, b.armSpread ?? 1, t),
 });
 
 const clonePose = (p: Pose): Pose => blend(p, p, 0);
@@ -273,21 +281,41 @@ export function drawPlayer(
   const hair = HAIRS[(p.id * 3 + 1) % HAIRS.length];
   const skinDark = shade(skin, -0.18);
 
+  // Proportions are canonical figure-drawing ratios of standing height, not
+  // eyeballed numbers. An earlier version gave the figure shoulders a third of
+  // its height wide over a waist that pinched to nothing, which is why the
+  // torso read as a trapezoid rather than a body.
+  //   head height   0.135   (a 7.4-head figure, athletic-heroic)
+  //   shoulders     0.236   (about two head-heights across)
+  //   waist         0.158   pelvis 0.194 — the body flares BACK OUT at the
+  //                         hips, and that reversal is what makes a torso
+  //   crotch        0.47    arm 0.185 + 0.15 + hand, so fingertips fall at
+  //                         mid-thigh with the arm hanging
   const arch = current.arch ?? 0;
-  const hipY = -unit * (0.5 - current.crouch * 0.22);
+  const hipY = -unit * (0.47 - current.crouch * 0.2);
   // The spine bend shifts the shoulders fore/aft of the hips.
-  const shoulderX = -Math.sin(arch) * unit * 0.16;
-  const shoulderY = -unit * (0.82 - current.crouch * 0.26) + Math.abs(arch) * unit * 0.02;
-  const neckY = shoulderY - unit * 0.035;
-  const headR = unit * 0.082;
+  const shoulderX = -Math.sin(arch) * unit * 0.15;
+  const shoulderY = -unit * (0.8 - current.crouch * 0.26) + Math.abs(arch) * unit * 0.02;
+  const neckY = shoulderY - unit * 0.028;
+  const headW = unit * 0.058;
+  const headH = unit * 0.077;
   const headX = shoulderX - Math.sin(arch) * unit * 0.05;
-  const headY = neckY - headR * 1.05;
+  const headY = neckY - headH * 0.92;
 
-  const thigh = unit * 0.26;
-  const shin = unit * 0.24;
-  const upperArm = unit * 0.2;
-  const foreArm = unit * 0.19;
-  const outline = Math.max(0.7, unit * 0.02);
+  const chestY = lerp(shoulderY, hipY, 0.24);
+  const waistY = lerp(shoulderY, hipY, 0.66);
+  // Torso half-DEPTHS, seen from the side. Chest depth is about 0.19 of
+  // standing height on an athlete, waist 0.15, hips 0.18 — far narrower than
+  // the 0.24 shoulder breadth a front view would show.
+  const halfChest = unit * 0.094;
+  const halfWaist = unit * 0.072;
+  const halfPelvis = unit * 0.089;
+
+  const thigh = unit * 0.245;
+  const shin = unit * 0.225;
+  const upperArm = unit * 0.185;
+  const foreArm = unit * 0.15;
+  const outline = Math.max(0.7, unit * 0.018);
 
   ctx.save();
   // Depth haze follows how far across the court the player is, not which team
@@ -299,102 +327,228 @@ export function drawPlayer(
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
 
-  const drawLeg = (spec: [number, number], legFill: string, shoeFill: string): void => {
-    const { jx, jy, ex, ey } = limbPoints(0, hipY, spec[0], spec[1], thigh, shin);
-    // Thigh with a quad bulge, calf tapering to the ankle.
-    capsule(ctx, 0, hipY, jx, jy, unit * 0.125, unit * 0.085, legFill, outline);
-    capsule(ctx, jx, jy, ex, ey, unit * 0.082, unit * 0.05, legFill, outline);
-    // Knee pad — the volleyball player's badge.
+  /**
+   * A shoe, drawn as a shoe: heel counter, sole running forward under the
+   * arch, toe cap. Aligned with the shin so it follows the leg, but only
+   * partly, because a planted foot stays flat on the floor whatever the shin
+   * is doing. The previous version was a horizontal ellipse — a blob.
+   */
+  const drawShoe = (ax: number, ay: number, shinAngle: number, shoeFill: string): void => {
+    // Screen angle of the shin; the foot sits roughly perpendicular to it,
+    // damped so a bent knee does not swivel the foot off the floor.
+    const foot = Math.atan2(Math.sin(shinAngle), Math.cos(shinAngle)) * 0.35;
+    ctx.save();
+    ctx.translate(ax, ay);
+    ctx.rotate(-foot);
+    const s = unit;
     ctx.beginPath();
-    ctx.arc(jx, jy, unit * 0.048, 0, Math.PI * 2);
-    ctx.fillStyle = '#e8e4da';
-    ctx.fill();
-    ctx.lineWidth = outline * 0.8;
-    ctx.strokeStyle = OUTLINE;
-    ctx.stroke();
-    // Sock cuff.
-    capsule(
-      ctx,
-      lerp(jx, ex, 0.68),
-      lerp(jy, ey, 0.68),
-      ex,
-      ey,
-      unit * 0.06,
-      unit * 0.052,
-      '#f2f2f0',
-      outline * 0.8,
-      true,
-    );
-    // Shoe: body plus a pale sole so it reads as footwear, not a blob.
-    ctx.beginPath();
-    ctx.ellipse(ex + unit * 0.028, ey + unit * 0.008, unit * 0.066, unit * 0.034, 0, 0, Math.PI * 2);
-    ctx.fillStyle = shoeFill;
+    ctx.moveTo(-s * 0.028, -s * 0.012);
+    ctx.quadraticCurveTo(-s * 0.044, s * 0.016, -s * 0.03, s * 0.036);
+    ctx.lineTo(s * 0.07, s * 0.036);
+    ctx.quadraticCurveTo(s * 0.096, s * 0.032, s * 0.088, s * 0.014);
+    ctx.quadraticCurveTo(s * 0.05, -s * 0.008, s * 0.016, -s * 0.018);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(0, -s * 0.02, 0, s * 0.04);
+    g.addColorStop(0, shade(shoeFill, 0.12));
+    g.addColorStop(1, shade(shoeFill, -0.22));
+    ctx.fillStyle = g;
     ctx.fill();
     ctx.lineWidth = outline;
     ctx.strokeStyle = OUTLINE;
     ctx.stroke();
+    // Sole.
     ctx.beginPath();
-    ctx.ellipse(ex + unit * 0.03, ey + unit * 0.026, unit * 0.062, unit * 0.014, 0, 0, Math.PI);
-    ctx.fillStyle = '#c9cdd6';
+    ctx.moveTo(-s * 0.03, s * 0.03);
+    ctx.lineTo(s * 0.072, s * 0.03);
+    ctx.quadraticCurveTo(s * 0.096, s * 0.032, s * 0.088, s * 0.014);
+    ctx.lineTo(s * 0.09, s * 0.024);
+    ctx.quadraticCurveTo(s * 0.09, s * 0.04, s * 0.068, s * 0.039);
+    ctx.lineTo(-s * 0.028, s * 0.039);
+    ctx.closePath();
+    ctx.fillStyle = '#cfd4dd';
     ctx.fill();
+    ctx.restore();
   };
 
-  const drawArm = (spec: [number, number], sleeve: string): void => {
-    const { jx, jy, ex, ey } = limbPoints(shoulderX, shoulderY, spec[0], spec[1], upperArm, foreArm);
-    // Upper arm thicker at the biceps, forearm tapering to the wrist.
-    capsule(ctx, shoulderX, shoulderY, jx, jy, unit * 0.082, unit * 0.058, skin, outline);
-    capsule(ctx, jx, jy, ex, ey, unit * 0.06, unit * 0.04, skin, outline);
-    // Deltoid cap and short sleeve over the top of the upper arm.
+  const drawLeg = (
+    spec: [number, number],
+    side: number,
+    legFill: string,
+    shortsFill: string,
+    shoeFill: string,
+  ): void => {
+    // Legs hang from hip joints set apart across the pelvis, not from a single
+    // point in the middle of the body.
+    const hipX = side * unit * 0.016;
+    const { jx, jy, ex, ey } = limbPoints(hipX, hipY, spec[0], spec[1], thigh, shin);
+    // Legs are bare skin — they are a volleyball player's, not a footballer's.
+    // Painting them in the kit colour, as an earlier version did, fused torso,
+    // shorts and legs into one solid block with no readable silhouette.
+    capsule(ctx, hipX, hipY, jx, jy, unit * 0.098, unit * 0.064, legFill, outline);
+    capsule(ctx, jx, jy, ex, ey, unit * 0.07, unit * 0.038, legFill, outline);
+    // The shorts leg, worn over the top of the thigh.
     capsule(
       ctx,
-      shoulderX,
-      shoulderY,
-      lerp(shoulderX, jx, 0.45),
-      lerp(shoulderY, jy, 0.45),
-      unit * 0.1,
-      unit * 0.075,
-      sleeve,
+      hipX,
+      hipY - unit * 0.01,
+      lerp(hipX, jx, 0.34),
+      lerp(hipY, jy, 0.34),
+      unit * 0.112,
+      unit * 0.094,
+      shortsFill,
       outline,
     );
-    // Hand.
+    // Knee pad — the volleyball player's badge.
     ctx.beginPath();
-    ctx.arc(ex, ey, unit * 0.04, 0, Math.PI * 2);
+    ctx.ellipse(jx, jy, unit * 0.035, unit * 0.03, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#dbd6cb';
+    ctx.fill();
+    ctx.lineWidth = outline * 0.8;
+    ctx.strokeStyle = OUTLINE;
+    ctx.stroke();
+    // Sock over the ankle.
+    capsule(
+      ctx,
+      lerp(jx, ex, 0.74),
+      lerp(jy, ey, 0.74),
+      ex,
+      ey,
+      unit * 0.048,
+      unit * 0.042,
+      '#f2f2f0',
+      outline * 0.8,
+      true,
+    );
+    drawShoe(ex, ey, spec[0] - spec[1], shoeFill);
+  };
+
+  /** A hand: a mitt aligned with the forearm, with a thumb — not a ball. */
+  const drawHand = (jx: number, jy: number, ex: number, ey: number): void => {
+    const a = Math.atan2(ey - jy, ex - jx);
+    ctx.save();
+    ctx.translate(ex, ey);
+    ctx.rotate(a);
+    ctx.beginPath();
+    ctx.ellipse(unit * 0.026, 0, unit * 0.036, unit * 0.024, 0, 0, Math.PI * 2);
     ctx.fillStyle = skin;
     ctx.fill();
     ctx.lineWidth = outline;
     ctx.strokeStyle = OUTLINE;
     ctx.stroke();
+    // Thumb, on the palm side.
+    ctx.beginPath();
+    ctx.ellipse(unit * 0.012, -unit * 0.019, unit * 0.019, unit * 0.011, -0.5, 0, Math.PI * 2);
+    ctx.fillStyle = shade(skin, -0.08);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  const drawArm = (spec: [number, number], side: number, sleeve: string): void => {
+    // Arms hang from the shoulder joints out at the corners of the torso. An
+    // earlier version rooted both arms at the body's centre line, which is
+    // what made the shoulders read as a flat bar with limbs sprouting from
+    // the middle of the chest.
+    const ox = shoulderX + side * unit * 0.026 * (current.armSpread ?? 1);
+    const oy = shoulderY + unit * 0.012;
+    const { jx, jy, ex, ey } = limbPoints(ox, oy, spec[0], spec[1], upperArm, foreArm);
+    // Upper arm thicker at the biceps, forearm tapering to a slim wrist.
+    capsule(ctx, ox, oy, jx, jy, unit * 0.058, unit * 0.046, skin, outline);
+    capsule(ctx, jx, jy, ex, ey, unit * 0.048, unit * 0.032, skin, outline);
+    // Deltoid cap and short sleeve over the top of the upper arm.
+    capsule(
+      ctx,
+      ox,
+      oy - unit * 0.004,
+      lerp(ox, jx, 0.44),
+      lerp(oy, jy, 0.44),
+      unit * 0.072,
+      unit * 0.062,
+      sleeve,
+      0,
+      true,
+    );
+    drawHand(jx, jy, ex, ey);
   };
 
   // Far side first, so the body reads with depth.
-  drawArm(current.armFar, shade(kit, -0.22));
-  drawLeg(current.legFar, shade(trim, -0.2), '#dfe4ee');
+  drawArm(current.armFar, -1, shade(kit, -0.22));
+  drawLeg(current.legFar, -1, shade(skin, -0.14), shade(trim, -0.2), '#dfe4ee');
 
-  // ---- torso: shoulders wide, waist narrow, spine curved by the pose
-  const halfShoulder = unit * 0.165;
-  const halfWaist = unit * 0.1;
-  // The chest-side edge bows with the arch: positive arch pushes the chest
-  // forward (open bow), negative rounds the back (hunched dig).
-  const chestBow = Math.sin(arch) * unit * 0.1;
-  ctx.beginPath();
-  ctx.moveTo(shoulderX - halfShoulder, shoulderY);
-  ctx.quadraticCurveTo(
-    -halfShoulder * 1.02 - chestBow,
-    lerp(shoulderY, hipY, 0.55),
-    -halfWaist,
-    hipY,
-  );
-  ctx.lineTo(halfWaist, hipY);
-  ctx.quadraticCurveTo(
-    halfShoulder * 1.02 + chestBow,
-    lerp(shoulderY, hipY, 0.55),
-    shoulderX + halfShoulder,
-    shoulderY,
-  );
-  // Trapezius line up to the neck.
-  ctx.quadraticCurveTo(shoulderX, shoulderY - unit * 0.05, shoulderX - halfShoulder, shoulderY);
-  ctx.closePath();
-  const kitGrad = ctx.createLinearGradient(-halfShoulder, shoulderY, halfShoulder, hipY);
+  // ---- torso
+  //
+  // Four control widths, not two: shoulders, ribcage, waist, pelvis. The
+  // silhouette narrows from the ribs to the waist and then FLARES BACK OUT at
+  // the hips. Straight lines from a wide shoulder to a pinched waist are what
+  // made the earlier figure a trapezoid; a real torso is two stacked masses
+  // joined at a narrow middle.
+  //
+  const spineX = (t: number): number => lerp(0, shoulderX, t);
+  // The outline runs THROUGH these widths. Feeding them to bezierCurveTo as
+  // control points, as an earlier version did, meant the curve never reached
+  // the narrow waist — it bulged outside it, and the torso came out a
+  // rounded rectangle no matter what the numbers said. Chaining quadratics
+  // between midpoints keeps the silhouette on the anatomy.
+  // These are DEPTHS — chest front-to-back — not shoulder breadth. The camera
+  // looks along the court from the side, so a torso drawn at its shoulder
+  // width is a body turned to face the viewer inside a side-on scene: the
+  // single thing that made the figures read as wrong. In profile the front
+  // edge bulges at the chest, hollows at the waist and comes forward again at
+  // the hip, while the back edge runs the other way and the buttock projects.
+  const archF = Math.sin(arch);
+  const frontEdge: [number, number][] = [
+    [shoulderX + unit * 0.05, shoulderY - unit * 0.004],
+    [spineX(0.8) + halfChest + archF * unit * 0.028, chestY],
+    [spineX(0.35) + halfWaist * 0.94 - archF * unit * 0.014, waistY],
+    [halfPelvis * 0.82, hipY - unit * 0.03],
+  ];
+  const backEdge: [number, number][] = [
+    [-halfPelvis - archF * unit * 0.022, hipY - unit * 0.02],
+    [spineX(0.35) - halfWaist * 0.88 + archF * unit * 0.022, waistY],
+    [spineX(0.8) - halfChest * 0.95 - archF * unit * 0.012, chestY],
+    [shoulderX - unit * 0.062, shoulderY - unit * 0.008],
+  ];
+  const through = (pts: [number, number][]): void => {
+    for (let i = 1; i < pts.length - 1; i++) {
+      const [cx, cy] = pts[i];
+      const [nx2, ny2] = pts[i + 1];
+      ctx.quadraticCurveTo(cx, cy, (cx + nx2) / 2, (cy + ny2) / 2);
+    }
+    const last = pts[pts.length - 1];
+    ctx.lineTo(last[0], last[1]);
+  };
+  const path = (): void => {
+    ctx.beginPath();
+    // Down the front: chest, abdomen, front of the pelvis.
+    ctx.moveTo(frontEdge[0][0], frontEdge[0][1]);
+    through(frontEdge);
+    // Under the crotch and round to the buttock.
+    ctx.quadraticCurveTo(
+      halfPelvis * 0.6,
+      hipY + unit * 0.028,
+      -unit * 0.01,
+      hipY + unit * 0.026,
+    );
+    ctx.quadraticCurveTo(
+      -halfPelvis * 0.9,
+      hipY + unit * 0.018,
+      backEdge[0][0],
+      backEdge[0][1],
+    );
+    // Up the back: lumbar hollow, upper back, back of the shoulder.
+    through(backEdge);
+    // Trapezius, sloping up to the neck and down to the front of the shoulder.
+    ctx.quadraticCurveTo(shoulderX - unit * 0.03, neckY - unit * 0.006, shoulderX, neckY);
+    ctx.quadraticCurveTo(
+      shoulderX + unit * 0.032,
+      shoulderY - unit * 0.024,
+      frontEdge[0][0],
+      frontEdge[0][1],
+    );
+    ctx.closePath();
+  };
+  path();
+  const kitGrad = ctx.createLinearGradient(-halfChest, shoulderY, halfChest, hipY);
   kitGrad.addColorStop(0, shade(kit, 0.16));
   kitGrad.addColorStop(0.55, kit);
   kitGrad.addColorStop(1, shade(kit, -0.24));
@@ -404,42 +558,35 @@ export function drawPlayer(
   ctx.strokeStyle = OUTLINE;
   ctx.stroke();
 
-  // Kit details: a trim band across the chest and a collar notch.
+  // Kit details, clipped to the torso: shorts covering the pelvis, a trim
+  // band across the chest, a collar notch.
   ctx.save();
+  path();
   ctx.clip();
+  const shortsTop = lerp(waistY, hipY, 0.72);
+  const shortsGrad = ctx.createLinearGradient(0, shortsTop, 0, hipY + unit * 0.03);
+  shortsGrad.addColorStop(0, shade(trim, 0.12));
+  shortsGrad.addColorStop(1, shade(trim, -0.24));
+  ctx.fillStyle = shortsGrad;
+  ctx.fillRect(-halfPelvis * 1.3, shortsTop, halfPelvis * 2.6, hipY + unit * 0.06 - shortsTop);
   ctx.fillStyle = trim;
-  ctx.fillRect(-halfShoulder * 1.3, shoulderY + unit * 0.1, halfShoulder * 2.8, unit * 0.035);
-  ctx.fillStyle = 'rgba(255,255,255,0.28)';
-  ctx.fillRect(-halfShoulder * 1.3, shoulderY + unit * 0.14, halfShoulder * 2.8, unit * 0.012);
+  ctx.fillRect(-halfChest * 1.6, chestY - unit * 0.01, halfChest * 3.2, unit * 0.026);
+  ctx.fillStyle = 'rgba(255,255,255,0.26)';
+  ctx.fillRect(-halfChest * 1.6, chestY + unit * 0.018, halfChest * 3.2, unit * 0.009);
   ctx.restore();
+  // Waistband and collar.
   ctx.beginPath();
-  ctx.moveTo(shoulderX - unit * 0.05, shoulderY - unit * 0.005);
-  ctx.lineTo(shoulderX, shoulderY + unit * 0.05);
-  ctx.lineTo(shoulderX + unit * 0.05, shoulderY - unit * 0.005);
+  ctx.moveTo(-halfPelvis * 1.1, shortsTop);
+  ctx.lineTo(halfPelvis * 1.1, shortsTop);
+  ctx.strokeStyle = shade(trim, -0.4);
+  ctx.lineWidth = outline;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(shoulderX - unit * 0.042, shoulderY - unit * 0.012);
+  ctx.lineTo(shoulderX, shoulderY + unit * 0.032);
+  ctx.lineTo(shoulderX + unit * 0.042, shoulderY - unit * 0.012);
   ctx.strokeStyle = shade(kit, -0.35);
   ctx.lineWidth = outline;
-  ctx.stroke();
-
-  // Shorts with a side stripe.
-  ctx.beginPath();
-  ctx.moveTo(-halfWaist * 1.06, hipY - unit * 0.05);
-  ctx.lineTo(halfWaist * 1.06, hipY - unit * 0.05);
-  ctx.lineTo(halfWaist * 1.16, hipY + unit * 0.09);
-  ctx.lineTo(-halfWaist * 1.16, hipY + unit * 0.09);
-  ctx.closePath();
-  const shortsGrad = ctx.createLinearGradient(-halfWaist, hipY, halfWaist, hipY + unit * 0.09);
-  shortsGrad.addColorStop(0, shade(trim, 0.12));
-  shortsGrad.addColorStop(1, shade(trim, -0.22));
-  ctx.fillStyle = shortsGrad;
-  ctx.fill();
-  ctx.lineWidth = outline;
-  ctx.strokeStyle = OUTLINE;
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(halfWaist * 0.98, hipY - unit * 0.045);
-  ctx.lineTo(halfWaist * 1.08, hipY + unit * 0.085);
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-  ctx.lineWidth = Math.max(1, unit * 0.014);
   ctx.stroke();
 
   // Number on the chest, mirrored back so it never reads reversed.
@@ -447,76 +594,90 @@ export function drawPlayer(
     ctx.save();
     ctx.scale(facing, 1);
     ctx.fillStyle = 'rgba(255,255,255,0.92)';
-    ctx.font = `800 ${unit * 0.15}px system-ui, sans-serif`;
+    ctx.font = `800 ${unit * 0.085}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
-    ctx.fillText(String(p.rotationSlot), facing * shoulderX, shoulderY + unit * 0.26);
+    // On the hip: in profile there is no chest facing the camera to print a
+    // number on, and a number floating on a side-on ribcage is exactly the
+    // kind of front-view tell that broke the illusion.
+    ctx.fillText(String(p.rotationSlot), facing * -unit * 0.02, lerp(waistY, hipY, 0.95));
     ctx.restore();
   }
 
   // Near side.
-  drawLeg(current.legNear, trim, '#f2f5fb');
-  drawArm(current.armNear, kit);
+  drawLeg(current.legNear, 1, skin, trim, '#f2f5fb');
+  drawArm(current.armNear, 1, kit);
 
   // ---- head
   ctx.save();
   ctx.translate(headX, headY);
   ctx.rotate(current.head);
-  // Neck.
+  // Neck: narrower than the head, running down into the trapezius.
   ctx.beginPath();
-  ctx.rect(-unit * 0.03, headR * 0.5, unit * 0.06, unit * 0.062);
+  ctx.rect(-unit * 0.024, headH * 0.34, unit * 0.048, unit * 0.05);
   ctx.fillStyle = skinDark;
   ctx.fill();
-  // Face: a slightly squared jaw, not an egg.
+  // Head IN PROFILE — the body is seen from the side, so the face has to be
+  // too. Forehead, brow, the nose breaking the outline, lips, chin, jaw, and
+  // the skull rounding away at the back. A front-facing oval on a side-on
+  // body was the loudest wrong note in the whole figure.
   ctx.beginPath();
-  ctx.moveTo(-headR * 0.92, -headR * 0.3);
-  ctx.quadraticCurveTo(-headR * 1.0, headR * 0.5, -headR * 0.4, headR * 0.9);
-  ctx.quadraticCurveTo(0, headR * 1.08, headR * 0.45, headR * 0.86);
-  ctx.quadraticCurveTo(headR * 1.0, headR * 0.45, headR * 0.94, -headR * 0.3);
-  ctx.quadraticCurveTo(headR * 0.6, -headR * 1.05, 0, -headR * 1.02);
-  ctx.quadraticCurveTo(-headR * 0.65, -headR * 1.02, -headR * 0.92, -headR * 0.3);
+  ctx.moveTo(-headW * 0.55, -headH * 0.86); // back of the crown
+  ctx.quadraticCurveTo(headW * 0.45, -headH * 1.06, headW * 0.82, -headH * 0.52); // forehead
+  ctx.quadraticCurveTo(headW * 0.98, -headH * 0.34, headW * 0.9, -headH * 0.16); // brow
+  ctx.lineTo(headW * 1.22, headH * 0.06); // bridge to the tip of the nose
+  ctx.lineTo(headW * 0.86, headH * 0.16); // under the nose
+  ctx.quadraticCurveTo(headW * 0.98, headH * 0.34, headW * 0.8, headH * 0.46); // lips
+  ctx.quadraticCurveTo(headW * 0.86, headH * 0.72, headW * 0.4, headH * 0.9); // chin
+  ctx.quadraticCurveTo(-headW * 0.3, headH * 1.0, -headW * 0.72, headH * 0.4); // jaw
+  ctx.quadraticCurveTo(-headW * 1.06, -headH * 0.2, -headW * 0.55, -headH * 0.86); // skull
   ctx.closePath();
-  const faceGrad = ctx.createLinearGradient(-headR, -headR, headR, headR);
-  faceGrad.addColorStop(0, shade(skin, 0.12));
-  faceGrad.addColorStop(1, shade(skin, -0.12));
+  const faceGrad = ctx.createLinearGradient(-headW, -headH, headW, headH);
+  faceGrad.addColorStop(0, shade(skin, 0.1));
+  faceGrad.addColorStop(1, shade(skin, -0.14));
   ctx.fillStyle = faceGrad;
   ctx.fill();
   ctx.lineWidth = outline;
   ctx.strokeStyle = OUTLINE;
   ctx.stroke();
-  // Hair: a cap over the crown, longer at the back.
+  // Ear, set back at the jaw hinge.
   ctx.beginPath();
-  ctx.ellipse(-unit * 0.004, -headR * 0.28, headR * 1.0, headR * 0.84, 0, Math.PI, Math.PI * 2);
-  ctx.lineTo(-headR * 0.98, headR * 0.42);
-  ctx.quadraticCurveTo(-headR * 1.18, -headR * 0.2, -headR * 0.98, -headR * 0.5);
+  ctx.ellipse(-headW * 0.1, headH * 0.08, headW * 0.13, headH * 0.13, -0.2, 0, Math.PI * 2);
+  ctx.fillStyle = shade(skin, -0.1);
+  ctx.fill();
+  ctx.lineWidth = outline * 0.7;
+  ctx.strokeStyle = OUTLINE;
+  ctx.stroke();
+  // Hair: a solid cap over the crown running down the back of the skull to
+  // the nape. Drawn as one convex outline — an earlier version doubled back
+  // on itself and left a notch cut out of the head.
+  ctx.beginPath();
+  ctx.moveTo(headW * 0.84, -headH * 0.44);
+  ctx.quadraticCurveTo(headW * 0.42, -headH * 1.18, -headW * 0.58, -headH * 0.92);
+  ctx.quadraticCurveTo(-headW * 1.16, -headH * 0.3, -headW * 0.8, headH * 0.42);
+  ctx.quadraticCurveTo(-headW * 0.5, headH * 0.2, -headW * 0.5, -headH * 0.16);
+  ctx.quadraticCurveTo(-headW * 0.3, -headH * 0.68, headW * 0.84, -headH * 0.44);
   ctx.closePath();
   ctx.fillStyle = hair;
   ctx.fill();
-  // Fringe over the brow.
-  ctx.beginPath();
-  ctx.moveTo(headR * 0.7, -headR * 0.5);
-  ctx.quadraticCurveTo(headR * 0.35, -headR * 0.28, headR * 0.72, -headR * 0.1);
-  ctx.quadraticCurveTo(headR * 0.95, -headR * 0.35, headR * 0.7, -headR * 0.5);
-  ctx.fillStyle = hair;
-  ctx.fill();
-  // Face features, on the facing side.
+  // Face features, in profile.
   if (unit > 40) {
+    // Brow ridge.
     ctx.strokeStyle = '#20202c';
-    ctx.lineWidth = Math.max(0.8, headR * 0.1);
-    // Brow.
+    ctx.lineWidth = Math.max(0.8, headW * 0.12);
     ctx.beginPath();
-    ctx.moveTo(headR * 0.28, -headR * 0.16);
-    ctx.lineTo(headR * 0.62, -headR * 0.2);
+    ctx.moveTo(headW * 0.44, -headH * 0.26);
+    ctx.lineTo(headW * 0.84, -headH * 0.2);
     ctx.stroke();
-    // Eye.
+    // Eye, close to the nose the way a profile puts it.
     ctx.beginPath();
-    ctx.ellipse(headR * 0.45, headR * 0.05, headR * 0.09, headR * 0.14, 0, 0, Math.PI * 2);
+    ctx.ellipse(headW * 0.66, -headH * 0.02, headW * 0.12, headH * 0.1, 0, 0, Math.PI * 2);
     ctx.fillStyle = '#20202c';
     ctx.fill();
-    // Mouth.
+    // Mouth line.
     ctx.beginPath();
-    ctx.moveTo(headR * 0.4, headR * 0.55);
-    ctx.quadraticCurveTo(headR * 0.6, headR * 0.62, headR * 0.74, headR * 0.5);
-    ctx.lineWidth = Math.max(0.7, headR * 0.08);
+    ctx.moveTo(headW * 0.62, headH * 0.36);
+    ctx.lineTo(headW * 0.86, headH * 0.34);
+    ctx.lineWidth = Math.max(0.7, headW * 0.09);
     ctx.stroke();
   }
   ctx.restore();
@@ -526,8 +687,8 @@ export function drawPlayer(
   // and drawing its charge wrapped half the court in a permanent blue aura.
   if (opts.active && p.charge > 0.15) {
     const { ex, ey } = limbPoints(
-      shoulderX,
-      shoulderY,
+      shoulderX - unit * 0.026,
+      shoulderY + unit * 0.012,
       current.armFar[0],
       current.armFar[1],
       upperArm,
