@@ -34,6 +34,8 @@ export class Renderer {
   private powerTrail = 0;
   /** Coaching banner countdown, started when the human's gauge fills. */
   private promptTimer = 0;
+  /** Clock for the landing-marker arrow bounce. */
+  private markerTime = 0;
 
   constructor(private readonly ctx: CanvasRenderingContext2D) {}
 
@@ -137,6 +139,7 @@ export class Renderer {
     if (this.flash > 0) this.flash = Math.max(0, this.flash - dt * 2.4);
     if (this.powerTrail > 0) this.powerTrail = Math.max(0, this.powerTrail - dt);
     if (this.promptTimer > 0) this.promptTimer = Math.max(0, this.promptTimer - dt);
+    this.markerTime += dt;
 
     cam.follow(world.ball.pos, dt);
     this.effects.pushTrail(world.ball.pos, Math.hypot(world.ball.vel.x, world.ball.vel.y, world.ball.vel.z));
@@ -205,41 +208,72 @@ export class Renderer {
     if (world.ball.grounded) return;
 
     const ctx = this.ctx;
-    const s = this.camera.projectFloor(pred.point.x, pred.point.y);
-    if (s.behind) return;
+    const cam = this.camera;
+    const s = cam.projectFloor(pred.point.x, pred.point.y);
 
     const inCourt = isInsideCourt(pred.point.x, pred.point.y);
+    // Which side is about to receive this ball — that player needs the loudest
+    // signal, because standing under the marker in time is the whole game.
+    const yours = world.humanTeam !== null && pred.point.y < -0.2;
+    // 0 when the ball has just left a hand, 1 as it arrives.
     const urgency = clamp(1 - pred.time / 1.6, 0, 1);
-    const color = inCourt ? '#ffe27a' : '#ff6b5e';
-    const r = (0.85 + urgency * 0.35) * s.scale * 42;
+
+    const color = !inCourt ? '#ff6b5e' : yours ? '#ffe27a' : 'rgba(255,255,255,0.85)';
+    const u = s.scale * 42;
+    const rx = 0.62 * u;
 
     ctx.save();
-    ctx.globalAlpha = 0.35 + urgency * 0.5;
+
+    // Outer ring: where the ball will land.
+    ctx.globalAlpha = 0.85;
     ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(1.5, (2 + urgency * 3) * s.scale);
+    ctx.lineWidth = Math.max(2.5, 4 * s.scale);
     ctx.beginPath();
-    ctx.ellipse(s.x, s.y, r, r * 0.34, 0, 0, Math.PI * 2);
+    ctx.ellipse(s.x, s.y, rx, rx * 0.32, 0, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Inner ring closes in as the ball arrives: a readable countdown.
-    ctx.globalAlpha = 0.6 * urgency;
+    // Countdown ring: closes onto the spot as the ball arrives. This is the
+    // timing cue — when the two rings meet, the ball is there.
+    const cr = rx * (1.9 - urgency * 0.92);
+    ctx.globalAlpha = 0.35 + 0.5 * urgency;
+    ctx.lineWidth = Math.max(2, 3 * s.scale);
     ctx.beginPath();
-    ctx.ellipse(s.x, s.y, r * (1 - urgency * 0.75), r * 0.34 * (1 - urgency * 0.75), 0, 0, Math.PI * 2);
+    ctx.ellipse(s.x, s.y, cr, cr * 0.32, 0, 0, Math.PI * 2);
     ctx.stroke();
 
-    // A vertical tick joining the marker to the ball makes height legible.
-    const ballFloor = this.camera.projectFloor(world.ball.pos.x, world.ball.pos.y);
-    const ballAir = this.camera.projectVec(world.ball.pos);
-    if (!ballFloor.behind && !ballAir.behind) {
-      ctx.globalAlpha = 0.18;
-      ctx.setLineDash([4, 6]);
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(ballFloor.x, ballFloor.y);
-      ctx.lineTo(ballAir.x, ballAir.y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
+    // The arrow, bouncing over the spot — the marker the arcade original used.
+    const bob = Math.sin(this.markerTime * 9) * 4 * s.scale;
+    const ah = 15 * s.scale;
+    const aw = 11 * s.scale;
+    const ay = s.y - 22 * s.scale + bob;
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = color;
+    ctx.strokeStyle = 'rgba(10,10,20,0.8)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(s.x, ay);
+    ctx.lineTo(s.x - aw / 2, ay - ah * 0.55);
+    ctx.lineTo(s.x - aw * 0.22, ay - ah * 0.55);
+    ctx.lineTo(s.x - aw * 0.22, ay - ah);
+    ctx.lineTo(s.x + aw * 0.22, ay - ah);
+    ctx.lineTo(s.x + aw * 0.22, ay - ah * 0.55);
+    ctx.lineTo(s.x + aw / 2, ay - ah * 0.55);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Drop line from the ball to its floor shadow, so height stays legible.
+    const ballFloor = cam.projectFloor(world.ball.pos.x, world.ball.pos.y);
+    const ballAir = cam.projectVec(world.ball.pos);
+    ctx.globalAlpha = 0.28;
+    ctx.setLineDash([4, 6]);
+    ctx.strokeStyle = '#dfe6f5';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(ballFloor.x, ballFloor.y);
+    ctx.lineTo(ballAir.x, ballAir.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
     ctx.restore();
   }
 
@@ -261,7 +295,10 @@ export class Renderer {
     const ctx = this.ctx;
     const s = this.camera.projectVec(ball.pos);
     if (s.behind) return;
-    const r = Math.max(2.5, BALL_RADIUS * s.scale * 42);
+    // Drawn well over physical size, as every arcade volleyball game does: the
+    // ball is the object the whole game is read through, so it gets ~2x scale
+    // and a floor of several pixels.
+    const r = Math.max(8 * (this.camera.viewWidth / 1280), BALL_RADIUS * s.scale * 42 * 1.9);
     const speed = Math.hypot(ball.vel.x, ball.vel.y, ball.vel.z);
 
     // A power-move ball burns; an ordinary one leaves a pale streak.
@@ -272,9 +309,10 @@ export class Renderer {
     );
 
     ctx.save();
-    // Fast balls stretch along their direction of travel: cheap, and it reads
-    // as speed far better than a bigger trail.
-    const stretch = clamp(speed / 34, 0, 0.6);
+    // Only genuinely violent balls stretch — spikes and power moves. At rally
+    // speeds the ball stays perfectly round; a permanently oval ball was one
+    // of the clearest tells that something was off.
+    const stretch = speed > 24 ? clamp((speed - 24) / 40, 0, 0.3) : 0;
     const angle = Math.atan2(-ball.vel.z, ball.vel.x || 0.001);
     ctx.translate(s.x, s.y);
     ctx.rotate(angle);

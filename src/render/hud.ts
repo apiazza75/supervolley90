@@ -187,7 +187,11 @@ export class Hud {
     const ready = world.humanTeam?.powerReady ?? false;
     const lines =
       world.phase === 'serve'
-        ? [`HOLD ${a} to charge, release to serve`, '→ deep · ← short · ↑↓ pick the sideline']
+        ? [
+            `${a}: toss the ball up · ${a} again: hit it`,
+            `jump between the two for a JUMP SERVE`,
+            '→ deep · ← short · ↑↓ pick the sideline',
+          ]
         : [
             `${a} play the ball (hold = power)`,
             `${b} jump  ·  ${b} again in mid-air = LETHAL MANEUVER`,

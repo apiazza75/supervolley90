@@ -30,6 +30,7 @@ import {
   OUT_MARGIN_Y,
   SETS_TO_WIN,
   Side,
+  TOSS_SPEED,
   attackDir,
   isSetWon,
   otherSide,
@@ -126,6 +127,9 @@ export class World {
   private serveInFlight = false;
   /** Whether the most recent touch was a block (blocks are free touches). */
   private lastTouchWasBlock = false;
+  /** Serve phase: ball in hand, or tossed and waiting for the strike. */
+  private serveStage: 'hold' | 'toss' = 'hold';
+  private tossedAt = 0;
 
   constructor(config: MatchConfig) {
     this.config = config;
@@ -186,6 +190,8 @@ export class World {
     this.lastTouchWasBlock = false;
     this.rallyTime = 0;
     this.aimTarget = null;
+    this.serveStage = 'hold';
+    this.tossedAt = 0;
     this.phase = 'serve';
     this.phaseTimer = 0;
 
@@ -276,51 +282,95 @@ export class World {
         break;
     }
 
-    if (this.phase !== 'serve') this.ball.step(dt);
+    // During the serve the ball is glued to the hand until the toss; once
+    // tossed it flies free and the physics must run.
+    if (this.phase !== 'serve' || this.serveStage === 'toss') this.ball.step(dt);
     this.prediction = predictLanding(this.ball);
     if (this.phase === 'rally') this.checkRallyEnd();
     this.updateActivePlayers();
   }
 
+  /**
+   * The serve, as the arcade originals played it: press once to toss the ball
+   * up, then hit it with a second press — and the height you meet it at is the
+   * serve you get. Take it low from the ground and it floats; jump and meet it
+   * at full stretch and it is a driven jump serve. A toss allowed to drop is
+   * simply caught and retried.
+   */
   private stepServe(commands: Map<number, Command>, dt: number): void {
+    void dt;
     const team = this.team(this.servingSide);
     const server = team.server;
     const cmd = commands.get(server.id) ?? idleCommand();
 
-    // Ball stays glued to the server's hands until the toss.
-    this.ball.pos = v3(
-      server.pos.x,
-      server.pos.y + attackDir(this.servingSide) * 0.3,
-      1.25 + server.height + (server.charge > 0.05 ? 0.35 : 0),
-    );
-    this.ball.frozen = true;
-
-    void dt;
-    if (cmd.actionHeld) server.setAnim('serve');
-
-    const release = server.releasedCharge > 0;
-    // Eight seconds is the FIVB limit; the whistle enforces it.
-    const timeout = this.phaseTimer > 8;
-
-    if (release || timeout) {
+    // The whistle: after eight seconds the serve happens by itself.
+    if (this.phaseTimer > 8) {
       this.ball.frozen = false;
-      const res = performServe({
-        player: server,
-        ball: this.ball,
-        aim: cmd.aim,
-        rng: this.rng,
-        charge: timeout ? 0.3 : server.releasedCharge,
-        errorScale: this.errorScaleFor(server),
-      });
-      server.releasedCharge = 0;
-      server.charge = 0;
-      server.swing = 0.3;
-      this.registerTouch(server, 'serve', res.speed);
-      this.serveInFlight = true;
-      this.aimTarget = res.target;
-      this.phase = 'rally';
-      this.phaseTimer = 0;
+      this.strikeServe(server, cmd, 0.3);
+      return;
     }
+
+    if (this.serveStage === 'hold') {
+      this.ball.frozen = true;
+      this.ball.pos = v3(
+        server.pos.x,
+        server.pos.y + attackDir(this.servingSide) * 0.3,
+        1.3 + server.height,
+      );
+      server.setAnim('serve');
+
+      if (cmd.actionPressed) {
+        this.ball.frozen = false;
+        this.ball.vel = v3(0, 0, TOSS_SPEED);
+        this.ball.spin = v3();
+        this.serveStage = 'toss';
+        this.tossedAt = this.phaseTimer;
+        server.setAnim('set');
+      }
+      return;
+    }
+
+    // Ball in the air. The short delay stops the toss press itself from
+    // doubling as the hit; requiring the ball to have stopped rising keeps the
+    // contact at the top of the arc, where a serve is actually struck.
+    const sinceToss = this.phaseTimer - this.tossedAt;
+    const strikeable =
+      sinceToss > 0.25 &&
+      (this.ball.vel.z < 1.2 || server.airborne) &&
+      canReach(server, this.ball);
+
+    if (cmd.actionPressed && strikeable) {
+      // Contact height decides the serve. 1.8 m is roughly a standing chest
+      // strike; full jumping reach pushes the charge towards 1.
+      const charge = clamp((this.ball.pos.z - 1.8) / 1.3, 0, 1);
+      this.strikeServe(server, cmd, charge);
+      return;
+    }
+
+    // Dropped toss: catch it and go again, no fault.
+    if (this.ball.vel.z < 0 && this.ball.pos.z < 0.95) {
+      this.serveStage = 'hold';
+    }
+  }
+
+  private strikeServe(server: Player, cmd: Command, charge: number): void {
+    const res = performServe({
+      player: server,
+      ball: this.ball,
+      aim: cmd.aim,
+      rng: this.rng,
+      charge,
+      errorScale: this.errorScaleFor(server),
+    });
+    server.charge = 0;
+    server.releasedCharge = 0;
+    server.swing = 0.3;
+    server.setAnim('spike');
+    this.registerTouch(server, 'serve', res.speed);
+    this.serveInFlight = true;
+    this.aimTarget = res.target;
+    this.phase = 'rally';
+    this.phaseTimer = 0;
   }
 
   private stepRally(commands: Map<number, Command>, _dt: number): void {

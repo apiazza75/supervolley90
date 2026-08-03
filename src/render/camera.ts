@@ -25,16 +25,16 @@ const PIXELS_PER_METRE = 55;
  * the arcade original shows. An earlier version sheared width diagonally to
  * give the net visible area; that read as an angled 3D scene and was wrong.
  *
- * The ratio to PIXELS_PER_METRE matters: the reference compresses the court's
- * 9 m of depth to roughly a sixth of its 18 m of length on screen, and 22 px
- * per metre against 55 is what reproduces that.
+ * The ratio to PIXELS_PER_METRE matters: the arcade original compresses the
+ * court's 9 m of depth into a shallow band — roughly a tenth of the court's
+ * on-screen length — so depth reads as a hint, not as a receding plane.
  */
-const DEPTH_RISE = 22;
+const DEPTH_RISE = 13;
 /**
  * How much smaller the far sideline is drawn than the near one. Applied to
  * sprite size only, never to position, so court lines stay exactly parallel.
  */
-const DEPTH_SHRINK = 0.08;
+const DEPTH_SHRINK = 0.05;
 
 /**
  * Orthographic side-on camera.
@@ -78,7 +78,7 @@ export class Camera {
 
   /** Screen row that the court centre line sits on. */
   private get baseline(): number {
-    return this.viewHeight * 0.62;
+    return this.viewHeight * 0.72;
   }
 
   follow(ballPos: Vec3, dt: number): void {

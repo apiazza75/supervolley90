@@ -32,19 +32,47 @@ const pose = (
   head = 0,
 ): Pose => ({ crouch, lean, armFar, armNear, legFar, legNear, head });
 
+/**
+ * The pose library.
+ *
+ * Convention check that matters: limb points are (sin a, cos a) with screen y
+ * growing downward, so 0 hangs, PI/2 reaches forward-horizontal, PI points
+ * straight up, and values past PI go up-and-behind. The elbow/knee bend is
+ * SUBTRACTED from the parent angle — so knees (which fold backward) take
+ * positive bends, and elbows (which fold forward) take NEGATIVE bends. The
+ * first version of this file used positive elbow bends throughout, which is
+ * why every figure looked like it was carrying an invisible tray.
+ */
 const POSES: Record<string, Pose> = {
-  //          crouch lean  armFar        armNear       legFar        legNear      head
-  idle: pose(0.1, 0.02, [0.22, 0.3], [-0.18, 0.34], [0.1, 0.12], [-0.1, 0.12], 0),
-  run: pose(0.2, 0.22, [1.0, 0.9], [-0.9, 0.85], [0.7, 0.15], [-0.55, 1.0], 0.05),
-  jump: pose(0.0, -0.04, [2.3, 0.35], [1.5, 0.6], [0.28, 0.75], [-0.4, 0.5], -0.1),
-  spike: pose(0.0, 0.26, [3.0, 0.1], [-0.9, 0.7], [0.42, 0.8], [-0.55, 0.55], -0.16),
-  block: pose(0.0, 0.02, [2.95, 0.06], [2.95, 0.06], [0.1, 0.35], [-0.1, 0.35], -0.14),
-  set: pose(0.22, -0.06, [2.55, 0.75], [2.55, 0.75], [0.24, 0.4], [-0.24, 0.4], -0.12),
-  bump: pose(0.46, 0.24, [1.15, 0.06], [1.15, 0.06], [0.46, 0.7], [-0.42, 0.66], 0.1),
-  serve: pose(0.12, 0.04, [1.45, 0.5], [-0.3, 0.35], [0.16, 0.2], [-0.16, 0.2], -0.06),
-  dive: pose(0.85, 1.2, [1.7, 0.2], [1.35, 0.5], [0.95, 0.3], [0.6, 0.5], -0.3),
-  land: pose(0.48, 0.16, [0.55, 0.55], [-0.5, 0.55], [0.3, 0.85], [-0.28, 0.85], 0.08),
-  down: pose(0.95, 1.35, [0.85, 0.4], [0.25, 0.6], [0.62, 0.9], [-0.35, 0.9], 0.2),
+  // Volleyball ready stance: knees flexed, weight forward, hands ready in
+  // front at hip height, feet staggered.
+  idle: pose(0.24, 0.14, [0.5, -0.75], [-0.35, -0.85], [0.22, 0.35], [-0.2, 0.35], -0.04),
+  // Sprint: high knee lift, elbows pumping at ninety degrees, torso driving.
+  run: pose(0.2, 0.3, [1.0, -0.95], [-0.95, -0.95], [0.8, 0.2], [-0.6, 1.2], 0.04),
+  // Takeoff: both arms swinging up, legs tucking.
+  jumpRise: pose(0.0, -0.1, [2.1, -0.45], [1.6, -0.55], [0.45, 0.9], [-0.3, 1.0], -0.12),
+  // The cocked spike, back arched like a drawn bow: chest open, hitting arm
+  // folded behind the head, off arm high for balance, legs trailing.
+  spikeCock: pose(0.0, -0.34, [3.35, 0.85], [2.0, -0.4], [-0.42, 1.05], [-0.6, 0.9], -0.28),
+  // The hit itself: the bow releases — torso jackknifes, arm whips through,
+  // legs pike forward.
+  spikeHit: pose(0.05, 0.42, [1.0, -0.1], [-0.7, -0.6], [0.5, 0.5], [0.25, 0.6], 0.18),
+  // Grounded attack/tip follow-through shares the hit shape.
+  spike: pose(0.08, 0.34, [1.05, -0.15], [-0.6, -0.6], [0.4, 0.55], [-0.4, 0.5], 0.1),
+  jump: pose(0.0, -0.1, [2.1, -0.45], [1.6, -0.55], [0.45, 0.9], [-0.3, 1.0], -0.12),
+  // Penetrating block: both arms rammed straight up, body a plank.
+  block: pose(0.0, 0.04, [3.1, -0.05], [2.98, -0.05], [0.12, 0.45], [-0.12, 0.45], -0.16),
+  // Overhead set: hands above the forehead, elbows out, knees loaded.
+  set: pose(0.3, 0.0, [2.45, -0.55], [2.55, -0.5], [0.26, 0.5], [-0.26, 0.5], -0.2),
+  // The platform: both arms dead straight, locked together, angled to the
+  // ball; deep staggered squat, eyes up.
+  bump: pose(0.5, 0.32, [0.98, -0.02], [0.9, -0.02], [0.55, 0.8], [-0.5, 0.75], -0.14),
+  // Holding the ball out front, ready to toss.
+  serve: pose(0.14, 0.06, [0.25, -0.5], [1.5, -0.15], [0.18, 0.25], [-0.18, 0.25], -0.06),
+  dive: pose(0.85, 1.2, [1.7, -0.2], [1.35, -0.45], [0.95, 0.35], [0.6, 0.55], -0.3),
+  // Absorbing the landing: deep flex, arms out for balance.
+  land: pose(0.5, 0.18, [0.72, -0.55], [-0.6, -0.55], [0.34, 0.95], [-0.3, 0.95], 0.06),
+  down: pose(0.95, 1.35, [0.85, -0.3], [0.25, -0.5], [0.62, 0.95], [-0.35, 0.95], 0.2),
 };
 
 const blend = (a: Pose, b: Pose, t: number): Pose => ({
@@ -161,7 +189,18 @@ export function drawPlayer(
   const groundSpeed = Math.hypot(p.vel.x, p.vel.y);
   st.runPhase += opts.dt * (5 + groundSpeed * 2.6);
 
-  let target = POSES[p.anim] ?? POSES.idle;
+  // Airborne attacks are a sequence, not a pose: rise with the arms swinging
+  // up, arch the back at the top with the arm cocked, then whip through on
+  // the swing. Driven from the jump physics, so the arch always happens at
+  // the apex regardless of jump height.
+  let animKey: string = p.anim;
+  if (p.airborne && (p.anim === 'jump' || p.anim === 'spike')) {
+    if (p.swing > 0) animKey = 'spikeHit';
+    else if (p.vertVel > 1.4) animKey = 'jumpRise';
+    else animKey = 'spikeCock';
+  }
+
+  let target = POSES[animKey] ?? POSES.idle;
   if (p.anim === 'run') {
     const phase = Math.sin(st.runPhase);
     const lift = Math.max(0, -phase);
@@ -178,15 +217,6 @@ export function drawPlayer(
     const breathe = Math.sin(opts.time * 2.1 + p.id) * 0.025;
     target = { ...target, crouch: target.crouch + breathe };
   }
-  if (p.swing > 0 && (p.anim === 'spike' || p.anim === 'serve')) {
-    // Snap the hitting arm through its arc as the swing timer runs out.
-    const k = clamp(p.swing / 0.32, 0, 1);
-    target = {
-      ...target,
-      armFar: [lerp(0.5, target.armFar[0], k), target.armFar[1]],
-      lean: target.lean + (1 - k) * 0.28,
-    };
-  }
 
   // Fast enough to feel responsive, slow enough to remove the stepping.
   const k = 1 - Math.exp(-26 * Math.max(0.0001, opts.dt));
@@ -201,16 +231,16 @@ export function drawPlayer(
   const skinDark = shade(skin, -0.18);
   const kitDark = shade(kit, -0.22);
 
-  const hipY = -unit * (0.47 - current.crouch * 0.15);
-  const shoulderY = -unit * (0.8 - current.crouch * 0.19);
+  const hipY = -unit * (0.5 - current.crouch * 0.16);
+  const shoulderY = -unit * (0.82 - current.crouch * 0.2);
   const neckY = shoulderY - unit * 0.035;
-  const headR = unit * 0.088;
+  const headR = unit * 0.077;
   const headY = neckY - headR * 1.05;
 
-  const thigh = unit * 0.245;
-  const shin = unit * 0.225;
-  const upperArm = unit * 0.185;
-  const foreArm = unit * 0.175;
+  const thigh = unit * 0.26;
+  const shin = unit * 0.24;
+  const upperArm = unit * 0.2;
+  const foreArm = unit * 0.19;
   const outline = Math.max(0.6, unit * 0.016);
 
   ctx.save();
@@ -269,7 +299,7 @@ export function drawPlayer(
   drawLeg(current.legFar, shade(trim, -0.2), '#dfe4ee');
 
   // ---- torso: shoulders wide, waist narrow
-  const halfShoulder = unit * 0.125;
+  const halfShoulder = unit * 0.14;
   const halfWaist = unit * 0.098;
   ctx.beginPath();
   ctx.moveTo(-halfShoulder, shoulderY);

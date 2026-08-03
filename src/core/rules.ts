@@ -28,7 +28,11 @@ export const ANTENNA_HEIGHT = 3.23;
 export const OUT_MARGIN_X = 3.2;
 export const OUT_MARGIN_Y = 2.6;
 
-export const GRAVITY = -9.81 * 1.35; // slightly heavy: arcade balls fall fast
+// Real gravity, not the heavier arcade variant this started with. The 90s
+// coin-ops read as *floaty*: high arcs and long hang time are what give the
+// player room to walk under the marker and time the button — which is the
+// entire rhythm of the genre.
+export const GRAVITY = -9.81;
 export const AIR_DRAG = 0.06; // per second, proportional to velocity
 export const MAGNUS = 0.32; // spin -> lateral/vertical curve coefficient
 export const SPIN_DECAY = 0.55;
@@ -54,6 +58,10 @@ export const SET_TARGET = 25;
 export const TIEBREAK_TARGET = 15;
 export const SETS_TO_WIN = 3;
 export const MIN_LEAD = 2;
+
+/** Upward speed of the serve toss. High enough that a jumping server meets
+ *  the ball near full reach — which is what makes a jump serve possible. */
+export const TOSS_SPEED = 5.6;
 
 /** Fixed simulation timestep (120 Hz) — rendering interpolates between steps. */
 export const FIXED_DT = 1 / 120;

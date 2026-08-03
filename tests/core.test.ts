@@ -90,7 +90,10 @@ describe('rotation', () => {
 describe('ball physics', () => {
   it('lands where predictLanding says it will', () => {
     const ball = new Ball();
-    ball.reset(v3(1, -6, 2), v3(0.5, 6, 5));
+    // A lob that stays on its own side of the net: with real gravity the old
+    // test trajectory (vy = 6) genuinely clips the tape now, and the predictor
+    // correctly reports such a ball as never arriving.
+    ball.reset(v3(1, -6, 2), v3(0.5, 3, 5));
     const pred = predictLanding(ball);
     expect(pred.valid).toBe(true);
 
@@ -174,7 +177,7 @@ describe('match simulation', () => {
   it('completes a full match within a sane number of steps', () => {
     const world = makeWorld(3);
     let steps = 0;
-    const limit = 120 * 60 * 40; // 40 simulated minutes
+    const limit = 120 * 60 * 55; // 55 simulated minutes
     while (world.phase !== 'matchOver' && steps < limit) {
       world.step(null);
       steps++;

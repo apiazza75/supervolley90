@@ -47,10 +47,10 @@ async function main(): Promise<void> {
   await page.waitForTimeout(1200);
   await page.screenshot({ path: `${OUT}/02-serve.png` });
 
-  // Hold the action button to charge and release, then let a rally develop.
-  await page.keyboard.down('Space');
-  await page.waitForTimeout(700);
-  await page.keyboard.up('Space');
+  // Serve: one tap tosses the ball, a second tap hits it at the top.
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(780);
+  await page.keyboard.press('Space');
 
   for (const [name, wait] of [
     ['03-rally', 1400],

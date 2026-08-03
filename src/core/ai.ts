@@ -7,6 +7,7 @@ import {
   ATTACK_LINE,
   COURT_HALF_LENGTH,
   COURT_HALF_WIDTH,
+  GRAVITY,
   NET_HEIGHT,
   PLAYER_REACH,
   attackDir,
@@ -28,8 +29,10 @@ interface Brainstate {
   /** Charge intent: how long to hold before striking. */
   holdAction: boolean;
   aim: Aim;
-  /** Serve timing: how long this server holds the ball. */
+  /** Serve timing: when this server tosses the ball. */
   serveHold: number;
+  /** Whether this serve is a jump serve. */
+  powerServe: boolean;
   /** Request a Lethal Maneuver on this step. */
   armSpecial: boolean;
 }
@@ -42,6 +45,7 @@ const newState = (): Brainstate => ({
   holdAction: false,
   aim: { x: 0, depth: 0.4 },
   serveHold: 0.6,
+  powerServe: false,
   armSpecial: false,
 });
 
@@ -137,20 +141,28 @@ export class TeamBrain {
       if (serving && p.id === server.id) {
         s.job = 'serve';
         s.goal = copy(p.pos);
-        // Pick a serve target once per serve: mostly deep, sometimes short.
+        // Plan the serve once: toss time, target, and whether to go up for it.
         if (s.serveHold <= 0) {
-          // Mostly a safe serve; occasionally go for the big one. Holding
-          // longer means more power and more risk, so a server that always
-          // maxed the charge simply handed points away.
-          s.serveHold = this.rng.chance(0.28)
-            ? this.rng.range(0.7, 1.05)
-            : this.rng.range(0.16, 0.42);
+          s.serveHold = this.rng.range(0.5, 1.2);
+          s.powerServe = this.rng.chance(0.18 + this.difficulty * 0.12);
           s.aim = {
             x: this.rng.range(-0.8, 0.8),
             depth: this.rng.chance(0.25) ? this.rng.range(-0.5, 0) : this.rng.range(0.4, 0.95),
           };
         }
-        s.holdAction = this.world.phaseTimer < s.serveHold;
+
+        const t = this.world.phaseTimer;
+        const ball = this.world.ball;
+        if (ball.frozen) {
+          // Ball still in hand: a press now is the toss.
+          s.wantsAction = t > s.serveHold;
+        } else {
+          // Ball in the air. Go up for a jump serve if that was the plan, and
+          // swing once the ball has stopped rising and dropped into reach.
+          if (s.powerServe && !p.airborne && p.canAct && t > s.serveHold + 0.34) p.jump();
+          const reachTop = p.height + PLAYER_REACH + (p.airborne ? 0.3 : 0.1);
+          s.wantsAction = ball.vel.z < 1.0 && ball.pos.z <= reachTop && ball.pos.z > 1.6;
+        }
       } else {
         s.job = 'idle';
         s.serveHold = 0;
@@ -300,8 +312,10 @@ export class TeamBrain {
   private driveAttack(p: Player, s: Brainstate, timeToContact: number): void {
     const w = this.world;
     const gap = distXY(p.pos, s.goal);
-    // Time to reach the peak of the jump, from the same gravity the player uses.
-    const rise = p.jumpVelocity / (9.81 * 1.35 * 1.15);
+    // Time to reach the peak of the jump, from the same gravity the player
+    // integrates with — hardcoding the old constant here once made every AI
+    // spike jump early when the gravity changed.
+    const rise = p.jumpVelocity / (Math.abs(GRAVITY) * 1.15);
     // Jump when the ball will arrive as we peak, and only if we are close
     // enough that the swing will actually connect.
     const inPosition = gap < 1.4 || gap < p.runSpeed * timeToContact * 0.6;
