@@ -29,7 +29,7 @@ const PIXELS_PER_METRE = 55;
  * court's 9 m of depth into a shallow band — roughly a tenth of the court's
  * on-screen length — so depth reads as a hint, not as a receding plane.
  */
-const DEPTH_RISE = 13;
+const DEPTH_RISE = 15;
 /**
  * How much smaller the far sideline is drawn than the near one. Applied to
  * sprite size only, never to position, so court lines stay exactly parallel.

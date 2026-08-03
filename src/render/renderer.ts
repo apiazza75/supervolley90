@@ -234,8 +234,8 @@ export class Renderer {
 
     // Countdown ring: closes onto the spot as the ball arrives. This is the
     // timing cue — when the two rings meet, the ball is there.
-    const cr = rx * (1.9 - urgency * 0.92);
-    ctx.globalAlpha = 0.35 + 0.5 * urgency;
+    const cr = rx * (3.1 - urgency * 2.12);
+    ctx.globalAlpha = (0.3 + 0.55 * urgency) * (0.75 + 0.25 * Math.sin(this.markerTime * 12.6));
     ctx.lineWidth = Math.max(2, 3 * s.scale);
     ctx.beginPath();
     ctx.ellipse(s.x, s.y, cr, cr * 0.32, 0, 0, Math.PI * 2);
@@ -298,7 +298,7 @@ export class Renderer {
     // Drawn well over physical size, as every arcade volleyball game does: the
     // ball is the object the whole game is read through, so it gets ~2x scale
     // and a floor of several pixels.
-    const r = Math.max(8 * (this.camera.viewWidth / 1280), BALL_RADIUS * s.scale * 42 * 1.9);
+    const r = Math.max(11 * (this.camera.viewWidth / 1280), BALL_RADIUS * s.scale * 42 * 2.2);
     const speed = Math.hypot(ball.vel.x, ball.vel.y, ball.vel.z);
 
     // A power-move ball burns; an ordinary one leaves a pale streak.
@@ -318,6 +318,16 @@ export class Renderer {
     ctx.rotate(angle);
     ctx.scale(1 + stretch, 1 - stretch * 0.32);
     ctx.rotate(-angle);
+
+    // A soft halo and a white rim keep the ball findable against the crowd
+    // band, whose warm heads share its hue at almost its size.
+    const glow = ctx.createRadialGradient(0, 0, r, 0, 0, r * 1.9);
+    glow.addColorStop(0, 'rgba(255,244,214,0.4)');
+    glow.addColorStop(1, 'rgba(255,244,214,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.9, 0, Math.PI * 2);
+    ctx.fill();
 
     const grad = ctx.createRadialGradient(-r * 0.35, -r * 0.4, r * 0.1, 0, 0, r);
     grad.addColorStop(0, '#ffffff');

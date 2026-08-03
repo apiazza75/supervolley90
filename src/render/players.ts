@@ -46,7 +46,7 @@ const pose = (
 const POSES: Record<string, Pose> = {
   // Volleyball ready stance: knees flexed, weight forward, hands ready in
   // front at hip height, feet staggered.
-  idle: pose(0.24, 0.14, [0.5, -0.75], [-0.35, -0.85], [0.22, 0.35], [-0.2, 0.35], -0.04),
+  idle: pose(0.42, 0.22, [0.62, -1.15], [-0.42, -1.2], [0.3, 0.6], [-0.28, 0.55], -0.06),
   // Sprint: high knee lift, elbows pumping at ninety degrees, torso driving.
   run: pose(0.2, 0.3, [1.0, -0.95], [-0.95, -0.95], [0.8, 0.2], [-0.6, 1.2], 0.04),
   // Takeoff: both arms swinging up, legs tucking.
@@ -68,7 +68,7 @@ const POSES: Record<string, Pose> = {
   // ball; deep staggered squat, eyes up.
   bump: pose(0.5, 0.32, [0.98, -0.02], [0.9, -0.02], [0.55, 0.8], [-0.5, 0.75], -0.14),
   // Holding the ball out front, ready to toss.
-  serve: pose(0.14, 0.06, [0.25, -0.5], [1.5, -0.15], [0.18, 0.25], [-0.18, 0.25], -0.06),
+  serve: pose(0.24, 0.1, [0.3, -0.7], [1.5, -0.15], [0.3, 0.4], [-0.22, 0.35], -0.06),
   dive: pose(0.85, 1.2, [1.7, -0.2], [1.35, -0.45], [0.95, 0.35], [0.6, 0.55], -0.3),
   // Absorbing the landing: deep flex, arms out for balance.
   land: pose(0.5, 0.18, [0.72, -0.55], [-0.6, -0.55], [0.34, 0.95], [-0.3, 0.95], 0.06),
@@ -231,8 +231,8 @@ export function drawPlayer(
   const skinDark = shade(skin, -0.18);
   const kitDark = shade(kit, -0.22);
 
-  const hipY = -unit * (0.5 - current.crouch * 0.16);
-  const shoulderY = -unit * (0.82 - current.crouch * 0.2);
+  const hipY = -unit * (0.5 - current.crouch * 0.22);
+  const shoulderY = -unit * (0.82 - current.crouch * 0.26);
   const neckY = shoulderY - unit * 0.035;
   const headR = unit * 0.077;
   const headY = neckY - headR * 1.05;

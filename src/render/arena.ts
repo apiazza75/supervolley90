@@ -116,6 +116,10 @@ export class Arena {
    */
   private drawCrowd(ctx: CanvasRenderingContext2D, cam: Camera, time: number): void {
     ctx.save();
+    // The stand must sit visually *behind* the play: at full strength the
+    // warm-toned heads compete with the ball for attention in the exact band
+    // of the screen the ball flies through.
+    ctx.globalAlpha = 0.66;
     for (const s of this.crowd) {
       const bob =
         Math.sin(time * 2.2 + s.phase) * 0.035 +
