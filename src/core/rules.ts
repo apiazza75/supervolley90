@@ -61,7 +61,7 @@ export const MIN_LEAD = 2;
 
 /** Upward speed of the serve toss. High enough that a jumping server meets
  *  the ball near full reach — which is what makes a jump serve possible. */
-export const TOSS_SPEED = 5.6;
+export const TOSS_SPEED = 6.4;
 
 /** Fixed simulation timestep (120 Hz) — rendering interpolates between steps. */
 export const FIXED_DT = 1 / 120;

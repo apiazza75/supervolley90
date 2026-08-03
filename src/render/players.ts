@@ -46,7 +46,7 @@ const pose = (
 const POSES: Record<string, Pose> = {
   // Volleyball ready stance: knees flexed, weight forward, hands ready in
   // front at hip height, feet staggered.
-  idle: pose(0.42, 0.22, [0.62, -1.15], [-0.42, -1.2], [0.3, 0.6], [-0.28, 0.55], -0.06),
+  idle: pose(0.42, 0.22, [0.55, -0.6], [-0.4, -0.65], [0.3, 0.6], [-0.28, 0.55], -0.06),
   // Sprint: high knee lift, elbows pumping at ninety degrees, torso driving.
   run: pose(0.2, 0.3, [1.0, -0.95], [-0.95, -0.95], [0.8, 0.2], [-0.6, 1.2], 0.04),
   // Takeoff: both arms swinging up, legs tucking.
@@ -376,8 +376,10 @@ export function drawPlayer(
   }
   ctx.restore();
 
-  // Charge glow on the hitting hand.
-  if (p.charge > 0.15) {
+  // Charge glow on the hitting hand — only for the player the human is
+  // steering. The AI holds its button constantly while setting up contacts,
+  // and drawing its charge wrapped half the court in a permanent blue aura.
+  if (opts.active && p.charge > 0.15) {
     const { ex, ey } = limbPoints(
       0,
       shoulderY,

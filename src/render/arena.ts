@@ -10,7 +10,6 @@ import { Camera } from './camera';
 
 const LINE = 'rgba(255,255,255,0.94)';
 const COURT_NEAR = '#c9713a';
-const COURT_FAR = '#b9642f';
 const SURROUND = '#2f6a5a';
 
 interface Spectator {
@@ -95,12 +94,9 @@ export class Arena {
   drawBackground(ctx: CanvasRenderingContext2D, cam: Camera, time: number): void {
     const { viewWidth: w, viewHeight: h } = cam;
 
-    const hall = ctx.createLinearGradient(0, 0, 0, h);
-    hall.addColorStop(0, '#070a16');
-    hall.addColorStop(0.3, '#111a2c');
-    hall.addColorStop(0.62, '#1a2438');
-    hall.addColorStop(1, '#0d1322');
-    ctx.fillStyle = hall;
+    // Flat fills, deliberately: gradients read as a lit 3D scene, and this
+    // game is meant to read as a drawn 2D one.
+    ctx.fillStyle = '#10182b';
     ctx.fillRect(0, 0, w, h);
 
     this.drawCrowd(ctx, cam, time);
@@ -250,19 +246,6 @@ export class Arena {
 
     fillQuad(ctx, cam, [[-outX, -outY], [outX, -outY], [outX, outY], [-outX, outY]], SURROUND);
 
-    // Subtle sheen bands along the hall floor, the way a lit sports surface
-    // catches the ceiling lights.
-    for (let i = 0; i < 5; i++) {
-      const x0 = -outX + (i * (2 * outX)) / 5;
-      const x1 = x0 + outX / 5;
-      fillQuad(
-        ctx,
-        cam,
-        [[x0, -outY], [x1, -outY], [x1, outY], [x0, outY]],
-        i % 2 ? 'rgba(255,255,255,0.018)' : 'rgba(0,0,0,0.02)',
-      );
-    }
-
     fillQuad(
       ctx,
       cam,
@@ -283,7 +266,7 @@ export class Arena {
         [COURT_HALF_WIDTH, COURT_HALF_LENGTH],
         [-COURT_HALF_WIDTH, COURT_HALF_LENGTH],
       ],
-      COURT_FAR,
+      COURT_NEAR,
     );
 
     this.drawLines(ctx, cam);

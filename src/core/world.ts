@@ -131,6 +131,22 @@ export class World {
   private serveStage: 'hold' | 'toss' = 'hold';
   private tossedAt = 0;
 
+  /** True while a served toss is in the air, for the HUD's timing cue. */
+  get serveTossInFlight(): boolean {
+    return this.phase === 'serve' && this.serveStage === 'toss';
+  }
+
+  /** True in the window where a press would strike the toss. */
+  get serveStrikeReady(): boolean {
+    if (!this.serveTossInFlight) return false;
+    const server = this.team(this.servingSide).server;
+    return (
+      this.phaseTimer - this.tossedAt > 0.22 &&
+      (server.airborne || this.ball.vel.z < 1.2) &&
+      canReach(server, this.ball)
+    );
+  }
+
   constructor(config: MatchConfig) {
     this.config = config;
     this.rng = new Rng(config.seed ?? 0x51ce5eed);
@@ -242,8 +258,12 @@ export class World {
       if (cmd.jumpPressed) {
         if (p.airborne) {
           if (this.team(p.side).powerReady) p.specialArmed = true;
-        } else {
-          p.jump();
+        } else if (p.jump()) {
+          // A defensive jump at the net is a block and must read as one —
+          // both arms straight up — not as a spike wind-up.
+          if (this.possession !== p.side && Math.abs(p.pos.y) < 2.2) {
+            p.setAnim('block');
+          }
         }
       }
       p.step(dt, cmd.moveX, cmd.moveY);
@@ -333,13 +353,7 @@ export class World {
     // Ball in the air. The short delay stops the toss press itself from
     // doubling as the hit; requiring the ball to have stopped rising keeps the
     // contact at the top of the arc, where a serve is actually struck.
-    const sinceToss = this.phaseTimer - this.tossedAt;
-    const strikeable =
-      sinceToss > 0.25 &&
-      (this.ball.vel.z < 1.2 || server.airborne) &&
-      canReach(server, this.ball);
-
-    if (cmd.actionPressed && strikeable) {
+    if (cmd.actionPressed && this.serveStrikeReady) {
       // Contact height decides the serve. 1.8 m is roughly a standing chest
       // strike; full jumping reach pushes the charge towards 1.
       const charge = clamp((this.ball.pos.z - 1.8) / 1.3, 0, 1);

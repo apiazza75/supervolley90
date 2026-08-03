@@ -34,7 +34,7 @@ const DEPTH_RISE = 15;
  * How much smaller the far sideline is drawn than the near one. Applied to
  * sprite size only, never to position, so court lines stay exactly parallel.
  */
-const DEPTH_SHRINK = 0.05;
+const DEPTH_SHRINK = 0;
 
 /**
  * Orthographic side-on camera.

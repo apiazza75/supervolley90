@@ -359,8 +359,9 @@ export class TeamBrain {
     const timing = this.rng.range(0, 1) < 0.5 + this.difficulty * 0.25;
 
     if (!p.airborne && p.canAct && attackerFalling && aligned && timing) {
-      if (this.stateOf(p).reactionDelay <= 0) {
-        p.jump();
+      if (this.stateOf(p).reactionDelay <= 0 && p.jump()) {
+        // Read as a block from the first frame of the jump.
+        p.setAnim('block');
         this.stateOf(p).reactionDelay = this.latency(p);
       }
     }

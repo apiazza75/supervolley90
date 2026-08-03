@@ -187,7 +187,6 @@ export class Renderer {
     for (const d of drawables) d.draw();
 
     this.effects.draw(ctx, cam);
-    this.drawVignette();
     this.drawPowerCoach(world, state.time, state.jumpLabel ?? 'SHIFT');
     if (this.flash > 0) {
       ctx.fillStyle = `rgba(255,236,196,${this.flash})`;
@@ -232,10 +231,12 @@ export class Renderer {
     ctx.ellipse(s.x, s.y, rx, rx * 0.32, 0, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Countdown ring: closes onto the spot as the ball arrives. This is the
-    // timing cue — when the two rings meet, the ball is there.
-    const cr = rx * (3.1 - urgency * 2.12);
-    ctx.globalAlpha = (0.3 + 0.55 * urgency) * (0.75 + 0.25 * Math.sin(this.markerTime * 12.6));
+    // Countdown ring: its radius IS the time to impact, closing continuously
+    // through the whole flight and meeting the landing ellipse exactly as the
+    // ball arrives. That collapse is the "move now" signal.
+    const tti = Math.min(pred.time, 2.2);
+    const cr = rx * (1 + tti * 1.5);
+    ctx.globalAlpha = 0.5 + 0.45 * urgency;
     ctx.lineWidth = Math.max(2, 3 * s.scale);
     ctx.beginPath();
     ctx.ellipse(s.x, s.y, cr, cr * 0.32, 0, 0, Math.PI * 2);
@@ -319,16 +320,6 @@ export class Renderer {
     ctx.scale(1 + stretch, 1 - stretch * 0.32);
     ctx.rotate(-angle);
 
-    // A soft halo and a white rim keep the ball findable against the crowd
-    // band, whose warm heads share its hue at almost its size.
-    const glow = ctx.createRadialGradient(0, 0, r, 0, 0, r * 1.9);
-    glow.addColorStop(0, 'rgba(255,244,214,0.4)');
-    glow.addColorStop(1, 'rgba(255,244,214,0)');
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(0, 0, r * 1.9, 0, Math.PI * 2);
-    ctx.fill();
-
     const grad = ctx.createRadialGradient(-r * 0.35, -r * 0.4, r * 0.1, 0, 0, r);
     grad.addColorStop(0, '#ffffff');
     grad.addColorStop(0.55, this.powerTrail > 0 ? '#ffb040' : '#ffd873');
@@ -375,6 +366,23 @@ export class Renderer {
     const ctx = this.ctx;
     const cam = this.camera;
     const team = world.humanTeam;
+
+    // Serve coaching: once the toss is up, say when to swing.
+    if (team && world.phase === 'serve' && world.serveTossInFlight) {
+      const server = world.team(team.side).server;
+      const s = cam.project(server.pos.x, server.pos.y, server.height + 2.4);
+      ctx.save();
+      ctx.font = '900 24px "Arial Black", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 6;
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(6,8,18,0.9)';
+      const label = world.serveStrikeReady ? 'HIT!' : '...';
+      ctx.strokeText(label, s.x, s.y);
+      ctx.fillStyle = world.serveStrikeReady ? '#ffe27a' : 'rgba(230,238,255,0.8)';
+      ctx.fillText(label, s.x, s.y);
+      ctx.restore();
+    }
 
     if (team?.powerReady && world.phase === 'rally') {
       const p = team.active;
@@ -426,15 +434,7 @@ export class Renderer {
     }
   }
 
-  private drawVignette(): void {
-    const { viewWidth: w, viewHeight: h } = this.camera;
-    const ctx = this.ctx;
-    const grad = ctx.createRadialGradient(w / 2, h / 2, h * 0.42, w / 2, h / 2, h * 1.05);
-    grad.addColorStop(0, 'rgba(0,0,0,0)');
-    grad.addColorStop(1, 'rgba(0,0,0,0.45)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, h);
-  }
+
 }
 
 const POINT_LABEL: Record<string, string> = {
