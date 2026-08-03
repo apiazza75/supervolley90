@@ -1,0 +1,254 @@
+import { Vec3, v3, clamp, approach } from './math3';
+import {
+  GRAVITY,
+  JUMP_VELOCITY,
+  LANDING_LOCK,
+  PLAYER_ACCEL,
+  PLAYER_FRICTION,
+  PLAYER_RUN_SPEED,
+  Side,
+  COURT_HALF_WIDTH,
+  COURT_HALF_LENGTH,
+  OUT_MARGIN_X,
+  OUT_MARGIN_Y,
+} from './rules';
+
+export type PlayerRole = 'setter' | 'outside' | 'opposite' | 'middle' | 'libero';
+
+export type PlayerAnim =
+  | 'idle'
+  | 'run'
+  | 'dive'
+  | 'jump'
+  | 'spike'
+  | 'block'
+  | 'set'
+  | 'bump'
+  | 'serve'
+  | 'land'
+  | 'down';
+
+/** Per-player attributes, 0..1. The AI and the strike solver both read these. */
+export interface PlayerStats {
+  speed: number;
+  jump: number;
+  power: number;
+  control: number;
+  reaction: number;
+}
+
+export const defaultStats = (): PlayerStats => ({
+  speed: 0.6,
+  jump: 0.6,
+  power: 0.6,
+  control: 0.6,
+  reaction: 0.6,
+});
+
+export class Player {
+  readonly id: number;
+  readonly side: Side;
+  role: PlayerRole;
+  stats: PlayerStats;
+  name: string;
+
+  pos: Vec3 = v3();
+  vel: Vec3 = v3();
+  /** Height above the floor and its vertical rate; kept apart from pos.z so
+   *  that ground movement and airtime never fight each other. */
+  height = 0;
+  vertVel = 0;
+
+  /** Rotation slot 1..6, driving the base formation position. */
+  rotationSlot = 1;
+  /** Where the AI/formation wants this player to stand. */
+  home: Vec3 = v3();
+
+  facing = 1; // -1 or +1 along x, for sprite mirroring
+  anim: PlayerAnim = 'idle';
+  animTime = 0;
+  /** Counts down while the player cannot start a new action. */
+  lockout = 0;
+  /** Counts down while the player is sprawled after a dive or a knockdown. */
+  downTime = 0;
+  /** Set during a dive; adds reach and forward momentum. */
+  diving = false;
+  /** Non-zero right after a successful hit, used for the arm-swing pose. */
+  swing = 0;
+  /** Stamina-free arcade "charge" built up while the action button is held. */
+  charge = 0;
+  /** Previous step's held state, used to detect the release edge. */
+  heldAction = false;
+  /** Charge captured on the step the button was released (serve power). */
+  releasedCharge = 0;
+
+  constructor(id: number, side: Side, role: PlayerRole, name: string, stats: PlayerStats) {
+    this.id = id;
+    this.side = side;
+    this.role = role;
+    this.name = name;
+    this.stats = stats;
+  }
+
+  get airborne(): boolean {
+    return this.height > 0.02;
+  }
+
+  get canAct(): boolean {
+    return this.lockout <= 0 && this.downTime <= 0;
+  }
+
+  get runSpeed(): number {
+    return PLAYER_RUN_SPEED * (0.82 + 0.32 * this.stats.speed);
+  }
+
+  get jumpVelocity(): number {
+    return JUMP_VELOCITY * (0.85 + 0.3 * this.stats.jump);
+  }
+
+  /** Highest point the hands reach right now (floor-relative). */
+  reachHeight(baseReach: number): number {
+    return this.height + baseReach + (this.diving ? -0.6 : 0);
+  }
+
+  jump(): boolean {
+    if (!this.canAct || this.airborne) return false;
+    this.vertVel = this.jumpVelocity;
+    this.height = 0.001;
+    this.setAnim('jump');
+    return true;
+  }
+
+  dive(dirX: number, dirY: number): boolean {
+    if (!this.canAct || this.airborne) return false;
+    const l = Math.hypot(dirX, dirY) || 1;
+    const speed = this.runSpeed * 1.65;
+    this.vel.x = (dirX / l) * speed;
+    this.vel.y = (dirY / l) * speed;
+    this.diving = true;
+    this.height = 0.35;
+    this.vertVel = 1.1;
+    this.downTime = 0.55;
+    this.setAnim('dive');
+    return true;
+  }
+
+  knockDown(duration = 0.85): void {
+    this.downTime = Math.max(this.downTime, duration);
+    this.diving = false;
+    this.height = 0;
+    this.vertVel = 0;
+    this.vel.x *= 0.2;
+    this.vel.y *= 0.2;
+    this.setAnim('down');
+  }
+
+  setAnim(a: PlayerAnim): void {
+    if (this.anim !== a) {
+      this.anim = a;
+      this.animTime = 0;
+    }
+  }
+
+  /**
+   * Integrate one step. `moveX`/`moveY` is the desired direction in [-1, 1];
+   * it is ignored while airborne, diving or knocked down.
+   */
+  step(dt: number, moveX: number, moveY: number): void {
+    this.animTime += dt;
+    if (this.lockout > 0) this.lockout -= dt;
+    if (this.swing > 0) this.swing -= dt;
+
+    if (this.downTime > 0) {
+      this.downTime -= dt;
+      moveX = 0;
+      moveY = 0;
+      if (this.downTime <= 0) {
+        this.diving = false;
+        this.setAnim('idle');
+      }
+    }
+
+    const grounded = !this.airborne;
+    const controllable = grounded && this.downTime <= 0 && !this.diving;
+
+    if (controllable) {
+      const mag = Math.hypot(moveX, moveY);
+      if (mag > 0.05) {
+        const nx = moveX / Math.max(1, mag);
+        const ny = moveY / Math.max(1, mag);
+        const target = this.runSpeed;
+        this.vel.x = approach(this.vel.x, nx * target, PLAYER_ACCEL * dt);
+        this.vel.y = approach(this.vel.y, ny * target, PLAYER_ACCEL * dt);
+        if (Math.abs(nx) > 0.2) this.facing = Math.sign(nx);
+        if (this.anim === 'idle' || this.anim === 'run') this.setAnim('run');
+      } else {
+        this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * dt);
+        this.vel.y = approach(this.vel.y, 0, PLAYER_FRICTION * dt);
+        if (this.anim === 'run') this.setAnim('idle');
+      }
+    } else if (this.diving) {
+      this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * 0.55 * dt);
+      this.vel.y = approach(this.vel.y, 0, PLAYER_FRICTION * 0.55 * dt);
+    }
+
+    this.pos.x += this.vel.x * dt;
+    this.pos.y += this.vel.y * dt;
+
+    // Vertical motion. Players fall a little faster than the ball, which keeps
+    // spike timing windows tight without making the jump feel floaty.
+    if (this.height > 0 || this.vertVel !== 0) {
+      this.vertVel += GRAVITY * 1.15 * dt;
+      this.height += this.vertVel * dt;
+      if (this.height <= 0) {
+        this.height = 0;
+        this.vertVel = 0;
+        if (this.diving) {
+          this.downTime = Math.max(this.downTime, 0.32);
+          this.setAnim('down');
+        } else {
+          this.lockout = Math.max(this.lockout, LANDING_LOCK);
+          this.setAnim('land');
+        }
+      }
+    }
+
+    this.clampToArena();
+  }
+
+  /** Keep players inside the playable area, and out of the opponent's half. */
+  private clampToArena(): void {
+    const limitX = COURT_HALF_WIDTH + OUT_MARGIN_X;
+    const limitY = COURT_HALF_LENGTH + OUT_MARGIN_Y;
+    this.pos.x = clamp(this.pos.x, -limitX, limitX);
+
+    if (this.side === 'home') {
+      this.pos.y = clamp(this.pos.y, -limitY, -0.12);
+    } else {
+      this.pos.y = clamp(this.pos.y, 0.12, limitY);
+    }
+  }
+}
+
+/**
+ * Base formation offsets by rotation slot, expressed for the home side in
+ * metres from the net. Slots follow volleyball numbering: 1 is back-right
+ * (the server), then counter-clockwise.
+ */
+const SLOT_LAYOUT: Record<number, { x: number; y: number }> = {
+  1: { x: 2.7, y: -6.6 },
+  2: { x: 2.7, y: -1.7 },
+  3: { x: 0.0, y: -1.5 },
+  4: { x: -2.7, y: -1.7 },
+  5: { x: -2.7, y: -6.6 },
+  6: { x: 0.0, y: -7.0 },
+};
+
+/** Formation anchor for a slot on a given side. */
+export function slotPosition(slot: number, side: Side): Vec3 {
+  const base = SLOT_LAYOUT[((slot - 1) % 6) + 1];
+  return side === 'home' ? v3(base.x, base.y, 0) : v3(-base.x, -base.y, 0);
+}
+
+/** True for slots 2, 3 and 4 — the front row, allowed to block and spike high. */
+export const isFrontRow = (slot: number): boolean => slot === 2 || slot === 3 || slot === 4;
