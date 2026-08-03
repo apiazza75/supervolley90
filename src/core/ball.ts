@@ -301,7 +301,7 @@ export function solveArcOverNet(
  * Uses the same closed-form drag integration as `Ball.step`, so the clearance
  * it promises is the clearance the ball gets.
  */
-export function clearsNet(from: Vec3, vel: Vec3, margin = 0.16): boolean {
+export function clearsNet(from: Vec3, vel: Vec3, margin = 0.16, extraDown = 0): boolean {
   if (from.y === 0 || Math.sign(vel.y) === Math.sign(from.y)) return true;
   const k = AIR_DRAG;
   const d = Math.abs(from.y);
@@ -311,7 +311,10 @@ export function clearsNet(from: Vec3, vel: Vec3, margin = 0.16): boolean {
   if (ratio >= 1) return true;
   const t = -Math.log(1 - ratio) / k;
   const decay = (1 - Math.exp(-k * t)) / k;
-  const g = GRAVITY;
+  // Spin is not a detail here: a jump serve's topspin pulls the ball down with
+  // roughly half the force of gravity, so a trajectory that clears the tape on
+  // paper buries itself in the net in flight.
+  const g = GRAVITY - extraDown;
   const zAtNet = from.z + (vel.z - g / k) * decay + (g / k) * t;
   return zAtNet >= NET_HEIGHT + BALL_RADIUS + margin;
 }
@@ -327,12 +330,21 @@ export function clearsNet(from: Vec3, vel: Vec3, margin = 0.16): boolean {
  * but overshoots the court, this falls back to the arc solver so the ball both
  * clears the net and lands where it was aimed.
  */
-export function driveOverNet(from: Vec3, to: Vec3, speed: number, margin = 0.14): Vec3 {
+export function driveOverNet(
+  from: Vec3,
+  to: Vec3,
+  speed: number,
+  margin = 0.14,
+  extraDown = 0,
+): Vec3 {
   const flat = solveDrive(from, to, speed);
-  if (clearsNet(from, flat, margin)) return flat;
+  if (clearsNet(from, flat, margin, extraDown)) return flat;
   const dist = Math.hypot(to.x - from.x, to.y - from.y);
   const minFlight = Math.max(0.35, (dist / Math.max(6, speed)) * 1.05);
-  return solveArcOverNet(from, to, margin, minFlight, minFlight * 2.6);
+  // Lift the arc by whatever the spin will take away by the time it reaches
+  // the tape, so the guarantee survives contact with the Magnus term.
+  const drop = extraDown * 0.5 * (dist / Math.max(6, speed)) ** 2;
+  return solveArcOverNet(from, to, margin + drop, minFlight, minFlight * 2.8);
 }
 
 export function clearNet(from: Vec3, vel: Vec3, margin = 0.16): Vec3 {

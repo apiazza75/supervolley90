@@ -410,11 +410,34 @@ export class World {
    * at full stretch and it is a driven jump serve. A toss allowed to drop is
    * simply caught and retried.
    */
+  /**
+   * Keep the server in the service zone.
+   *
+   * The rules put the server behind the end line until the ball is struck, and
+   * without enforcing it a player could simply walk to the net holding the
+   * ball and serve from there — from where a served ball has nowhere sensible
+   * to go and ends up back in their own court or in a team-mate.
+   */
+  private confineServer(server: Player): void {
+    const dir = attackDir(this.servingSide);
+    const line = COURT_HALF_LENGTH + 0.35;
+    if (dir > 0) {
+      if (server.pos.y > -line) {
+        server.pos.y = -line;
+        server.vel.y = Math.min(0, server.vel.y);
+      }
+    } else if (server.pos.y < line) {
+      server.pos.y = line;
+      server.vel.y = Math.max(0, server.vel.y);
+    }
+    server.pos.x = clamp(server.pos.x, -COURT_HALF_WIDTH + 0.3, COURT_HALF_WIDTH - 0.3);
+  }
+
   private stepServe(commands: Map<number, Command>, dt: number): void {
-    void dt;
     const team = this.team(this.servingSide);
     const server = team.server;
     const cmd = commands.get(server.id) ?? idleCommand();
+    this.confineServer(server);
 
     // The whistle: after eight seconds the serve happens by itself.
     if (this.phaseTimer > 8) {
@@ -444,7 +467,11 @@ export class World {
         this.serveHold += dt;
         return;
       }
-      if (this.serveHold > 0) {
+      // A press that begins and ends within a single step — which is what the
+      // AI issues, and what a very quick human tap looks like — never sets
+      // `actionHeld` at all. Without this branch the AI could not toss, and
+      // every computer serve waited out the eight-second whistle instead.
+      if (this.serveHold > 0 || cmd.actionPressed) {
         const held = this.serveHold;
         this.serveHold = 0;
         server.releasedCharge = 0;
@@ -457,6 +484,10 @@ export class World {
           return;
         }
         this.ball.frozen = false;
+        // Stand still to throw. Tossing while walking sent the ball wherever
+        // the server happened to be running, and it could never be met.
+        server.vel.x = 0;
+        server.vel.y = 0;
         // Straight up, with only a hint of drift into the court. A toss thrown
         // well ahead of the server cannot be reached without stepping over the
         // line, which is a fault — and made the serve unhittable.
@@ -530,11 +561,21 @@ export class World {
    */
   private checkServeObstruction(): void {
     if (!this.serveInFlight || this.ball.grounded) return;
+    // Only the serve's own outward flight counts. Testing "is anyone near the
+    // ball while a serve is nominally in flight" fired all over the court in
+    // the middle of rallies and turned nearly every point into a serve fault:
+    // the ball has to still be on the serving side, heading away from the
+    // server, and travelling at serve pace.
+    const dir = attackDir(this.servingSide);
+    const stillOurs = dir > 0 ? this.ball.pos.y < -0.4 : this.ball.pos.y > 0.4;
+    const outbound = dir > 0 ? this.ball.vel.y > 4 : this.ball.vel.y < -4;
+    if (!stillOurs || !outbound) return;
+
     for (const p of this.team(this.servingSide).players) {
       if (p.id === this.lastToucherId) continue;
-      if (distXY(p.pos, this.ball.pos) > 0.45) continue;
-      const low = p.height;
-      const high = p.height + PLAYER_REACH * 0.9;
+      if (distXY(p.pos, this.ball.pos) > 0.4) continue;
+      const low = p.height + 0.2;
+      const high = p.height + PLAYER_REACH * 0.85;
       if (this.ball.pos.z < low || this.ball.pos.z > high) continue;
       this.awardPoint(otherSide(this.servingSide), 'serveFault');
       return;

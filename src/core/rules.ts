@@ -61,7 +61,7 @@ export const MIN_LEAD = 2;
 
 /** Upward speed of the serve toss. High enough that a jumping server meets
  *  the ball near full reach — which is what makes a jump serve possible. */
-export const TOSS_SPEED = 6.4;
+export const TOSS_SPEED = 7.1;
 
 /**
  * Forward component of the serve toss, m/s. A jump serve is struck moving

@@ -7,6 +7,7 @@ import {
   BALL_RADIUS,
   COURT_HALF_LENGTH,
   COURT_HALF_WIDTH,
+  MAGNUS,
   NET_HEIGHT,
   PLAYER_RADIUS,
   PLAYER_REACH,
@@ -154,8 +155,17 @@ export function performServe(ctx: StrikeContext): StrikeResult {
   const jumpServe = charge > 0.5 && player.airborne;
   if (jumpServe) {
     const speed = lerp(15, 23, charge) * (0.85 + 0.3 * player.stats.power);
-    const vel = driveOverNet(from, target, speed, 0.2);
-    const spin = v3(-3.2 * attackDir(player.side), 0, ctx.rng.spread(1.4));
+    // Topspin, but a believable amount of it. At -3.2 the Magnus term reached
+    // 15 m/s² — more than gravity — so every jump serve dived into the tape
+    // whatever the launch angle said.
+    const spinX = -1.3 * attackDir(player.side);
+    // Topspin on a jump serve pulls down with about half the force of gravity.
+    // The clearance solver has to be told, or it promises a trajectory the
+    // spin then drags into the tape — which is where a third of all serves
+    // were ending up.
+    const magnusDown = Math.abs(spinX * speed) * MAGNUS;
+    const vel = driveOverNet(from, target, speed, 0.25, magnusDown);
+    const spin = v3(spinX, 0, ctx.rng.spread(1.4));
     ball.strike(vel, spin);
     return { kind: 'serve', target, speed };
   }

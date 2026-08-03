@@ -77,6 +77,10 @@ async function main(): Promise<void> {
     await page.waitForTimeout(120);
   };
 
+  // The server is held behind the end line until the ball is struck, so the
+  // forward axis has to be measured from further back: step away from the line
+  // first, then push forward and check the player comes back towards it.
+  await hold('ArrowLeft', 600);
   let before = await active();
   await hold('ArrowRight', 600);
   let after = await active();

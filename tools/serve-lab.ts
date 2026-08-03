@@ -8,7 +8,7 @@
  *
  *   npx tsx tools/serve-lab.ts [attempts]
  */
-import { PLAYER_REACH } from '../src/core/rules';
+import { COURT_HALF_LENGTH, COURT_HALF_WIDTH, PLAYER_REACH } from '../src/core/rules';
 import { World, idleCommand } from '../src/core/world';
 import { TEAMS } from '../src/game/teams';
 
@@ -31,6 +31,10 @@ interface Outcome {
   /** Fraction of the flight during which a press would have worked. */
   windowStart: number;
   windowEnd: number;
+  /** Where the served ball ended up — the only thing that really matters. */
+  landing: 'in' | 'out' | 'own half' | 'net' | 'hit a team-mate' | 'unknown';
+  /** How far from the end line the server was when they struck. */
+  servedFromY: number;
 }
 
 function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
@@ -55,6 +59,8 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
       reason: 'never reached a home serve',
       windowStart: -1,
       windowEnd: -1,
+      landing: 'unknown',
+      servedFromY: 0,
     };
   }
 
@@ -97,6 +103,41 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
       windowEnd = t;
     }
     if ((w.phase as string) === 'rally') {
+      const servedFromY = server.pos.y;
+      // Follow it. "The serve fired" is not the same as "the serve worked":
+      // a ball that drops back into your own court, or into the back of a
+      // team-mate, is a serve you could not play, and only watching where it
+      // lands can tell the difference.
+      // Follow the SERVE, and stop the moment its own flight is decided.
+      // Waiting for the rally to end instead measures who won the point, which
+      // is a different question entirely — a served ball can be perfect and
+      // still come back and land at your feet three touches later.
+      // Read the verdict from the game's own events. Watching positions and
+      // guessing was wrong twice: once by measuring who won the rally rather
+      // than where the serve went, and once by carrying on past the end of the
+      // rally and blaming the serve for the next one.
+      let landing: Outcome['landing'] = 'unknown';
+      for (let k = 0; k < 120 * 8 && landing === 'unknown'; k++) {
+        w.step(null, DT);
+        const at = { x: w.ball.pos.x, y: w.ball.pos.y };
+        for (const ev of w.drainEvents()) {
+          if (ev.type === 'contact' && ev.side === 'away') landing = 'in';
+          else if (ev.type === 'contact' && ev.side === 'home' && ev.playerId !== server.id)
+            landing = 'hit a team-mate';
+          else if (ev.type === 'point') {
+            if (ev.reason === 'serveFault') {
+              const inside =
+                Math.abs(at.x) <= COURT_HALF_WIDTH + 0.2 &&
+                Math.abs(at.y) <= COURT_HALF_LENGTH + 0.2;
+              landing =
+                at.y < 0 ? (Math.abs(at.y) < 1.5 ? 'net' : 'own half') : inside ? 'in' : 'out';
+            } else {
+              landing = 'in';
+            }
+          }
+          if (landing !== 'unknown') break;
+        }
+      }
       return {
         delay,
         hold: holdSeconds,
@@ -107,6 +148,8 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
         reason: '',
         windowStart: windowStart - tossed,
         windowEnd: windowEnd - tossed,
+        landing,
+        servedFromY,
       };
     }
   }
@@ -129,7 +172,71 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
     reason,
     windowStart,
     windowEnd,
+    landing: 'unknown',
+    servedFromY: server.pos.y,
   };
+}
+
+/**
+ * The other half of the question: what happens when the COMPUTER serves.
+ *
+ * A human serve that works is no use if the opponent buries every one of
+ * theirs in the net — which is exactly what was happening, unnoticed, because
+ * nothing measured it.
+ */
+function aiServes(): void {
+  const w = new World({ home: TEAMS[0], away: TEAMS[1], seed: 21, difficulty: 1 });
+  let inFlight = false;
+  let serving: string | null = null;
+  let before = { x: 0, y: 0 };
+  const out = new Map<string, number>();
+  const waits: number[] = [];
+  let phaseWas = w.phase;
+  let t = 0;
+  let serveStart = -1;
+
+  for (let i = 0; i < 120 * 60 * 6; i++) {
+    before = { x: w.ball.pos.x, y: w.ball.pos.y };
+    w.step(null, DT);
+    t += DT;
+    if (w.phase === 'serve' && phaseWas !== 'serve') serveStart = t;
+    if (phaseWas === 'serve' && (w.phase as string) === 'rally' && serveStart > 0) {
+      waits.push(t - serveStart);
+    }
+    phaseWas = w.phase;
+
+    for (const ev of w.drainEvents()) {
+      if (ev.type === 'contact' && ev.kind === 'serve') {
+        serving = ev.side;
+        inFlight = true;
+      } else if (inFlight && ev.type === 'contact') {
+        out.set('received', (out.get('received') ?? 0) + 1);
+        inFlight = false;
+      } else if (inFlight && ev.type === 'point') {
+        const ours = serving === 'home' ? before.y < 0 : before.y > 0;
+        const inside =
+          Math.abs(before.x) <= COURT_HALF_WIDTH + 0.2 &&
+          Math.abs(before.y) <= COURT_HALF_LENGTH + 0.2;
+        const k =
+          ev.reason !== 'serveFault'
+            ? `point:${ev.reason}`
+            : ours
+              ? Math.abs(before.y) < 1.6
+                ? 'into the net'
+                : 'own half'
+              : inside
+                ? 'ace'
+                : 'out';
+        out.set(k, (out.get(k) ?? 0) + 1);
+        inFlight = false;
+      }
+    }
+  }
+
+  const avg = waits.length ? waits.reduce((a, b) => a + b, 0) / waits.length : 0;
+  console.log(`\ncomputer serves over six minutes of play: ${[...out.values()].reduce((a, b) => a + b, 0)}`);
+  for (const [k, v] of out) console.log(`  ${v}x ${k}`);
+  console.log(`average time from whistle to serve: ${avg.toFixed(2)} s`);
 }
 
 function main(): void {
@@ -160,10 +267,16 @@ function main(): void {
 
   const underarm = served.filter((r) => r.hold > 0.5);
   console.log(`served underarm (deliberate hold): ${underarm.length}`);
+  const byLanding = new Map<string, number>();
+  for (const r of served) byLanding.set(r.landing, (byLanding.get(r.landing) ?? 0) + 1);
+  console.log('where the ball ended up:');
+  for (const [k, v] of byLanding) console.log(`  ${v}x ${k}`);
+  const worst = Math.max(...served.map((r) => r.servedFromY));
+  console.log(`served from as far forward as y=${worst.toFixed(2)} (end line is -${COURT_HALF_LENGTH})`);
   console.log('\ndelay  hold   result');
   for (const r of results) {
     const tag = r.served
-      ? `SERVED ${r.jump ? 'jumping' : 'standing'} at z=${r.contactZ.toFixed(2)} lift=${r.liftAtHit.toFixed(2)}`
+      ? `SERVED ${r.jump ? 'jumping' : 'standing'} z=${r.contactZ.toFixed(2)} lift=${r.liftAtHit.toFixed(2)} -> ${r.landing}`
       : `missed — ${r.reason}`;
     console.log(`${r.delay.toFixed(2)}s  ${r.hold.toFixed(2)}s  ${tag}`);
   }
@@ -181,3 +294,4 @@ function main(): void {
 }
 
 main();
+aiServes();
