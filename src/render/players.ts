@@ -187,6 +187,16 @@ export interface PlayerDrawOptions {
   time: number;
   /** Frame delta, for pose smoothing. */
   dt: number;
+  /**
+   * An official rather than a player.
+   *
+   * Referees were being drawn through this function unchanged, and the result
+   * was that they read as a seventh player standing in an odd place — bare
+   * legs, knee pads, court shoes and all. An official is recognisable at a
+   * glance by exactly the things a player does not wear: long trousers, no
+   * knee pads, no socks over the ankle. Same body, different clothes.
+   */
+  official?: boolean;
 }
 
 const OUTLINE = 'rgba(18,16,28,0.85)';
@@ -430,6 +440,7 @@ export function drawPlayer(
   //                         hips, and that reversal is what makes a torso
   //   crotch        0.47    arm 0.185 + 0.15 + hand, so fingertips fall at
   //                         mid-thigh with the arm hanging
+  const official = opts.official === true;
   const arch = current.arch ?? 0;
   const hipY = -unit * (0.47 - current.crouch * 0.2);
   // The spine bend shifts the shoulders fore/aft of the hips.
@@ -528,44 +539,52 @@ export function drawPlayer(
     const { jx, jy, ex, ey } = foot
       ? solveLeg(hipX, hipY, foot[0] * unit, -foot[1] * unit, thigh, shin, 1)
       : limbPoints(hipX, hipY, spec[0], spec[1], thigh, shin);
-    // Legs are bare skin — they are a volleyball player's, not a footballer's.
-    // Painting them in the kit colour, as an earlier version did, fused torso,
-    // shorts and legs into one solid block with no readable silhouette.
-    capsule(ctx, hipX, hipY, jx, jy, unit * 0.098, unit * 0.064, legFill, outline);
-    capsule(ctx, jx, jy, ex, ey, unit * 0.07, unit * 0.038, legFill, outline);
-    // The shorts leg, worn over the top of the thigh.
-    capsule(
-      ctx,
-      hipX,
-      hipY - unit * 0.01,
-      lerp(hipX, jx, 0.34),
-      lerp(hipY, jy, 0.34),
-      unit * 0.112,
-      unit * 0.094,
-      shortsFill,
-      outline,
-    );
-    // Knee pad — the volleyball player's badge.
-    ctx.beginPath();
-    ctx.ellipse(jx, jy, unit * 0.035, unit * 0.03, 0, 0, Math.PI * 2);
-    ctx.fillStyle = '#dbd6cb';
-    ctx.fill();
-    ctx.lineWidth = outline * 0.8;
-    ctx.strokeStyle = OUTLINE;
-    ctx.stroke();
-    // Sock over the ankle.
-    capsule(
-      ctx,
-      lerp(jx, ex, 0.74),
-      lerp(jy, ey, 0.74),
-      ex,
-      ey,
-      unit * 0.048,
-      unit * 0.042,
-      '#f2f2f0',
-      outline * 0.8,
-      true,
-    );
+    if (official) {
+      // Trousers: one garment from hip to ankle, so the whole leg reads as
+      // cloth. This is the single clearest thing that separates an official
+      // from a player at a glance.
+      capsule(ctx, hipX, hipY, jx, jy, unit * 0.108, unit * 0.086, shortsFill, outline);
+      capsule(ctx, jx, jy, ex, ey, unit * 0.086, unit * 0.058, shortsFill, outline);
+    } else {
+      // Legs are bare skin — they are a volleyball player's, not a footballer's.
+      // Painting them in the kit colour, as an earlier version did, fused torso,
+      // shorts and legs into one solid block with no readable silhouette.
+      capsule(ctx, hipX, hipY, jx, jy, unit * 0.098, unit * 0.064, legFill, outline);
+      capsule(ctx, jx, jy, ex, ey, unit * 0.07, unit * 0.038, legFill, outline);
+      // The shorts leg, worn over the top of the thigh.
+      capsule(
+        ctx,
+        hipX,
+        hipY - unit * 0.01,
+        lerp(hipX, jx, 0.34),
+        lerp(hipY, jy, 0.34),
+        unit * 0.112,
+        unit * 0.094,
+        shortsFill,
+        outline,
+      );
+      // Knee pad — the volleyball player's badge.
+      ctx.beginPath();
+      ctx.ellipse(jx, jy, unit * 0.035, unit * 0.03, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#dbd6cb';
+      ctx.fill();
+      ctx.lineWidth = outline * 0.8;
+      ctx.strokeStyle = OUTLINE;
+      ctx.stroke();
+      // Sock over the ankle.
+      capsule(
+        ctx,
+        lerp(jx, ex, 0.74),
+        lerp(jy, ey, 0.74),
+        ex,
+        ey,
+        unit * 0.048,
+        unit * 0.042,
+        '#f2f2f0',
+        outline * 0.8,
+        true,
+      );
+    }
     drawShoe(ex, ey, Math.atan2(ex - jx, ey - jy), shoeFill);
   };
 

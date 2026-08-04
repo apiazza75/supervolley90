@@ -52,7 +52,13 @@ export const NEUTRAL_AIM: Aim = { x: 0, depth: 0.35 };
  * rather than hard.
  */
 export function contactRadius(p: Player, ball?: Ball): number {
-  const base = PLAYER_RADIUS + (p.diving ? 1.3 : 0.95);
+  // A blocker reaches with two hands over the tape and nothing else: they
+  // cover about a shoulder-width either side and no more. Given the general
+  // radius they touched roughly every attack, which turns a block from a
+  // tactic into a wall and cuts the average rally by a quarter. Hitting past
+  // the block has to be possible, or there is no reason to aim.
+  const blocking = p.airborne && p.anim === 'block' && Math.abs(p.pos.y) < 1.3;
+  const base = PLAYER_RADIUS + (p.diving ? 1.3 : blocking ? 0.42 : 0.95);
   if (!ball) return base;
   // A ball travelling at thirty metres a second cannot be casually scooped
   // from a metre and a half away. Reach shrinks with pace, which is what makes
@@ -349,7 +355,7 @@ export function performBlock(ctx: StrikeContext): StrikeResult {
   const dir = attackDir(player.side);
   const incoming = Math.hypot(ball.vel.x, ball.vel.y);
 
-  if (q > 0.62) {
+  if (q > 0.82) {
     // Stuff block: straight down into the attacker's court.
     const depth = lerp(1.2, 4.0, 1 - q);
     const target = v3(

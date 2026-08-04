@@ -201,6 +201,9 @@ export class Renderer {
     const drawables: { depth: number; draw: () => void }[] = [];
     for (const rp of frame.players) {
       const colors = world.team(rp.side).config.colors;
+      // Replay snapshots do not carry a role, so the libero keeps the team kit
+      // there. Adding one field to every recorded frame to recolour a shirt for
+      // two seconds is not worth the memory.
       const proj = cam.project(rp.pos.x, rp.pos.y, rp.height);
       // A separate id space, so replay bodies do not disturb the smoothing
       // state of the live figures they are copies of.
@@ -336,7 +339,7 @@ export class Renderer {
           depth: proj.depth,
           draw: () => {
             if (p.id === active) drawActiveRing(ctx, cam, p, '#7ef0ff', state.time);
-            drawPlayer(ctx, cam, p, team.config.colors, {
+            drawPlayer(ctx, cam, p, kitFor(p, team.config.colors), {
               active: p.id === active,
               // The only thing still worth charging is the underarm serve, so
               // that is the only time a meter appears over anyone's head.
@@ -787,6 +790,20 @@ export class Renderer {
 }
 
 /** Shouts for a full-power swing, in the spirit of the era's arcade games. */
+/**
+ * The kit a player wears.
+ *
+ * A libero must be dressed in contrast to their team — it is a rule of the
+ * sport, not a decoration, and it exists precisely so that anyone watching can
+ * tell at a glance which player on court may not attack or block. Deriving it
+ * from the team's own second colour keeps each side's libero recognisably
+ * theirs while still reading as the odd one out.
+ */
+function kitFor(p: Player, colors: [string, string]): [string, string] {
+  if (p.role !== 'libero') return colors;
+  return [shade(colors[1], 0.62), colors[0]];
+}
+
 const SPIKE_CALLS = ['KILLER SPIKE', 'THUNDER HIT', 'ROLLING SMASH', 'BLAZE SPIKE'];
 
 const POINT_LABEL: Record<string, string> = {

@@ -224,12 +224,16 @@ export class TeamBrain {
         p.downTime <= 0 &&
         !(p.role === 'middle' && this.team.isFrontRow(p)),
     );
+    // The libero passes every ball they can reach — that is what they are on
+    // court for — so they are never the one left out of a three-passer line.
+    const chosen = eligible
+      .slice()
+      .sort((a, b) => Number(b.role === 'libero') - Number(a.role === 'libero'))
+      .slice(0, 3);
     // Left to right across the court, so the reception line keeps its shape.
     const dir = attackDir(this.team.side);
-    return eligible
-      .slice()
+    return chosen
       .sort((a, b) => a.home.x * dir - b.home.x * dir)
-      .slice(0, 3)
       .map((p) => p.id);
   }
 
@@ -341,10 +345,34 @@ export class TeamBrain {
     const floorPred = predictLanding(w.ball);
     const ballComing = dir > 0 ? w.ball.vel.y < -0.5 : w.ball.vel.y > 0.5;
 
-    // Guess where the opponent will attack from: the ball's x near the net.
-    const attackX = clamp(w.ball.pos.x, -COURT_HALF_WIDTH + 0.6, COURT_HALF_WIDTH - 0.6);
+    // Where the attack is coming from.
+    //
+    // Reading this off an opponent who is ALREADY in the air is far too late:
+    // by the time a hitter jumps there is no time left for a second blocker to
+    // travel across the court, which is why 61% of attacks used to be met by
+    // nobody at all and the rest by one player. A block is set up on the SET —
+    // the moment the ball goes up on their side, the front row goes with it.
     const threat = opponent.players.find((o) => o.airborne && Math.abs(o.pos.y) < 4);
-    const blockX = threat ? clamp(threat.pos.x, -3.4, 3.4) : attackX;
+    // Failing an airborne hitter, follow whoever on their side is closest to
+    // the ball and in front of it; failing that, the ball itself.
+    const chaser = opponent.players
+      .filter((o) => Math.abs(o.pos.y) < 5)
+      .sort((a, b) => distXY(a.pos, w.ball.pos) - distXY(b.pos, w.ball.pos))[0];
+    //
+    // The best read available is where the ball will BE when it drops to
+    // hitting height — which is what a blocker actually watches, and which
+    // stops being a moving target the instant the set leaves the setter's
+    // hands. Following the live ball instead had the block shuffling sideways
+    // for the whole of the opponent's build-up and settling nowhere.
+    const setPred = predictLanding(w.ball, NET_HEIGHT + 0.85);
+    const readX = threat
+      ? threat.pos.x
+      : setPred.valid && setPred.time < 1.6
+        ? setPred.point.x
+        : chaser && distXY(chaser.pos, w.ball.pos) < 3.5
+          ? (chaser.pos.x + w.ball.pos.x) / 2
+          : w.ball.pos.x;
+    const blockX = clamp(readX, -COURT_HALF_WIDTH + 0.6, COURT_HALF_WIDTH - 0.6);
 
     const blockers = this.team
       .frontRow()
@@ -367,12 +395,15 @@ export class TeamBrain {
         continue;
       }
 
+      // Two front-row players commit to the block for the whole of the
+      // opponent's build-up, not just once the ball reaches the net. Waiting
+      // until it did meant the second blocker never arrived.
       const blockIndex = blockers.indexOf(p);
-      if (blockIndex >= 0 && blockIndex < 2 && Math.abs(w.ball.pos.y) < 6) {
+      if (blockIndex >= 0 && blockIndex < 2) {
         s.job = 'block';
-        const offset = blockIndex === 0 ? 0 : blockX > 0 ? -0.8 : 0.8;
-        s.goal = v3(clamp(blockX + offset, -3.9, 3.9), -dir * 0.75, 0);
-        this.driveBlock(p, s, threat);
+        const offset = blockIndex === 0 ? 0 : blockX > 0 ? -0.85 : 0.85;
+        s.goal = v3(clamp(blockX + offset, -3.9, 3.9), -dir * 0.72, 0);
+        this.driveBlock(p, s, threat, blockIndex, blockers[0]);
         continue;
       }
 
@@ -461,18 +492,57 @@ export class TeamBrain {
     if (tipIt) s.holdAction = false;
   }
 
-  private driveBlock(p: Player, s: Brainstate, threat: Player | undefined): void {
-    if (!threat) {
-      s.wantsAction = false;
-      return;
-    }
+  private driveBlock(
+    p: Player,
+    s: Brainstate,
+    threat: Player | undefined,
+    blockIndex: number,
+    lead: Player | undefined,
+  ): void {
     const w = this.world;
-    // Jump when the attacker is at the top of their own jump.
-    const attackerFalling = threat.vertVel < 0.6;
-    const aligned = Math.abs(p.pos.x - threat.pos.x) < 1.5;
-    const timing = this.rng.range(0, 1) < 0.5 + this.difficulty * 0.25;
 
-    if (!p.airborne && p.canAct && attackerFalling && aligned && timing) {
+    // Two independent triggers, because a block that only answers a jumping
+    // hitter never goes up against a fast set, a tip, or anything the AI
+    // reaches without leaving the floor.
+    //
+    //  1. A hitter is in the air and has reached the top of their jump.
+    //  2. The ball is arriving at the net at hitting height regardless.
+    // The cue is the BALL entering the hitting window, not the hitter leaving
+    // the floor. Any opponent in the air within four metres of the net counted
+    // as a threat, including a setter jumping to set, so blockers went up on
+    // the set, peaked, and were back on the floor by the time the spike came:
+    // 61% of attacks met nobody in the air. A block leaves the ground when the
+    // ball drops into the strike zone above the tape, which is a fixed moment
+    // before the swing however the attack was built.
+    const ball = w.ball;
+    const dir = attackDir(this.team.side);
+    // On THEIR side of the net — the attack is still being built. Waiting for
+    // the ball to travel towards us means waiting until after the swing, which
+    // is exactly one jump too late.
+    const theirSide = ball.pos.y * dir > 0;
+    const strikeZone =
+      theirSide &&
+      Math.abs(ball.pos.y) < 3.0 &&
+      ball.pos.z > NET_HEIGHT + 0.25 &&
+      ball.pos.z < NET_HEIGHT + 2.1 &&
+      ball.vel.z < 1.2;
+
+    // The second blocker is placed a shoulder off the ball on purpose, so it
+    // must be judged against its own spot rather than against the hitter —
+    // measuring it against the hitter is what kept it on the floor.
+    const reference = threat ? threat.pos.x : ball.pos.x;
+    const aligned = Math.abs(p.pos.x - reference) < (blockIndex === 0 ? 1.8 : 3.4);
+    const timing = this.rng.range(0, 1) < 0.34 + this.difficulty * 0.2;
+    // The outside blocker goes with the middle. A double block is two people
+    // leaving the floor together — judged apart, the second one waited for its
+    // own read, arrived a beat late and stayed down, which is why a block was
+    // almost always a single.
+    const withLead = blockIndex > 0 && lead !== undefined && lead.airborne && lead.vertVel > -1;
+    const cue = strikeZone || withLead;
+
+    // Mirroring the lead blocker is not a decision to be dithered over: when
+    // the middle goes, the outside goes, without waiting on its own dice roll.
+    if (!p.airborne && p.canAct && cue && aligned && (timing || withLead)) {
       if (this.stateOf(p).reactionDelay <= 0 && p.jump()) {
         // Read as a block from the first frame of the jump.
         p.setAnim('block');

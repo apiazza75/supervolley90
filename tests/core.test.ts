@@ -299,6 +299,67 @@ describe('match simulation', () => {
     expect(dropped / points).toBeLessThan(0.1);
   });
 
+  it('puts a block up against attacks, and keeps everyone out of the net', () => {
+    const world = makeWorld(21);
+    let attacks = 0;
+    let unopposed = 0;
+    let doubled = 0;
+    let inTheNet = 0;
+    let samples = 0;
+
+    for (let i = 0; i < 120 * 60 * 6; i++) {
+      world.step(null);
+      for (const ev of world.drainEvents()) {
+        if (ev.type !== 'contact') continue;
+        if (ev.kind !== 'spike' && ev.kind !== 'power') continue;
+        attacks++;
+        const defenders = world.team(ev.side === 'home' ? 'away' : 'home').players;
+        const up = defenders.filter((p) => p.airborne && Math.abs(p.pos.y) < 1.6).length;
+        if (up === 0) unopposed++;
+        if (up >= 2) doubled++;
+      }
+      if (i % 12 !== 0) continue;
+      samples++;
+      // Nobody stands in the net. Airborne blockers may press right up to it.
+      for (const p of world.allPlayers()) {
+        if (!p.airborne && Math.abs(p.pos.y) < 0.5) inTheNet++;
+      }
+    }
+
+    expect(attacks).toBeGreaterThan(20);
+    // The block used to be triggered by an opponent who was ALREADY in the
+    // air, which is a jump too late for anyone to arrive. Measured on this
+    // exact loop before the fix: 94-100% of attacks across four seeds met
+    // nobody in the air at all, and a two-man block never once happened.
+    expect(unopposed / attacks).toBeLessThan(0.7);
+    expect(doubled / attacks).toBeGreaterThan(0.03);
+    expect(inTheNet / (samples * 12)).toBeLessThan(0.02);
+  });
+
+  it('fields a libero who never serves and never plays the front row', () => {
+    const world = makeWorld(21);
+    let seen = 0;
+
+    for (let i = 0; i < 120 * 60 * 6; i++) {
+      world.step(null);
+      world.drainEvents();
+      if (i % 20 !== 0) continue;
+      for (const side of ['home', 'away'] as const) {
+        const team = world.team(side);
+        const libero = team.players.find((p) => p.role === 'libero');
+        if (!libero) continue;
+        seen++;
+        // Slots 2, 3 and 4 are the front row, and slot 1 serves.
+        expect([5, 6]).toContain(libero.rotationSlot);
+        expect(team.server.role).not.toBe('libero');
+        // Never both liberos of a side on court, and always six players.
+        expect(team.players.length).toBe(6);
+      }
+    }
+
+    expect(seen).toBeGreaterThan(100);
+  });
+
   it('keeps six players in six places instead of walking through each other', () => {
     const world = makeWorld(21);
     // Must match src/render/camera.ts: the flat side elevation compresses the

@@ -289,7 +289,14 @@ export class Player {
     // A diving body is laid out flat and is nearly two metres long, so a
     // dive that stops with its feet legally on our side still puts its head
     // and arms in the opponent's court. Diving players are held further back.
-    const near = this.diving || this.downTime > 0 ? 0.85 : 0.12;
+    // Nobody stands in the net.
+    //
+    // 0.12 m was a rule about the centre line — feet may not cross it — but the
+    // net is a physical object with a body's width of clearance either side of
+    // it, and a player standing 12 cm from it draws straddling the tape. That
+    // happened 5% of the time. An airborne blocker may press right up to it,
+    // which is exactly what a block is; everyone on the floor keeps clear.
+    const near = this.diving || this.downTime > 0 ? 0.85 : this.airborne ? 0.2 : 0.55;
     if (this.side === 'home') {
       this.pos.y = clamp(this.pos.y, -limitY, -near);
     } else {

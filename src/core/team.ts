@@ -1,4 +1,4 @@
-import { Vec3, copy } from './math3';
+import { Vec3, copy, v3 } from './math3';
 import { Player, PlayerRole, PlayerStats, defaultStats, isFrontRow, slotPosition } from './player';
 import { Rng } from './rng';
 import { POWER_MAX, Side, TEAM_SIZE, attackDir } from './rules';
@@ -35,7 +35,18 @@ const ROLE_BIAS: Record<PlayerRole, Partial<PlayerStats>> = {
 export class Team {
   readonly side: Side;
   readonly config: TeamConfig;
+  /** The six players currently on court, with the libero swapped in. */
   players: Player[] = [];
+  /**
+   * The six who hold the rotation. The libero is not one of them: they are a
+   * substitute who comes on for a middle and goes off again, so the rotation
+   * order has to survive them coming and going.
+   */
+  private rotationSix: Player[] = [];
+  /** The seventh squad member, or null for a side that fields no libero. */
+  private libero: Player | null = null;
+  /** Ids on court after the last rotation, to spot who has just come on. */
+  private onCourt = new Set<number>();
 
   points = 0;
   setsWon = 0;
@@ -71,10 +82,41 @@ export class Team {
       const name = spec?.name ?? `${config.shortName}${i + 1}`;
       const p = new Player(idBase + i, side, role, name, stats);
       p.rotationSlot = i + 1;
-      this.players.push(p);
+      this.rotationSix.push(p);
     }
+
+    // The libero: a seventh player who never rotates into the front row and
+    // never serves, because the moment their middle reaches the serving slot
+    // the middle comes back on. Defined here rather than in the roster data so
+    // every team has one whether or not its config names them.
+    const spec = config.players?.[TEAM_SIZE];
+    const stats = defaultStats();
+    for (const key of Object.keys(stats) as (keyof PlayerStats)[]) {
+      const base = 0.32 + config.rating * 0.5;
+      stats[key] = Math.max(
+        0.12,
+        Math.min(
+          0.98,
+          base + (ROLE_BIAS.libero[key] ?? 0) + rng.spread(0.05) + (spec?.stats?.[key] ?? 0),
+        ),
+      );
+    }
+    this.libero = new Player(
+      idBase + TEAM_SIZE,
+      side,
+      'libero',
+      spec?.name ?? `${config.shortName}L`,
+      stats,
+    );
+
+    this.players = this.rotationSix.slice();
     this.applyRotation();
     this.activeId = this.players[0].id;
+  }
+
+  /** Everyone in the squad, including a libero who is currently off court. */
+  get squad(): Player[] {
+    return this.libero ? [...this.rotationSix, this.libero] : this.rotationSix.slice();
   }
 
   /** Add to the gauge, clamped. Returns true if it just became full. */
@@ -128,11 +170,43 @@ export class Team {
 
   /** Recompute slots and formation anchors from the current rotation offset. */
   applyRotation(): void {
-    this.players.forEach((p, i) => {
+    this.rotationSix.forEach((p, i) => {
       // Rotating clockwise means each player moves to the previous slot number.
       p.rotationSlot = ((i - this.rotationOffset + TEAM_SIZE * 2) % TEAM_SIZE) + 1;
-      p.home = slotPosition(p.rotationSlot, this.side);
     });
+
+    // The libero substitution, exactly as it is played: they come on for a
+    // middle blocker who has rotated to the back row, and they go off again
+    // when that middle reaches the serving slot — which is why a libero is
+    // never seen in the front row and never serves.
+    const before = this.onCourt;
+    this.players = this.rotationSix.slice();
+    if (this.libero) {
+      const idx = this.rotationSix.findIndex(
+        (p) => p.role === 'middle' && (p.rotationSlot === 5 || p.rotationSlot === 6),
+      );
+      if (idx >= 0) {
+        this.libero.rotationSlot = this.rotationSix[idx].rotationSlot;
+        this.players[idx] = this.libero;
+      }
+    }
+
+    for (const p of this.players) {
+      p.home = slotPosition(p.rotationSlot, this.side);
+      // Anyone walking on from the bench stands on their own zone.
+      //
+      // A substitute who has been off court has not been stepped, so their
+      // position is whatever it was when they left — or, for the player the
+      // libero displaced at the very first whistle, the origin they were
+      // constructed with, which is the middle of the net on the wrong side.
+      if (!before.has(p.id)) {
+        p.pos = copy(p.home);
+        p.vel = v3();
+        p.height = 0;
+        p.vertVel = 0;
+      }
+    }
+    this.onCourt = new Set(this.players.map((p) => p.id));
   }
 
   /** Snap every player onto their formation anchor (between rallies). */

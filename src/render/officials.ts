@@ -24,7 +24,7 @@ import { drawPlayer, drawPlayerShadow } from './players';
 const SIGNAL_TIME = 2.2;
 
 /** Referee kit, and the ball kids' bib. */
-const REF_KIT: [string, string] = ['#20242e', '#c8cede'];
+const REF_KIT: [string, string] = ['#b6122b', '#f2f2f4'];
 const KID_KIT: [string, string] = ['#f2b134', '#2b3b52'];
 
 interface Kid {
@@ -202,7 +202,7 @@ export class Officials {
     const facing = this.signalSide === 'home' ? -1 : 1;
     const f = figure({ id, x, y, z, vx: 0, vy: 0, anim, facing });
     if (z < 0.1) drawPlayerShadow(ctx, cam, f);
-    drawPlayer(ctx, cam, f, REF_KIT, { active: false, charge: 0, time, dt });
+    drawPlayer(ctx, cam, f, REF_KIT, { active: false, charge: 0, time, dt, official: true });
   }
 
   private kid(
