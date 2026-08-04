@@ -2,7 +2,7 @@ import { Player } from '../core/player';
 import { Rng } from '../core/rng';
 import { COURT_HALF_LENGTH, COURT_HALF_WIDTH, NET_HEIGHT, Side } from '../core/rules';
 import { Camera } from './camera';
-import { drawPlayer, drawPlayerShadow } from './players';
+import { OUTLINE, capsule, drawPlayer, drawPlayerShadow, shade } from './players';
 
 /**
  * The people around the court who are not playing: the two referees and three
@@ -175,34 +175,172 @@ export class Officials {
     const px = COURT_HALF_WIDTH + 0.95;
     const py = 0.7;
     this.drawPodium(ctx, cam, px, py);
-    this.official(ctx, cam, 901, px, py, NET_HEIGHT - 0.62, time, dt);
+    // The far referee faces across the court, which is straight at the camera.
+    this.official(ctx, cam, px, py, NET_HEIGHT - 0.62, true);
 
     for (const k of this.kids) if (k.x > 0) this.kid(ctx, cam, k, time, dt);
   }
 
   /** The near-side referee, drawn after the players so they sit in front. */
   drawNear(ctx: CanvasRenderingContext2D, cam: Camera, time: number, dt: number): void {
-    this.official(ctx, cam, 902, -COURT_HALF_WIDTH - 0.95, -0.7, 0, time, dt);
+    // The near referee faces the other way, so we are behind them.
+    this.official(ctx, cam, -COURT_HALF_WIDTH - 0.95, -0.7, 0, false);
     for (const k of this.kids) if (k.x <= 0) this.kid(ctx, cam, k, time, dt);
   }
 
+  /**
+   * A referee, drawn face-on or from behind.
+   *
+   * Everyone else in this game is seen in profile, and correctly so: players
+   * face along the court, which is across the camera. Referees do not. They
+   * stand at the posts and face ACROSS the court, watching the net — so from
+   * a camera looking along that same axis, the referee on the far post is
+   * facing us and the one on the near post has their back to us. Drawing them
+   * in profile like everybody else was simply the wrong view of the body, and
+   * it is why they read as a seventh player loitering by the net.
+   */
   private official(
     ctx: CanvasRenderingContext2D,
     cam: Camera,
-    id: number,
     x: number,
     y: number,
     z: number,
-    time: number,
-    dt: number,
+    facingCamera: boolean,
   ): void {
-    // A whistled point puts the arm up, which the cheer pose already does; the
-    // rest of the time they stand and watch the ball.
-    const anim = this.signal > 0 ? 'cheer' : 'idle';
-    const facing = this.signalSide === 'home' ? -1 : 1;
-    const f = figure({ id, x, y, z, vx: 0, vy: 0, anim, facing });
-    if (z < 0.1) drawPlayerShadow(ctx, cam, f);
-    drawPlayer(ctx, cam, f, REF_KIT, { active: false, charge: 0, time, dt, official: true });
+    const p = cam.project(x, y, z);
+    const u = 1.9 * p.scale * 42;
+    if (u < 6) return;
+
+    // Frontal proportions: this is the view where the shoulders are their full
+    // BREADTH rather than their depth, which is most of what makes it read as
+    // a different view of the same body.
+    const hipY = p.y - u * 0.47;
+    const shoulderY = p.y - u * 0.8;
+    const halfShoulder = u * 0.118;
+    const halfWaist = u * 0.079;
+    const halfHip = u * 0.097;
+    const headW = u * 0.062;
+    const headH = u * 0.077;
+    const headY = shoulderY - u * 0.028 - headH * 0.92;
+    const outline = Math.max(0.7, u * 0.018);
+    const [shirt, trim] = REF_KIT;
+    const skin = '#d8a877';
+    // Arm up towards whichever side has just been awarded the point.
+    const raise = this.signal > 0 ? (this.signalSide === 'home' ? -1 : 1) : 0;
+
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    if (z < 0.1) {
+      ctx.fillStyle = 'rgba(7,16,6,0.34)';
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y, u * 0.16, u * 0.05, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Trousers: two legs straight down, seen front-on and therefore apart.
+    for (const side of [-1, 1] as const) {
+      capsule(
+        ctx,
+        p.x + side * u * 0.045,
+        hipY,
+        p.x + side * u * 0.055,
+        p.y - u * 0.03,
+        u * 0.062,
+        u * 0.05,
+        side < 0 ? shade('#2b3350', 0.05) : '#2b3350',
+        outline,
+      );
+      // Shoe.
+      ctx.beginPath();
+      ctx.ellipse(p.x + side * u * 0.055, p.y - u * 0.012, u * 0.042, u * 0.022, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#1b1e28';
+      ctx.fill();
+      ctx.lineWidth = outline;
+      ctx.strokeStyle = OUTLINE;
+      ctx.stroke();
+    }
+
+    // Torso: shoulders to hips, seen across their full width.
+    const grad = ctx.createLinearGradient(p.x - halfShoulder, 0, p.x + halfShoulder, 0);
+    grad.addColorStop(0, shade(shirt, 0.14));
+    grad.addColorStop(0.55, shirt);
+    grad.addColorStop(1, shade(shirt, -0.24));
+    ctx.beginPath();
+    ctx.moveTo(p.x - halfShoulder, shoulderY);
+    ctx.quadraticCurveTo(p.x - halfWaist - u * 0.01, (shoulderY + hipY) / 2, p.x - halfWaist, hipY - u * 0.06);
+    ctx.lineTo(p.x - halfHip, hipY + u * 0.02);
+    ctx.lineTo(p.x + halfHip, hipY + u * 0.02);
+    ctx.lineTo(p.x + halfWaist, hipY - u * 0.06);
+    ctx.quadraticCurveTo(p.x + halfWaist + u * 0.01, (shoulderY + hipY) / 2, p.x + halfShoulder, shoulderY);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.lineWidth = outline;
+    ctx.strokeStyle = OUTLINE;
+    ctx.stroke();
+
+    // Collar, or the number panel on the back.
+    ctx.fillStyle = trim;
+    if (facingCamera) {
+      ctx.beginPath();
+      ctx.moveTo(p.x - halfShoulder * 0.4, shoulderY);
+      ctx.lineTo(p.x, shoulderY + u * 0.06);
+      ctx.lineTo(p.x + halfShoulder * 0.4, shoulderY);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      ctx.globalAlpha = 0.75;
+      ctx.fillRect(p.x - halfShoulder * 0.42, shoulderY + u * 0.09, halfShoulder * 0.84, u * 0.1);
+      ctx.globalAlpha = 1;
+    }
+
+    // Arms, one down and one possibly raised in a signal.
+    for (const side of [-1, 1] as const) {
+      const up = raise === side;
+      const sx = p.x + side * halfShoulder * 0.92;
+      const ex = up ? sx + side * u * 0.03 : sx + side * u * 0.02;
+      const ey = up ? shoulderY - u * 0.34 : hipY + u * 0.02;
+      capsule(ctx, sx, shoulderY + u * 0.01, ex, ey, u * 0.052, u * 0.04, shirt, outline);
+      // Forearm and hand in skin.
+      const fx = up ? ex + side * u * 0.01 : ex + side * u * 0.01;
+      const fy = up ? ey - u * 0.22 : ey + u * 0.14;
+      capsule(ctx, ex, ey, fx, fy, u * 0.04, u * 0.032, skin, outline);
+    }
+
+    // Head: face-on has features, the rear view is hair and an ear-line only.
+    ctx.beginPath();
+    ctx.ellipse(p.x, headY, headW, headH, 0, 0, Math.PI * 2);
+    ctx.fillStyle = skin;
+    ctx.fill();
+    ctx.lineWidth = outline;
+    ctx.strokeStyle = OUTLINE;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(p.x, headY - headH * 0.22, headW * 1.02, headH * 0.72, 0, Math.PI, Math.PI * 2);
+    ctx.fillStyle = '#26201c';
+    ctx.fill();
+    if (facingCamera && u > 34) {
+      ctx.fillStyle = '#20202c';
+      for (const side of [-1, 1] as const) {
+        ctx.beginPath();
+        ctx.ellipse(p.x + side * headW * 0.38, headY, headW * 0.1, headH * 0.09, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // The whistle, which is the whole job.
+      ctx.strokeStyle = 'rgba(230,232,240,0.9)';
+      ctx.lineWidth = Math.max(0.8, u * 0.012);
+      ctx.beginPath();
+      ctx.moveTo(p.x - headW * 0.5, headY + headH * 0.2);
+      ctx.quadraticCurveTo(p.x, headY + headH * 1.5, p.x + headW * 0.5, headY + headH * 0.2);
+      ctx.stroke();
+    } else if (u > 34) {
+      ctx.fillStyle = 'rgba(38,32,28,0.55)';
+      ctx.beginPath();
+      ctx.ellipse(p.x, headY + headH * 0.1, headW * 0.72, headH * 0.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   private kid(

@@ -157,6 +157,59 @@ export interface Prediction {
  * uses the same forces as `Ball.step` — approximating it with a parabola made
  * spin-heavy serves land visibly off the marker.
  */
+/**
+ * Solve a launch that actually lands where it is aimed, spin and all.
+ *
+ * The closed-form solvers invert gravity and drag but know nothing about the
+ * Magnus term, so any shot with real spin lands short of its target — and the
+ * harder the spin, the further short. For a jump serve, which is topspin by
+ * definition, that error is metres: serves solved to land deep in the far
+ * court died on the near side of the net instead.
+ *
+ * Rather than weaken the spin until the error stops mattering, aim past the
+ * target by however much the spin steals. Fire the shot, watch where it really
+ * lands, and correct — twice, which is enough to converge to centimetres.
+ */
+/** Where a launch would actually land, spin included. */
+export function landingOf(from: Vec3, vel: Vec3, spin: Vec3, targetZ = BALL_RADIUS): Prediction {
+  const probe = new Ball();
+  probe.reset(copy(from), copy(vel));
+  probe.spin = copy(spin);
+  return predictLanding(probe, targetZ);
+}
+
+export function aimThroughSpin(
+  target: Vec3,
+  spin: Vec3,
+  launch: (aimAt: Vec3, lift: number) => Vec3,
+  from: Vec3,
+): Vec3 {
+  const probe = new Ball();
+  let aimAt = copy(target);
+  let lift = 0;
+  let vel = launch(aimAt, lift);
+
+  for (let i = 0; i < 8; i++) {
+    probe.reset(copy(from), copy(vel));
+    probe.spin = copy(spin);
+    const landed = predictLanding(probe, target.z);
+    if (!landed.valid) {
+      // This one dies on the tape. Ask for more clearance and try again — the
+      // solver is spin-aware now, so extra clearance genuinely buys a steeper
+      // launch instead of being quietly ignored.
+      lift += 0.2;
+      vel = launch(aimAt, lift);
+      continue;
+    }
+    const dx = target.x - landed.point.x;
+    const dy = target.y - landed.point.y;
+    if (Math.abs(dx) < 0.06 && Math.abs(dy) < 0.06) break;
+    aimAt = v3(aimAt.x + dx, aimAt.y + dy, aimAt.z);
+    vel = launch(aimAt, lift);
+  }
+  return vel;
+}
+
 export function predictLanding(ball: Ball, targetZ = BALL_RADIUS, horizon = 6): Prediction {
   const dt = 1 / 120;
   const p = copy(ball.pos);
@@ -210,7 +263,12 @@ export function predictLanding(ball: Ball, targetZ = BALL_RADIUS, horizon = 6): 
  * after `flightTime` seconds, under gravity only (drag is small enough over a
  * single arc that the error stays inside the aiming tolerance).
  */
-export function solveArc(from: Vec3, to: Vec3, flightTime: number): Vec3 {
+export function solveArc(
+  from: Vec3,
+  to: Vec3,
+  flightTime: number,
+  extraDown = 0,
+): Vec3 {
   const t = Math.max(0.12, flightTime);
   const k = AIR_DRAG;
 
@@ -225,7 +283,13 @@ export function solveArc(from: Vec3, to: Vec3, flightTime: number): Vec3 {
   //   z(t) = z0 + (v0 - g/k)(1 - e^-kt)/k + (g/k) t
   // which inverts to the expression below. Note g is negative here, and g/k is
   // the terminal velocity.
-  const g = GRAVITY;
+  // `extraDown` is spin the ball will feel in flight but that this closed form
+  // otherwise knows nothing about. Planning the arc under gravity alone and
+  // then adding topspin gives a trajectory that is too flat by exactly the
+  // amount the spin will steal — which for a jump serve means it arrives under
+  // the tape. Solving with the effective gravity instead launches it steeply
+  // enough that the spin brings it back down onto the target.
+  const g = GRAVITY - Math.abs(extraDown);
   const vz =
     k > 1e-6
       ? ((to.z - from.z - (g / k) * t) * k) / decay + g / k
@@ -243,10 +307,10 @@ export function solveArc(from: Vec3, to: Vec3, flightTime: number): Vec3 {
  * as drag or a bit of spin shaves a few centimetres off the apex.
  */
 /** Height of a drag-and-gravity trajectory after `t` seconds. */
-function heightAt(z0: number, vz0: number, t: number): number {
+function heightAt(z0: number, vz0: number, t: number, extraDown = 0): number {
   const k = AIR_DRAG;
-  if (k <= 1e-6) return z0 + vz0 * t + 0.5 * GRAVITY * t * t;
-  const g = GRAVITY;
+  const g = GRAVITY - Math.abs(extraDown);
+  if (k <= 1e-6) return z0 + vz0 * t + 0.5 * g * t * t;
   return z0 + ((vz0 - g / k) * (1 - Math.exp(-k * t))) / k + (g / k) * t;
 }
 
@@ -267,21 +331,22 @@ export function solveArcOverNet(
   clearance = 0.3,
   minFlight = 0.8,
   maxFlight = 2.2,
+  extraDown = 0,
 ): Vec3 {
   const sameSide = Math.sign(from.y) === Math.sign(to.y) || to.y === 0;
-  if (sameSide) return solveArc(from, to, minFlight);
+  if (sameSide) return solveArc(from, to, minFlight, extraDown);
 
   const needed = NET_HEIGHT + clearance;
   const steps = 24;
   for (let i = 0; i <= steps; i++) {
     const t = minFlight + (maxFlight - minFlight) * (i / steps);
-    const v = solveArc(from, to, t);
+    const v = solveArc(from, to, t, extraDown);
     if (Math.abs(v.y) < 1e-3) continue;
     const tau = netCrossingTime(from.y, v.y);
     if (tau <= 0 || tau >= t) continue;
-    if (heightAt(from.z, v.z, tau) >= needed) return v;
+    if (heightAt(from.z, v.z, tau, extraDown) >= needed) return v;
   }
-  return solveArc(from, to, maxFlight);
+  return solveArc(from, to, maxFlight, extraDown);
 }
 
 /**

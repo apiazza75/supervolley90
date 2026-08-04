@@ -160,10 +160,20 @@ export class World {
     if (!this.serveTossInFlight) return false;
     const server = this.team(this.servingSide).server;
     const reachTop = server.height + PLAYER_REACH + (server.airborne ? 0.7 : 0.35);
+    // How high the ball has to be before the strike is offered.
+    //
+    // A flat floor of 1.2 m turned the ball red as soon as it fell back to
+    // chest height, so a player who jumped and pressed on the cue struck it
+    // BELOW the tape — and no ball hit from 1.5 m can be driven over a 2.43 m
+    // net, so the solver quietly turned every jump serve into the same lob a
+    // standing player hits. The jump has to be worth something, which means
+    // the window for someone in the air is up where they can actually hit
+    // down: above the tape, not below it.
+    const floor = server.airborne ? NET_HEIGHT + 0.12 : 1.55;
     return (
       this.phaseTimer - this.tossedAt > 0.2 &&
       (server.airborne || this.ball.vel.z < 1.6) &&
-      this.ball.pos.z > 1.2 &&
+      this.ball.pos.z > floor &&
       this.ball.pos.z < reachTop &&
       distXY(server.pos, this.ball.pos) < 1.9
     );
@@ -359,7 +369,14 @@ export class World {
     if (this.phase === 'serve' || this.phase === 'rally') {
       for (const p of this.allPlayers()) {
         if (p.airborne || p.diving || p.downTime > 0) continue;
-        if (Math.hypot(p.vel.x, p.vel.y) > 1.4) continue;
+        // A player running somewhere normally faces the way they are going.
+        // Not in defence: while the ball is on the far side of the net you
+        // watch it, whatever your feet are doing — shuffling into position
+        // with your back to the attack is the one thing no defender ever does,
+        // and a back line half of whom were facing the end line read as six
+        // people who had lost interest in the rally.
+        const defending = this.ball.pos.y * attackDir(p.side) > 0.5;
+        if (!defending && Math.hypot(p.vel.x, p.vel.y) > 1.4) continue;
 
         // During a serve everyone except the server faces the net, ready for
         // the rally. Tracking the ball here turned the serving team around to

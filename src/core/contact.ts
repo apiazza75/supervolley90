@@ -1,13 +1,22 @@
-import { Ball, driveOverNet, solveArc, solveArcOverNet, solveDrive } from './ball';
+import {
+  Ball,
+  aimThroughSpin,
+  driveOverNet,
+  landingOf,
+  solveArc,
+  solveArcOverNet,
+  solveDrive,
+} from './ball';
 import { Vec3, v3, clamp, distXY, lerp } from './math3';
 import { Player } from './player';
 import { Rng } from './rng';
 import {
   ATTACK_LINE,
+  MAGNUS,
   BALL_RADIUS,
   COURT_HALF_LENGTH,
   COURT_HALF_WIDTH,
-  MAGNUS,
+
   NET_HEIGHT,
   PLAYER_RADIUS,
   PLAYER_REACH,
@@ -156,24 +165,68 @@ export function performServe(ctx: StrikeContext): StrikeResult {
   target.x = clamp(target.x + s.x, -COURT_HALF_WIDTH - 0.4, COURT_HALF_WIDTH + 0.4);
   target.y += s.y + charge * 0.22;
 
-  // Below half charge it is a floater: slow, high, heavy wobble. Above, it
-  // becomes a jump serve — flat, fast and much harder to pass.
-  const jumpServe = charge > 0.5 && player.airborne;
-  if (jumpServe) {
-    const speed = lerp(15, 23, charge) * (0.85 + 0.3 * player.stats.power);
-    // Topspin, but a believable amount of it. At -3.2 the Magnus term reached
-    // 15 m/s² — more than gravity — so every jump serve dived into the tape
-    // whatever the launch angle said.
-    const spinX = -1.3 * attackDir(player.side);
-    // Topspin on a jump serve pulls down with about half the force of gravity.
-    // The clearance solver has to be told, or it promises a trajectory the
-    // spin then drags into the tape — which is where a third of all serves
-    // were ending up.
-    const magnusDown = Math.abs(spinX * speed) * MAGNUS;
-    const vel = driveOverNet(from, target, speed, 0.25, magnusDown);
-    const spin = v3(spinX, 0, ctx.rng.spread(1.4));
-    ball.strike(vel, spin);
-    return { kind: 'serve', target, speed };
+  // Leaving the floor for it IS the jump serve.
+  //
+  // This used to require `charge > 0.5` as well — a hangover from the old
+  // hold-to-charge controls. Under the one-button scheme a tap carries no
+  // charge at all, so a player who tossed, jumped and struck at the perfect
+  // moment fell through to the floater branch and hit exactly the same slow
+  // lob as someone standing still. The jump did nothing.
+  //
+  // Power now comes from the contact, which is the whole point of the timing
+  // cue: meeting the ball at full stretch above the head is a rocket, catching
+  // it late and low is a serve you got away with.
+  if (player.airborne) {
+    const q = contactQuality(player, ball);
+    // Topspin, so the ball dives rather than sailing. The game's Magnus term is
+    // scaled for gentle curve, not for the freak spin of a real jump serve, so
+    // this is what shapes the flight rather than what defines it.
+    const spinX = -0.9 * attackDir(player.side);
+    const spin = v3(spinX, 0, ctx.rng.spread(0.9));
+    // What the topspin will add to gravity, so the solver can plan for it.
+    const magnusDown = Math.abs(spinX) * 22 * MAGNUS;
+    const dir = attackDir(player.side);
+
+    // Search for the fastest serve the physics will actually allow.
+    //
+    // Asking for a flat drive does not work and never could: from a 3.7 m
+    // contact, a ball fast enough to reach the far court has to leave almost
+    // level, and then it passes the tape at about 2 m — under it. Every such
+    // attempt fell back to a slow lob, which is precisely the ball a standing
+    // player hits, and that is why jumping for the serve changed nothing at
+    // all.
+    //
+    // So instead of naming a speed and hoping, name a series of flight times
+    // from quick to safe and take the first one that genuinely lands in,
+    // verified by simulating the shot with its spin. A good contact is allowed
+    // to start the search shorter — which is where the pace comes from, and
+    // what makes the timing cue worth hitting.
+    const FLIGHTS = [0.62, 0.7, 0.78, 0.86, 0.95, 1.05, 1.2];
+    const first = q > 0.75 ? 0 : q > 0.6 ? 1 : 2;
+    for (let i = first; i < FLIGHTS.length; i++) {
+      const flight = FLIGHTS[i];
+      const vel = aimThroughSpin(
+        target,
+        spin,
+        (at, lift) =>
+          solveArcOverNet(from, at, 0.18 + lift, flight, flight * 1.08, magnusDown),
+        from,
+      );
+      const check = landingOf(from, vel, spin, target.z);
+      const lands =
+        check.valid &&
+        check.point.y * dir > 0.9 &&
+        Math.abs(check.point.y) < COURT_HALF_LENGTH - 0.1 &&
+        Math.abs(check.point.x) < COURT_HALF_WIDTH - 0.1;
+      if (!lands) continue;
+      ball.strike(vel, spin);
+      return { kind: 'serve', target, speed: Math.hypot(vel.x, vel.y, vel.z) };
+    }
+    // Nothing worked from here — take the pace off rather than hand over the
+    // point, which is what a server who has mistimed the toss does too.
+    const safe = solveArcOverNet(from, target, 0.5, 1.15, 2.0);
+    ball.strike(safe, v3(spinX * 0.3, 0, 0));
+    return { kind: 'serve', target, speed: Math.hypot(safe.x, safe.y, safe.z) };
   }
 
   const flight = lerp(1.5, 1.05, charge);

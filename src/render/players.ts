@@ -199,14 +199,14 @@ export interface PlayerDrawOptions {
   official?: boolean;
 }
 
-const OUTLINE = 'rgba(18,16,28,0.85)';
+export const OUTLINE = 'rgba(18,16,28,0.85)';
 
 /**
  * Draw a limb segment as a tapered capsule, shaded across its width — lit on
  * the upper-left edge, falling to shadow on the lower-right — with an outline.
  * The cross-shading is what turns a flat sausage into something with volume.
  */
-function capsule(
+export function capsule(
   ctx: CanvasRenderingContext2D,
   x0: number,
   y0: number,

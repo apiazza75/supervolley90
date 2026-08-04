@@ -35,6 +35,9 @@ interface Outcome {
   landing: 'in' | 'out' | 'own half' | 'net' | 'hit a team-mate' | 'unknown';
   /** How far from the end line the server was when they struck. */
   servedFromY: number;
+  /** Ball speed just after the strike, and how long it took to cross. */
+  launchSpeed: number;
+  crossTime: number;
 }
 
 function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
@@ -61,6 +64,8 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
       windowEnd: -1,
       landing: 'unknown',
       servedFromY: 0,
+      launchSpeed: 0,
+      crossTime: 0,
     };
   }
 
@@ -104,6 +109,8 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
     }
     if ((w.phase as string) === 'rally') {
       const servedFromY = server.pos.y;
+      const launchSpeed = Math.hypot(w.ball.vel.x, w.ball.vel.y, w.ball.vel.z);
+      let crossTime = 0;
       // Follow it. "The serve fired" is not the same as "the serve worked":
       // a ball that drops back into your own court, or into the back of a
       // team-mate, is a serve you could not play, and only watching where it
@@ -117,8 +124,13 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
       // than where the serve went, and once by carrying on past the end of the
       // rally and blaming the serve for the next one.
       let landing: Outcome['landing'] = 'unknown';
+      let crossed = false;
       for (let k = 0; k < 120 * 8 && landing === 'unknown'; k++) {
         w.step(null, DT);
+        if (!crossed) {
+          crossTime += DT;
+          if (w.ball.pos.y > 0) crossed = true;
+        }
         const at = { x: w.ball.pos.x, y: w.ball.pos.y };
         for (const ev of w.drainEvents()) {
           if (ev.type === 'contact' && ev.side === 'away') landing = 'in';
@@ -150,6 +162,8 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
         windowEnd: windowEnd - tossed,
         landing,
         servedFromY,
+        launchSpeed,
+        crossTime,
       };
     }
   }
@@ -174,6 +188,8 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
     windowEnd,
     landing: 'unknown',
     servedFromY: server.pos.y,
+    launchSpeed: 0,
+    crossTime: 0,
   };
 }
 
@@ -263,6 +279,38 @@ function main(): void {
     const s = windows.reduce((a, r) => a + r.windowStart, 0) / windows.length;
     const e = windows.reduce((a, r) => a + r.windowEnd, 0) / windows.length;
     console.log(`strike window: ${s.toFixed(2)} .. ${e.toFixed(2)} s after the toss (${(e - s).toFixed(2)} s wide)`);
+  }
+
+  // The question the whole one-button serve rests on: does jumping for it
+  // actually produce a different ball?
+  const air = served.filter((r) => r.jump && r.liftAtHit > 0.25);
+  const ground = served.filter((r) => !(r.jump && r.liftAtHit > 0.25));
+  const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+  console.log(
+    `jump serve:     ${air.length} at ${mean(air.map((r) => r.launchSpeed)).toFixed(1)} m/s, ` +
+      `${mean(air.map((r) => r.crossTime)).toFixed(2)} s to cross the net`,
+  );
+  console.log(
+    `standing serve: ${ground.length} at ${mean(ground.map((r) => r.launchSpeed)).toFixed(1)} m/s, ` +
+      `${mean(ground.map((r) => r.crossTime)).toFixed(2)} s to cross the net`,
+  );
+
+  // The question the whole one-button serve rests on: does hitting it at full
+  // stretch produce a different ball from scooping it at chest height?
+  const bucket = (lo: number, hi: number): Outcome[] =>
+    served.filter((r) => r.contactZ >= lo && r.contactZ < hi);
+  console.log('launch speed by contact height:');
+  for (const [lo, hi, label] of [
+    [0, 2.0, 'below the tape  '],
+    [2.0, 2.9, 'at the tape     '],
+    [2.9, 9, 'above the tape  '],
+  ] as [number, number, string][]) {
+    const b = bucket(lo, hi);
+    if (!b.length) continue;
+    console.log(
+      `  ${label} ${b.length} serves, ${mean(b.map((r) => r.launchSpeed)).toFixed(1)} m/s, ` +
+        `${mean(b.map((r) => r.crossTime)).toFixed(2)} s to cross`,
+    );
   }
 
   const underarm = served.filter((r) => r.hold > 0.5);
