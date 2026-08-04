@@ -335,7 +335,21 @@ export class World {
         distXY(p.pos, this.ball.pos) < 3.2
       ) {
         p.jump();
-        if (blocking) p.setAnim('block');
+        if (blocking) {
+          p.setAnim('block');
+          // The player called the block, so the nearest front-row team-mate
+          // goes up WITH them — a double block is coordinated by one call, and
+          // this is that call.
+          const team = this.team(p.side);
+          const mate = team
+            .frontRow()
+            .filter((m) => m.id !== p.id && !m.airborne && m.canAct)
+            .sort((a, b) => Math.abs(a.pos.x - p.pos.x) - Math.abs(b.pos.x - p.pos.x))[0];
+          if (mate && Math.abs(mate.pos.x - p.pos.x) < 2.6 && Math.abs(mate.pos.y) < 2.6) {
+            mate.jump();
+            mate.setAnim('block');
+          }
+        }
       }
 
       // On the ground the jump button jumps; in the air it calls for a Lethal

@@ -178,6 +178,11 @@ export function performServe(ctx: StrikeContext): StrikeResult {
   // it late and low is a serve you got away with.
   if (player.airborne) {
     const q = contactQuality(player, ball);
+    // The serve goes where the server is. Aiming purely from the stick meant
+    // every jump serve from every spot on the line flew the same corridor;
+    // standing wide now sends the ball down that side unless the aim pulls it
+    // back across.
+    target.x = clamp(target.x * 0.55 + from.x * 0.6, -COURT_HALF_WIDTH + 0.4, COURT_HALF_WIDTH - 0.4);
     // Topspin, so the ball dives rather than sailing. The game's Magnus term is
     // scaled for gentle curve, not for the freak spin of a real jump serve, so
     // this is what shapes the flight rather than what defines it.
@@ -202,7 +207,11 @@ export function performServe(ctx: StrikeContext): StrikeResult {
     // to start the search shorter — which is where the pace comes from, and
     // what makes the timing cue worth hitting.
     const FLIGHTS = [0.62, 0.7, 0.78, 0.86, 0.95, 1.05, 1.2];
-    const first = q > 0.75 ? 0 : q > 0.6 ? 1 : 2;
+    // Contact quality dials the pace continuously — meeting the ball at full
+    // stretch starts the search at the flattest flight, a scooped contact
+    // starts it two steps safer — so how you time the strike is how you dose
+    // the power.
+    const first = Math.min(3, Math.round((1 - clamp((q - 0.45) / 0.5, 0, 1)) * 3));
     for (let i = first; i < FLIGHTS.length; i++) {
       const flight = FLIGHTS[i];
       const vel = aimThroughSpin(
@@ -323,11 +332,29 @@ export function performPowerMove(ctx: StrikeContext): StrikeResult & { move: Pow
     // Extreme sidespin: leaves towards one antenna and hooks back inside.
     const side = Math.sign(aim.x) || 1;
     const target = aimToTarget(player.side, { x: side * 0.95, depth: 0.55 });
-    const launch = aimToTarget(player.side, { x: side * 1.9, depth: 0.75 });
-    const vel = driveOverNet(from, launch, 30 * strength, 0.12);
-    // Sidespin is scaled by the attack direction for the same reason as an
-    // ordinary spike: Magnus depends on the sign of the velocity.
-    ball.strike(vel, v3(-4 * dir, 0, -side * 13 * dir));
+    // A signature move that MISSES is not spectacular, it is a point given
+    // away, and measured over eight minutes the hook was the single biggest
+    // source of balls out. Simulate the shot and, while it lands out, wind
+    // the exaggeration down: less overshoot, less spin, until it stays in.
+    let overshoot = 1.9;
+    let hook = 13;
+    let vel = v3();
+    let spin = v3();
+    for (let i = 0; i < 4; i++) {
+      const launch = aimToTarget(player.side, { x: side * overshoot, depth: 0.75 });
+      vel = driveOverNet(from, launch, 30 * strength, 0.12);
+      spin = v3(-4 * dir, 0, -side * hook * dir);
+      const check = landingOf(from, vel, spin);
+      const inCourt =
+        check.valid &&
+        check.point.y * dir > 0.5 &&
+        Math.abs(check.point.y) < COURT_HALF_LENGTH - 0.2 &&
+        Math.abs(check.point.x) < COURT_HALF_WIDTH - 0.2;
+      if (inCourt) break;
+      overshoot = 1 + (overshoot - 1) * 0.6;
+      hook *= 0.72;
+    }
+    ball.strike(vel, spin);
     player.swing = 0.34;
     player.setAnim('spike');
     return { kind: 'power', target, speed: 30 * strength, move };
@@ -335,7 +362,16 @@ export function performPowerMove(ctx: StrikeContext): StrikeResult & { move: Pow
 
   // Meteor: straight down off the top of the reach, as fast as the ball goes.
   const target = aimToTarget(player.side, { x: aim.x * 0.7, depth: -0.1 });
-  const vel = solveDrive(from, target, 38 * strength);
+  let vel = solveDrive(from, target, 38 * strength);
+  // The heavy topspin drags even this short ball a metre past where the drive
+  // was solved for; verified the same way as everything else that spins.
+  {
+    const check = landingOf(from, vel, v3(-9 * dir, 0, 0));
+    if (!check.valid || Math.abs(check.point.y) > COURT_HALF_LENGTH - 0.3) {
+      target.y = dir * 1.6;
+      vel = solveDrive(from, target, 34 * strength);
+    }
+  }
   ball.strike(vel, v3(-9 * dir, 0, 0));
   player.swing = 0.36;
   player.setAnim('spike');
@@ -379,7 +415,10 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
   const target = aimToTarget(player.side, aim);
   // Enough spread that hard swings genuinely go long or wide sometimes;
   // an attack that can never miss makes the defence pointless.
-  const s = scatter(ctx, 0.78 * (1.25 - charge * 0.4));
+  // Rescaled when the charge curve moved: with most contacts now earning a low
+  // charge, the old base sprayed four attacks out of bounds for every three
+  // kills, and "out" became the most common way to score.
+  const s = scatter(ctx, 0.55 * (1.25 - charge * 0.4));
   target.x = clamp(target.x + s.x, -COURT_HALF_WIDTH - 0.9, COURT_HALF_WIDTH + 0.9);
   target.y += s.y;
 

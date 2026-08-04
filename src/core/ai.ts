@@ -5,6 +5,7 @@ import { Player } from './player';
 import { Rng } from './rng';
 import {
   COURT_HALF_WIDTH,
+  FIXED_DT,
   GRAVITY,
   NET_HEIGHT,
   PLAYER_REACH,
@@ -45,6 +46,8 @@ interface Brainstate {
   powerServe: boolean;
   /** Request a Lethal Maneuver on this step. */
   armSpecial: boolean;
+  /** Committed to moving towards the goal (hysteresis against goal jitter). */
+  enRoute: boolean;
 }
 
 const newState = (): Brainstate => ({
@@ -57,6 +60,7 @@ const newState = (): Brainstate => ({
   serveHold: 0.6,
   powerServe: false,
   armSpecial: false,
+  enRoute: false,
 });
 
 /**
@@ -79,6 +83,21 @@ export class TeamBrain {
   private plannedAttack: Vec3 = v3();
   /** Touch count seen on the previous step, to detect possession transitions. */
   private lastSeenTouches = -1;
+  /**
+   * The defensive read, frozen until the situation genuinely changes.
+   *
+   * The threat estimate wobbles every step — an opponent leaves the floor, the
+   * set prediction refines, the ball drifts — and re-deriving the block pair
+   * and every lean from the live value re-shuffled half the team about once a
+   * second. A real defence reads the attack ONCE and adjusts only when the
+   * ball actually goes somewhere else.
+   */
+  private readX = 0;
+  private blockPair: number[] = [];
+  private wasDefending = false;
+  /** Current team mode, held until the other one has been true for a beat. */
+  private mode: 'offence' | 'defence' = 'defence';
+  private modeTimer = 0;
 
   constructor(world: World, team: Team, difficulty: number) {
     this.world = world;
@@ -96,6 +115,20 @@ export class TeamBrain {
   private latency(p: Player): number {
     const skill = p.stats.reaction * 0.6 + this.difficulty * 0.2;
     return clamp(0.34 - skill * 0.3, 0.04, 0.34);
+  }
+
+  /**
+   * Replace a goal only when the new one is meaningfully elsewhere.
+   *
+   * Tactical spots are functions of the ball and of team-mates, so they
+   * tremble continuously, and a goal that trembles keeps its player endlessly
+   * in motion. A cover or block assignment does not need centimetre tracking:
+   * the spot moves when the situation moves, by more than a stride.
+   */
+  private sticky(s: Brainstate, next: Vec3, threshold = 0.7): void {
+    const dx = next.x - s.goal.x;
+    const dy = next.y - s.goal.y;
+    if (dx * dx + dy * dy > threshold * threshold) s.goal = copy(next);
   }
 
   /** Positional sloppiness in metres. */
@@ -159,7 +192,23 @@ export class TeamBrain {
 
     const mine = w.possession === side && ballOnMySide;
 
-    if (mine || (ballOnMySide && incoming)) {
+    // Debounce the offence/defence decision. Read raw, it flickers every time
+    // the ball hovers near the net — nine formation flips per rally, each one
+    // re-goaling all six players, which is most of what made the teams look
+    // possessed. A whole team does not change shape on a millisecond: the new
+    // situation has to hold for a fifth of a second before anyone commits.
+    const want: 'offence' | 'defence' = mine || (ballOnMySide && incoming) ? 'offence' : 'defence';
+    if (want === this.mode) {
+      this.modeTimer = 0;
+    } else {
+      this.modeTimer += FIXED_DT;
+      if (this.modeTimer > 0.2) {
+        this.mode = want;
+        this.modeTimer = 0;
+      }
+    }
+
+    if (this.mode === 'offence') {
       this.assignOffense();
     } else {
       this.assignDefense();
@@ -239,6 +288,7 @@ export class TeamBrain {
 
   /** Our side has the ball: pass, set, attack, everyone else covers. */
   private assignOffense(): void {
+    this.wasDefending = false;
     const w = this.world;
     const dir = attackDir(this.team.side);
     const touches = w.possession === this.team.side ? w.touches : 0;
@@ -296,8 +346,11 @@ export class TeamBrain {
         s.goal = v3(this.plannedAttack.x, this.plannedAttack.y - dir * 1.3, 0);
       } else {
         s.job = 'cover';
-        const hitter = this.team.get(attackerId) ?? null;
-        s.goal = legalSpot(p.side, attackSpot(p, hitter, w.ball.pos.x));
+        // Cover is planned around where the attack is GOING, decided once per
+        // possession — not around the hitter's live position, which sweeps
+        // through several metres during the approach and dragged the whole
+        // cover arc along with it.
+        this.sticky(s, legalSpot(p.side, attackSpot(p, null, this.plannedAttack.x * dir)));
       }
     }
   }
@@ -374,13 +427,38 @@ export class TeamBrain {
           : w.ball.pos.x;
     const blockX = clamp(readX, -COURT_HALF_WIDTH + 0.6, COURT_HALF_WIDTH - 0.6);
 
-    const blockers = this.team
-      .frontRow()
-      .slice()
-      .sort((a, b) => Math.abs(a.pos.x - blockX) - Math.abs(b.pos.x - blockX));
+    // Commit to a read. Re-read only on entering defence or when the threat
+    // has moved by more than a body's width — not every step.
+    if (!this.wasDefending || Math.abs(blockX - this.readX) > 1.1) {
+      this.readX = blockX;
+      this.blockPair = this.team
+        .frontRow()
+        .slice()
+        .sort((a, b) => Math.abs(a.pos.x - blockX) - Math.abs(b.pos.x - blockX))
+        .slice(0, 2)
+        .map((b) => b.id);
+    }
+    this.wasDefending = true;
+    const steadyX = this.readX;
+    const blockers = this.blockPair
+      .map((id) => this.team.get(id))
+      .filter((b): b is Player => Boolean(b));
 
-    const receiverId = ballComing ? this.pickReceiver() : -1;
-    this.designatedReceiver = receiverId;
+    // One receiver per incoming ball. Re-picking every step handed the job
+    // back and forth between two players as the landing estimate refined, and
+    // both of them ran for it.
+    if (!ballComing) {
+      this.designatedReceiver = -1;
+    } else if (
+      this.designatedReceiver < 0 ||
+      !this.team.get(this.designatedReceiver) ||
+      (floorPred.valid &&
+        distXY(this.team.get(this.designatedReceiver)!.pos, floorPred.point) >
+          distXY(this.team.get(this.pickReceiver())?.pos ?? floorPred.point, floorPred.point) + 1.4)
+    ) {
+      this.designatedReceiver = this.pickReceiver();
+    }
+    const receiverId = this.designatedReceiver;
 
     for (const p of this.team.players) {
       const s = this.stateOf(p);
@@ -399,25 +477,18 @@ export class TeamBrain {
       // opponent's build-up, not just once the ball reaches the net. Waiting
       // until it did meant the second blocker never arrived.
       const blockIndex = blockers.indexOf(p);
-      if (blockIndex >= 0 && blockIndex < 2) {
+      if (blockIndex >= 0) {
         s.job = 'block';
-        const offset = blockIndex === 0 ? 0 : blockX > 0 ? -0.85 : 0.85;
-        s.goal = v3(clamp(blockX + offset, -3.9, 3.9), -dir * 0.72, 0);
+        const offset = blockIndex === 0 ? 0 : steadyX > 0 ? -0.85 : 0.85;
+        this.sticky(s, v3(clamp(steadyX + offset, -3.9, 3.9), -dir * 0.72, 0), 0.45);
         this.driveBlock(p, s, threat, blockIndex, blockers[0]);
         continue;
       }
 
       s.job = 'cover';
-      const strong = Math.hypot(w.ball.vel.x, w.ball.vel.y) > 16 || Boolean(threat);
-      s.goal = legalSpot(
-        p.side,
-        defenceSpot(
-          p,
-          blockX,
-          blockers.slice(0, 2).map((b) => b.id),
-          strong,
-        ),
-      );
+      // Always the deep shape: flipping depth on a live speed estimate marched
+      // the whole back line up and down a metre at a time.
+      this.sticky(s, legalSpot(p.side, defenceSpot(p, steadyX, this.blockPair, true)));
     }
   }
 
@@ -548,7 +619,13 @@ export class TeamBrain {
 
     // Mirroring the lead blocker is not a decision to be dithered over: when
     // the middle goes, the outside goes, without waiting on its own dice roll.
-    if (!p.airborne && p.canAct && cue && aligned && (timing || withLead)) {
+    // The human's team does not put the block up on its own. The player calls
+    // it: SPACE near the net sends the active player up, and the world brings
+    // the nearest front-row team-mate with them. An AI wall that fired by
+    // itself made pressing the button feel irrelevant — the one thing an
+    // arcade game must never do.
+    const humanTeam = this.world.humanTeam?.side === this.team.side;
+    if (!humanTeam && !p.airborne && p.canAct && cue && aligned && (timing || withLead)) {
       if (this.stateOf(p).reactionDelay <= 0 && p.jump()) {
         // Read as a block from the first frame of the jump.
         p.setAnim('block');
@@ -630,8 +707,34 @@ export class TeamBrain {
     const dy = s.goal.y - p.pos.y;
     const gap = Math.hypot(dx, dy);
     const tolerance = this.slack(p);
-    if (gap > tolerance) {
-      const urgency = clamp(gap / 1.6, 0.35, 1);
+
+    // Hysteresis, because this single line is where "twelve possessed players
+    // sprinting everywhere" came from. Tactical spots are recomputed every
+    // step and every one of them trembles a little — with the ball, with the
+    // attacker, with a team-mate's drift — so a player released to move the
+    // instant the goal slipped past tolerance was ALWAYS moving. Measured over
+    // a match, 57% of all players were running faster than 1.5 m/s at any
+    // given instant, which is a stampede, not a formation.
+    //
+    // A real player commits: they move when they are clearly out of position,
+    // keep moving until they have actually arrived, and otherwise stand and
+    // watch the ball. Only whoever is playing the ball reacts to every twitch.
+    const chasing =
+      s.job === 'receive' || s.job === 'set' || s.job === 'attack' || s.job === 'block';
+    if (!chasing) {
+      if (!s.enRoute && gap > tolerance + 0.55) s.enRoute = true;
+      if (s.enRoute && gap < tolerance * 0.8) s.enRoute = false;
+    } else {
+      s.enRoute = true;
+    }
+    if (s.enRoute && gap > 0.05) {
+      // Off-the-ball movement is a positional adjustment, not a sprint. At
+      // urgency 0.75 the whole court moved at running pace whenever a
+      // formation shifted, which — measured — kept 60% of all twelve players
+      // above 1.5 m/s at any instant. Capped at a trot, a transition reads as
+      // a team settling into its shape rather than a stampede, and whoever is
+      // actually playing the ball still goes flat out.
+      const urgency = chasing ? clamp(gap / 1.6, 0.35, 1) : clamp(gap / 3.6, 0.22, 0.32);
       cmd.moveX = (dx / gap) * urgency;
       cmd.moveY = (dy / gap) * urgency;
     }

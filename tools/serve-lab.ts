@@ -38,6 +38,9 @@ interface Outcome {
   /** Ball speed just after the strike, and how long it took to cross. */
   launchSpeed: number;
   crossTime: number;
+  /** Where the served ball came down, for measuring trajectory variety. */
+  landX: number;
+  landY: number;
 }
 
 function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
@@ -66,6 +69,8 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
       servedFromY: 0,
       launchSpeed: 0,
       crossTime: 0,
+      landX: 0,
+      landY: 0,
     };
   }
 
@@ -111,6 +116,8 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
       const servedFromY = server.pos.y;
       const launchSpeed = Math.hypot(w.ball.vel.x, w.ball.vel.y, w.ball.vel.z);
       let crossTime = 0;
+      let landX = 0;
+      let landY = 0;
       // Follow it. "The serve fired" is not the same as "the serve worked":
       // a ball that drops back into your own court, or into the back of a
       // team-mate, is a serve you could not play, and only watching where it
@@ -133,7 +140,12 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
         }
         const at = { x: w.ball.pos.x, y: w.ball.pos.y };
         for (const ev of w.drainEvents()) {
-          if (ev.type === 'contact' && ev.side === 'away') landing = 'in';
+          if (ev.type === 'contact' && ev.side === 'away') {
+            landing = 'in';
+            // Where the receiver met it: the proxy for the serve's trajectory.
+            landX = w.ball.pos.x;
+            landY = w.ball.pos.y;
+          }
           else if (ev.type === 'contact' && ev.side === 'home' && ev.playerId !== server.id)
             landing = 'hit a team-mate';
           else if (ev.type === 'point') {
@@ -164,6 +176,8 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
         servedFromY,
         launchSpeed,
         crossTime,
+        landX,
+        landY,
       };
     }
   }
@@ -190,6 +204,8 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
     servedFromY: server.pos.y,
     launchSpeed: 0,
     crossTime: 0,
+    landX: 0,
+    landY: 0,
   };
 }
 
@@ -312,6 +328,18 @@ function main(): void {
         `${mean(b.map((r) => r.crossTime)).toFixed(2)} s to cross`,
     );
   }
+
+  // Trajectory variety: identical serves are the mark of a canned animation.
+  const landed = served.filter((r) => r.landY !== 0);
+  const sd = (xs: number[]): number => {
+    const m = mean(xs);
+    return Math.sqrt(mean(xs.map((v) => (v - m) * (v - m))));
+  };
+  console.log(
+    `landing spread: x ±${sd(landed.map((r) => r.landX)).toFixed(2)} m, ` +
+      `y ±${sd(landed.map((r) => r.landY)).toFixed(2)} m, ` +
+      `speed ±${sd(served.map((r) => r.launchSpeed)).toFixed(1)} m/s`,
+  );
 
   const underarm = served.filter((r) => r.hold > 0.5);
   console.log(`served underarm (deliberate hold): ${underarm.length}`);

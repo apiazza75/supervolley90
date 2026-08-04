@@ -360,6 +360,11 @@ export function drawPlayer(
 
   let target = POSES[animKey] ?? POSES.idle;
   if (p.anim === 'run') {
+    // Gait follows pace. One full sprint cycle for every speed meant a player
+    // drifting half a metre pumped their arms like they were chasing a bus —
+    // twelve of those at once is most of what made the court look possessed.
+    // A slow adjustment is a low shuffle: short stride, arms quiet.
+    const pace = clamp(groundSpeed / 5.2, 0.25, 1);
     // A stride is contralateral: the leg that swings forward pairs with the
     // arm on the OTHER side. `phase` drives the far leg; the far arm takes
     // the opposite sign, the near pair mirrors both.
@@ -367,24 +372,24 @@ export function drawPlayer(
     // Each foot is planted at the back of its stride and lifts through the
     // front of it, so the run is driven by the floor like the other grounded
     // poses instead of floating on joint angles.
-    const stride = 0.26;
+    const stride = 0.26 * pace;
     // A foot is planted while it travels BACKWARD under the body and lifts
     // while it swings forward. Lifting it at the front of the stride instead
     // — where it should be reaching for the floor — is what turns a run into
     // a skate. The foot moves forward when cos(phase) is positive.
     const swingPhase = Math.cos(st.runPhase);
-    const farLift = Math.max(0, swingPhase) * 0.15;
-    const nearLift = Math.max(0, -swingPhase) * 0.15;
+    const farLift = Math.max(0, swingPhase) * 0.15 * pace;
+    const nearLift = Math.max(0, -swingPhase) * 0.15 * pace;
     target = {
       ...target,
       // A touch of vertical bob per stride sells the footfalls.
-      crouch: target.crouch + Math.abs(Math.cos(st.runPhase)) * 0.06,
+      crouch: target.crouch + Math.abs(Math.cos(st.runPhase)) * 0.06 * pace,
       // Elbows fold FORWARD, so their bend is negative. This override kept the
       // positive value the whole pose table was corrected away from, which is
       // why a running player's forearms pointed the wrong way and the arms
       // read as fighting the legs.
-      armFar: [-0.9 * phase, -0.95],
-      armNear: [0.9 * phase, -0.95],
+      armFar: [-0.9 * phase * pace, -0.55 - 0.4 * pace],
+      armNear: [0.9 * phase * pace, -0.55 - 0.4 * pace],
       feet: [
         [stride * phase, farLift],
         [-stride * phase, nearLift],
