@@ -269,7 +269,112 @@ export class Arena {
       COURT_NEAR,
     );
 
+    this.drawGrain(ctx, cam, outX, outY);
+    this.drawLightPools(ctx, cam, outX, outY);
     this.drawLines(ctx, cam);
+  }
+
+  /**
+   * Wood.
+   *
+   * A sports hall is laid in narrow planks running the length of the court,
+   * which in this projection means seams at closely spaced depths — horizontal
+   * screen lines. Two things sell it: the seams themselves, and the fact that
+   * every plank takes the light slightly differently, so the floor has a tone
+   * that varies band to band instead of being one flat colour.
+   */
+  private drawGrain(
+    ctx: CanvasRenderingContext2D,
+    cam: Camera,
+    outX: number,
+    outY: number,
+  ): void {
+    const rng = new Rng(0x9d0c);
+    const left = cam.projectFloor(0, -outY).x;
+    const right = cam.projectFloor(0, outY).x;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(Math.min(left, right), 0, Math.abs(right - left), cam.viewHeight);
+    ctx.clip();
+
+    const PLANK = 0.16;
+    for (let x = -outX; x <= outX; x += PLANK) {
+      const y = cam.projectFloor(x, 0).y;
+      const onCourt = Math.abs(x) <= COURT_HALF_WIDTH;
+      // Tone variation, plank by plank.
+      ctx.fillStyle = onCourt
+        ? `rgba(${rng.next() < 0.5 ? '255,214,170' : '120,52,20'},${0.03 + rng.next() * 0.05})`
+        : `rgba(${rng.next() < 0.5 ? '190,235,215' : '20,60,48'},${0.03 + rng.next() * 0.05})`;
+      ctx.fillRect(Math.min(left, right), y - Math.abs(cam.projectFloor(x + PLANK, 0).y - y), Math.abs(right - left), Math.abs(cam.projectFloor(x + PLANK, 0).y - y) + 1);
+
+      // The seam itself.
+      ctx.strokeStyle = onCourt ? 'rgba(90,38,14,0.22)' : 'rgba(12,44,34,0.28)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(left, y);
+      ctx.lineTo(right, y);
+      ctx.stroke();
+
+      // Grain: short dashes along the plank, broken so it never reads as a rule.
+      ctx.strokeStyle = onCourt ? 'rgba(70,30,10,0.14)' : 'rgba(10,40,30,0.14)';
+      for (let k = 0; k < 5; k++) {
+        const a = lerp(left, right, rng.next());
+        const len = Math.abs(right - left) * (0.02 + rng.next() * 0.06);
+        ctx.beginPath();
+        ctx.moveTo(a, y - 1);
+        ctx.lineTo(a + len, y - 1);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  /**
+   * The floodlights, on the floor.
+   *
+   * Overhead banks throw overlapping pools onto a polished floor and a long
+   * specular sheen along it. Without them the court is a flat swatch of colour,
+   * which is exactly the 90s look this is meant to leave behind: light is what
+   * tells you the surface is varnished wood in a lit building.
+   */
+  private drawLightPools(
+    ctx: CanvasRenderingContext2D,
+    cam: Camera,
+    outX: number,
+    outY: number,
+  ): void {
+    const top = cam.projectFloor(outX, 0).y;
+    const bottom = cam.projectFloor(-outX, 0).y;
+    const left = cam.projectFloor(0, -outY).x;
+    const right = cam.projectFloor(0, outY).x;
+    const height = bottom - top;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 5; i++) {
+      const cx = lerp(left, right, (i + 0.5) / 5);
+      const cy = top + height * 0.45;
+      const pool = ctx.createRadialGradient(cx, cy, 1, cx, cy, height * 1.5);
+      pool.addColorStop(0, 'rgba(255,238,200,0.13)');
+      pool.addColorStop(0.5, 'rgba(255,238,200,0.05)');
+      pool.addColorStop(1, 'rgba(255,238,200,0)');
+      ctx.fillStyle = pool;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, height * 1.5, height * 0.62, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // A darker free zone, so the court itself is the brightest thing on screen
+    // and the eye goes where the ball is.
+    ctx.save();
+    ctx.fillStyle = 'rgba(4,8,16,0.28)';
+    const cTop = cam.projectFloor(COURT_HALF_WIDTH, 0).y;
+    const cBottom = cam.projectFloor(-COURT_HALF_WIDTH, 0).y;
+    ctx.fillRect(left, top, right - left, cTop - top);
+    ctx.fillRect(left, cBottom, right - left, bottom - cBottom);
+    ctx.restore();
   }
 
   private drawLines(ctx: CanvasRenderingContext2D, cam: Camera): void {
@@ -386,6 +491,8 @@ function fillQuad(
   ctx.fillStyle = color;
   ctx.fill();
 }
+
+const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 
 function strokePath(ctx: CanvasRenderingContext2D, cam: Camera, pts: [number, number][]): void {
   ctx.beginPath();

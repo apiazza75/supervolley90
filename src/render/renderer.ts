@@ -7,6 +7,8 @@ import { GameEvent, World } from '../core/world';
 import { Arena } from './arena';
 import { Camera } from './camera';
 import { Effects } from './fx';
+import { Officials } from './officials';
+import { Scoreboard } from './scoreboard';
 import { drawActiveRing, drawPlayer, drawPlayerShadow, shade } from './players';
 import { INTRO as REPLAY_INTRO, type ReplayFrame } from '../game/replay';
 
@@ -24,6 +26,8 @@ export class Renderer {
   readonly camera = new Camera();
   readonly effects = new Effects();
   private readonly arena = new Arena();
+  private readonly officials = new Officials();
+  private readonly scoreboard = new Scoreboard();
   private readonly rng = new Rng(0xbadc0de);
   private readonly rand = () => this.rng.next();
 
@@ -39,6 +43,8 @@ export class Renderer {
   private markerTime = 0;
   /** Rotates the spike shout, so the same words never land twice running. */
   private callIndex = 0;
+  /** Last phase seen, so the referee can whistle each serve into play. */
+  private lastPhase = '';
 
   constructor(private readonly ctx: CanvasRenderingContext2D) {}
 
@@ -138,6 +144,10 @@ export class Renderer {
           this.camera.addShake(9);
           this.arena.cheer(0.75);
           this.hitStop = Math.max(this.hitStop, 0.07);
+          // The officials react: a whistle, an arm up for the side that scored,
+          // and a ball kid sent out to collect the dead ball.
+          this.officials.callPoint(ev.side);
+          this.officials.fetchBall(world.ball.pos.x, world.ball.pos.y);
           break;
         }
         case 'setWon':
@@ -186,6 +196,9 @@ export class Renderer {
     ctx.clearRect(0, 0, cam.viewWidth, cam.viewHeight);
     this.arena.update(dt);
     this.arena.drawBackground(ctx, cam, time);
+    this.scoreboard.draw(ctx, cam, world, time);
+    this.officials.update(dt);
+    this.officials.drawFar(ctx, cam);
     this.effects.drawFloor(ctx, cam);
 
     const drawables: { depth: number; draw: () => void }[] = [];
@@ -208,8 +221,11 @@ export class Renderer {
     drawables.sort((a, b) => b.depth - a.depth);
     for (const d of drawables) d.draw();
 
+    this.officials.drawNear(ctx, cam);
+
     const ballPos = { x: frame.ball.x, y: frame.ball.y, z: frame.ball.z };
     this.drawBall({ pos: ballPos, vel: { x: 0, y: 0, z: 0 }, roll: frame.ball.roll } as Ball);
+    this.drawVignette(ctx, cam);
 
     // Broadcast furniture. A replay has to announce itself: played straight,
     // it just looks like the game stuttering and repeating itself.
@@ -298,6 +314,14 @@ export class Renderer {
     ctx.clearRect(0, 0, cam.viewWidth, cam.viewHeight);
     this.arena.update(dt);
     this.arena.drawBackground(ctx, cam, state.time);
+    this.scoreboard.update(world, dt);
+    this.scoreboard.draw(ctx, cam, world, state.time);
+    if (world.phase === 'serve' && this.lastPhase !== 'serve') {
+      this.officials.authoriseServe(world.servingSide);
+    }
+    this.lastPhase = world.phase;
+    this.officials.update(dt);
+    this.officials.drawFar(ctx, cam);
 
     this.effects.drawFloor(ctx, cam);
     this.drawLandingMarker(world);
@@ -341,7 +365,11 @@ export class Renderer {
     drawables.sort((a, b) => b.depth - a.depth);
     for (const d of drawables) d.draw();
 
+    // Near-side officials sit in front of the play, as they do from this angle.
+    this.officials.drawNear(ctx, cam);
+
     this.effects.draw(ctx, cam);
+    this.drawVignette(ctx, cam);
     this.drawTimingCue(world, state.time);
     this.drawPowerCoach(world, state.time, state.jumpLabel ?? 'SHIFT');
     if (this.flash > 0) {
@@ -350,6 +378,28 @@ export class Renderer {
     }
 
     return this.hitStop;
+  }
+
+  /**
+   * A soft darkening towards the frame edges, and a faint warm lift through the
+   * middle band where the play happens.
+   *
+   * This is the cheapest single thing that moves the picture out of the flat,
+   * evenly-lit look of a 90s cabinet: real arena footage has the light falling
+   * off towards the corners, and the eye follows the bright part of the frame
+   * without being told to.
+   */
+  private drawVignette(ctx: CanvasRenderingContext2D, cam: Camera): void {
+    const w = cam.viewWidth;
+    const h = cam.viewHeight;
+    ctx.save();
+    const v = ctx.createRadialGradient(w / 2, h * 0.6, h * 0.25, w / 2, h * 0.6, w * 0.72);
+    v.addColorStop(0, 'rgba(0,0,0,0)');
+    v.addColorStop(0.65, 'rgba(2,4,10,0.14)');
+    v.addColorStop(1, 'rgba(2,4,10,0.5)');
+    ctx.fillStyle = v;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
   }
 
   /**
