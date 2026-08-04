@@ -335,7 +335,6 @@ describe('match simulation', () => {
           }
         }
       }
-      if (world.phase === 'matchOver') break;
     }
 
     expect(formations).toBeGreaterThan(500);
