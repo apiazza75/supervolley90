@@ -162,6 +162,19 @@ interface AnimState {
   runPhase: number;
   /** Smoothed whole-body rotation, so a dive lays out instead of snapping. */
   tilt: number;
+  /**
+   * Squash and stretch, as a signed value: positive stretches the body
+   * vertically, negative compresses it. Driven by the jump physics — the body
+   * compresses as it loads, extends through the rise, and takes a hard
+   * compression on the landing that springs back out.
+   *
+   * This is the single oldest trick in character animation and the one most
+   * conspicuously missing here: without it a jump is a rigid figure translated
+   * up the screen, which is exactly how a 1994 sprite sheet had to do it.
+   */
+  squash: number;
+  /** Whether they were off the floor last frame, to catch the landing. */
+  wasAirborne: boolean;
 }
 const animState = new Map<number, AnimState>();
 
@@ -312,7 +325,13 @@ export function drawPlayer(
   // ---- pose selection and smoothing
   let st = animState.get(p.id);
   if (!st) {
-    st = { pose: clonePose(POSES[p.anim] ?? POSES.idle), runPhase: p.id * 1.7, tilt: 0 };
+    st = {
+      pose: clonePose(POSES[p.anim] ?? POSES.idle),
+      runPhase: p.id * 1.7,
+      tilt: 0,
+      squash: 0,
+      wasAirborne: p.airborne,
+    };
     animState.set(p.id, st);
   }
   const groundSpeed = Math.hypot(p.vel.x, p.vel.y);
@@ -382,6 +401,18 @@ export function drawPlayer(
         : 0.3;
   st.tilt = lerp(st.tilt, current.lean * tiltGain, k);
 
+  // Weight. Rising stretches the body, falling begins to gather it, and the
+  // instant the feet touch down it takes a hard compression that springs back
+  // out over the next few frames.
+  const landed = st.wasAirborne && !p.airborne;
+  st.wasAirborne = p.airborne;
+  if (landed) st.squash = -0.16;
+  const stretchTarget = p.airborne ? clamp(p.vertVel * 0.022, -0.05, 0.09) : 0;
+  st.squash = lerp(st.squash, stretchTarget, 1 - Math.exp(-14 * Math.max(0.0001, opts.dt)));
+  const stretchY = 1 + st.squash;
+  // Volume is conserved: what the body loses in height it gains in width.
+  const stretchX = 1 - st.squash * 0.55;
+
   // ---- geometry
   const facing = p.facing >= 0 ? 1 : -1;
   const [kit, trim] = colors;
@@ -431,7 +462,9 @@ export function drawPlayer(
   ctx.globalAlpha = 1 - clamp((p.pos.x + 4.5) / 9, 0, 1) * 0.09;
   ctx.translate(feet.x, feet.y);
   ctx.rotate(st.tilt * facing);
-  ctx.scale(facing, 1);
+  // Scaled about the feet, which is where the floor is: squashing about the
+  // centre would sink the shoes through it.
+  ctx.scale(facing * stretchX, stretchY);
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
 
@@ -830,17 +863,45 @@ export function drawPlayer(
   if (opts.charge > 0.05) drawChargeMeter(ctx, feet.x, feet.y - unit * 1.16, unit, opts.charge);
 }
 
-/** Soft elliptical shadow, tighter and darker the closer the player is to the floor. */
+/**
+ * The shadow under a player: a soft penumbra plus a tight contact core.
+ *
+ * One flat ellipse — which is what this was — is the 1990s answer, and it makes
+ * every figure look pasted onto the floor. Real overhead light gives a wide
+ * soft pool that barely darkens the wood and a small, much darker patch right
+ * where the shoes are, and it is that inner core the eye reads as contact. As
+ * the player rises the core fades out and the pool spreads, so a jump visibly
+ * leaves the ground instead of merely moving up the screen.
+ */
 export function drawPlayerShadow(ctx: CanvasRenderingContext2D, cam: Camera, p: Player): void {
   const s = cam.projectFloor(p.pos.x, p.pos.y);
   const lift = clamp(p.height / 1.4, 0, 1);
-  const rx = 0.42 * s.scale * 42 * (1 + lift * 0.5);
+  const u = s.scale * 42;
+  const rx = 0.42 * u * (1 + lift * 0.85);
+
   ctx.save();
-  ctx.globalAlpha = 0.3 * (1 - lift * 0.55);
-  ctx.fillStyle = '#0a1408';
+  // Penumbra: wide, soft, and it survives the jump.
+  const soft = ctx.createRadialGradient(s.x, s.y, u * 0.05, s.x, s.y, rx);
+  soft.addColorStop(0, `rgba(10,20,8,${0.26 * (1 - lift * 0.5)})`);
+  soft.addColorStop(1, 'rgba(10,20,8,0)');
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.scale(1, 0.32);
+  ctx.translate(-s.x, -s.y);
+  ctx.fillStyle = soft;
   ctx.beginPath();
-  ctx.ellipse(s.x, s.y, rx, rx * 0.3, 0, 0, Math.PI * 2);
+  ctx.arc(s.x, s.y, rx, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
+
+  // Contact core: small and dark, and gone the moment the feet leave the floor.
+  if (lift < 0.5) {
+    ctx.globalAlpha = 0.42 * (1 - lift * 2);
+    ctx.fillStyle = '#071006';
+    ctx.beginPath();
+    ctx.ellipse(s.x, s.y, u * 0.2, u * 0.062, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
