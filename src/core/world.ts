@@ -128,7 +128,16 @@ export class World {
   private crossedNetSign = 0;
   private antennaFaultSide: Side | null = null;
   /** True between the serve contact and the ball crossing the net. */
-  private serveInFlight = false;
+  private serveInFlightFlag = false;
+
+  /**
+   * True while a served ball is still on its way and untouched. Public because
+   * the AI has to know not to block it — blocking a serve is a fault — and the
+   * tests have to be able to prove that it never does.
+   */
+  get serveInFlight(): boolean {
+    return this.serveInFlightFlag;
+  }
   /** Whether the most recent touch was a block (blocks are free touches). */
   lastTouchWasBlock = false;
   /** Serve phase: ball in hand, or tossed and waiting for the strike. */
@@ -234,7 +243,7 @@ export class World {
     this.lastToucherSide = null;
     this.crossedNetSign = 0;
     this.antennaFaultSide = null;
-    this.serveInFlight = false;
+    this.serveInFlightFlag = false;
     this.lastTouchWasBlock = false;
     this.rallyTime = 0;
     this.aimTarget = null;
@@ -299,6 +308,19 @@ export class World {
       // Human-steered player only: the AI decides its own jumps, and letting
       // this rule fire for all six sent the whole team into the air whenever
       // they meant to pass.
+      //
+      // But only for the two things you actually leave the floor to do:
+      // attacking, and blocking. A reception is played with both feet on the
+      // ground — it is not a shot you can make in the air at all — and this
+      // rule was firing on every high ball, so pressing to pass a serve
+      // launched the passer into a mid-air set instead.
+      const attacking = this.possession === p.side && this.touches >= MAX_TOUCHES - 1;
+      const blocking =
+        this.possession !== p.side &&
+        Math.abs(this.ball.pos.y) < 2.2 &&
+        Math.abs(p.pos.y) < 2.2 &&
+        // Blocking a serve is a fault, so the jump is simply not offered.
+        !this.serveInFlight;
       if (
         cmd.actionPressed &&
         human !== null &&
@@ -307,12 +329,13 @@ export class World {
         !p.airborne &&
         p.canAct &&
         this.phase === 'rally' &&
+        (attacking || blocking) &&
         !canReach(p, this.ball) &&
         this.ball.pos.z > 1.9 &&
         distXY(p.pos, this.ball.pos) < 3.2
       ) {
         p.jump();
-        if (this.possession !== p.side && Math.abs(p.pos.y) < 2.2) p.setAnim('block');
+        if (blocking) p.setAnim('block');
       }
 
       // On the ground the jump button jumps; in the air it calls for a Lethal
@@ -562,7 +585,7 @@ export class World {
     server.swing = 0.3;
     server.setAnim('spike');
     this.registerTouch(server, 'serve', res.speed);
-    this.serveInFlight = true;
+    this.serveInFlightFlag = true;
     this.aimTarget = res.target;
     this.phase = 'rally';
     this.phaseTimer = 0;
@@ -636,6 +659,12 @@ export class World {
     let best: { player: Player; quality: number } | null = null;
     for (const p of this.allPlayers()) {
       if (!canReach(p, this.ball)) continue;
+      // A dig or a pass is played off the floor. Nobody bumps a ball in
+      // mid-air: the shot needs a platform and a base under it, and a player
+      // floating past one looked like the ball was being swatted rather than
+      // received. Attacking, setting and blocking are unaffected — those are
+      // exactly the contacts you leave the ground for.
+      if (p.airborne && !p.diving && this.groundedTouchOnly(p)) continue;
       // A player may never play the ball twice in a row. Blocks are exempt:
       // after blocking you are allowed to be the next one to touch it.
       if (p.id === this.lastToucherId && !this.lastTouchWasBlock) continue;
@@ -751,14 +780,24 @@ export class World {
   }
 
   /** Decide what kind of contact this is from the game situation. */
+  /**
+   * True when this contact would be a pass or a dig, which has to be made with
+   * both feet on the floor.
+   */
+  private groundedTouchOnly(p: Player): boolean {
+    const kind = this.classifyContact(p, this.team(p.side));
+    return kind === 'bump';
+  }
+
   private classifyContact(p: Player, team: Team): ContactKind {
     const ballOnMySide = attackDir(p.side) > 0 ? this.ball.pos.y < 0 : this.ball.pos.y > 0;
     const nearNet = Math.abs(this.ball.pos.y) < 1.1;
     const high = this.ball.pos.z > NET_HEIGHT - 0.1;
 
     // Reaching over/at the net while the ball is still on the opponent's side
-    // and coming towards us is a block, and blocks are free touches.
-    if (!ballOnMySide && nearNet && high && p.airborne) return 'block';
+    // and coming towards us is a block, and blocks are free touches. Never on a
+    // serve: blocking one is a fault, so there is no such contact to make.
+    if (!ballOnMySide && nearNet && high && p.airborne && !this.serveInFlight) return 'block';
 
     if (this.possession !== p.side) return 'bump';
 
@@ -849,7 +888,7 @@ export class World {
       this.antennaFaultSide = this.lastToucherSide;
     }
 
-    this.serveInFlight = false;
+    this.serveInFlightFlag = false;
     // Every exchange over the net feeds both sides a little, so long rallies
     // build towards a Lethal Maneuver for whoever survives them.
     if (this.lastToucherSide) this.awardPower(this.lastToucherSide, POWER_GAIN.rally);

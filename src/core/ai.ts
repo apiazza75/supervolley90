@@ -520,6 +520,12 @@ export class TeamBrain {
     // the ball to travel towards us means waiting until after the swing, which
     // is exactly one jump too late.
     const theirSide = ball.pos.y * dir > 0;
+    // Blocking a serve is a fault, so the block simply stays down for one.
+    if (w.serveInFlight) {
+      s.wantsAction = false;
+      s.holdAction = false;
+      return;
+    }
     const strikeZone =
       theirSide &&
       Math.abs(ball.pos.y) < 3.0 &&

@@ -351,7 +351,13 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
   // reach is the hard part and is what should be rewarded; a charge meter on
   // top of it asked the player to fill a bar during a jump that was already
   // over. `charge` survives only for the serve.
-  const charge = clamp(0.35 + 0.65 * q, 0, 1);
+  //
+  // And it has to be EARNED. Mapped straight through, a thoroughly ordinary
+  // contact scored 0.72 and came out at 0.82 of full power, so almost every
+  // swing was a rocket and almost every rally ended on the first attack. Only
+  // the top of the quality band now produces a full-blooded spike; below it
+  // the ball comes over as a controlled drive that a defence can read.
+  const charge = clamp((q - 0.62) / 0.34, 0, 1);
 
   // A tip is what you get when the ball is not above the net line: it drops
   // just behind the block.
@@ -377,7 +383,7 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
   target.x = clamp(target.x + s.x, -COURT_HALF_WIDTH - 0.9, COURT_HALF_WIDTH + 0.9);
   target.y += s.y;
 
-  const power = lerp(17, 30, charge) * (0.8 + 0.4 * player.stats.power) * (0.75 + 0.35 * q);
+  const power = lerp(13.5, 30, charge) * (0.8 + 0.4 * player.stats.power) * (0.75 + 0.35 * q);
   // A hitter well above the tape may drive the ball down through it — that is
   // the shot. A hitter barely at net height gets the launch lifted just enough
   // to clear, instead of burying a third of all attacks in the net.

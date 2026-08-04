@@ -336,6 +336,56 @@ describe('match simulation', () => {
     expect(inTheNet / (samples * 12)).toBeLessThan(0.02);
   });
 
+  it('never leaves the floor to pass, and never blocks a serve', () => {
+    // A human mashing the button, which is exactly how the rules got broken:
+    // the press-to-jump shortcut fired on any high ball, so trying to pass a
+    // serve launched the passer into a mid-air set.
+    const world = new World({
+      home: TEAMS[0],
+      away: TEAMS[1],
+      seed: 21,
+      difficulty: 1,
+      humanControlsHome: true,
+    });
+    const mash = () => ({
+      moveX: 0,
+      moveY: 0,
+      actionPressed: true,
+      actionHeld: true,
+      jumpPressed: false,
+      aim: { x: 0, depth: 0.4 },
+    });
+
+    let bumps = 0;
+    let airborneBumps = 0;
+    let serveBlocks = 0;
+    const airborne = new Map<number, boolean>();
+
+    for (let i = 0; i < 120 * 60 * 5; i++) {
+      const duringServe = world.serveInFlight;
+      world.step(mash());
+      // Read the bodies AFTER the step: contacts are resolved at the end of it,
+      // so a player sampled beforehand may well have landed in between — which
+      // is how this test first accused the game of three fouls it never made.
+      airborne.clear();
+      for (const p of world.allPlayers()) airborne.set(p.id, p.airborne && !p.diving);
+      for (const ev of world.drainEvents()) {
+        if (ev.type !== 'contact') continue;
+        if (ev.kind === 'bump') {
+          bumps++;
+          if (airborne.get(ev.playerId)) airborneBumps++;
+        }
+        if (ev.kind === 'block' && duringServe) serveBlocks++;
+      }
+    }
+
+    expect(bumps).toBeGreaterThan(25);
+    // A pass or a dig needs a platform and a base under it.
+    expect(airborneBumps).toBe(0);
+    // Blocking a serve is a fault, so it must not be possible to make one.
+    expect(serveBlocks).toBe(0);
+  });
+
   it('fields a libero who never serves and never plays the front row', () => {
     const world = makeWorld(21);
     let seen = 0;

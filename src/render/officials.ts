@@ -126,8 +126,19 @@ export class Officials {
     }
     if (!best) return;
     best.state = 'fetch';
-    best.targetX = Math.max(-COURT_HALF_WIDTH - 2.2, Math.min(COURT_HALF_WIDTH + 2.2, x));
-    best.targetY = Math.max(-COURT_HALF_LENGTH - 2.2, Math.min(COURT_HALF_LENGTH + 2.2, y));
+    // Never onto the court.
+    //
+    // A kid sent straight to where the ball stopped walked across the playing
+    // area, which no ball kid has ever done — they wait at the edge and the
+    // ball is passed out to them. So the fetch point is pushed to the nearest
+    // point of the free zone on the kid's own side of the court, and the kid
+    // reaches for it from there.
+    const outsideX =
+      Math.abs(x) > COURT_HALF_WIDTH
+        ? x
+        : Math.sign(best.homeX) * (COURT_HALF_WIDTH + 0.9);
+    best.targetX = Math.max(-COURT_HALF_WIDTH - 2.4, Math.min(COURT_HALF_WIDTH + 2.4, outsideX));
+    best.targetY = Math.max(-COURT_HALF_LENGTH - 2.4, Math.min(COURT_HALF_LENGTH + 2.4, y));
   }
 
   update(dt: number): void {

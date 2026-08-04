@@ -34,6 +34,8 @@ class Game {
   private readonly replay = new Replay();
   /** Set when something replay-worthy happened; fires once the rally is dead. */
   private pendingReplay: string | null = null;
+  /** Points played since the last replay, so they stay an event. */
+  private pointsSinceReplay = 99;
   private lastFrame = 0;
   private elapsed = 0;
   private hitStop = 0;
@@ -149,12 +151,26 @@ class Game {
         for (const ev of events) {
           if (ev.type === 'powerMove') {
             this.pendingReplay = ev.name;
-          } else if (ev.type === 'point' && ev.reason === 'kill' && ev.rallyLength > 5) {
+          } else if (
+            ev.type === 'point' &&
+            ev.reason === 'kill' &&
+            // A five-touch rally is just a rally — serve, pass, set, swing,
+            // dig — so this fired on nearly every point, and a replay you see
+            // every point is not a replay, it is an interruption. It now takes
+            // a genuinely long exchange, and a few points have to pass before
+            // another one is offered.
+            ev.rallyLength > 9 &&
+            this.pointsSinceReplay >= 5
+          ) {
             this.pendingReplay = this.pendingReplay ?? 'THE POINT';
           }
+          if (ev.type === 'point') this.pointsSinceReplay++;
         }
         if (this.pendingReplay && world.phase !== 'rally') {
-          if (this.replay.start(this.pendingReplay)) this.hitStop = 0;
+          if (this.replay.start(this.pendingReplay)) {
+            this.hitStop = 0;
+            this.pointsSinceReplay = 0;
+          }
           this.pendingReplay = null;
         }
         break;
