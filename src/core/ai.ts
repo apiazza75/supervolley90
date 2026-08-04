@@ -4,8 +4,6 @@ import { Vec3, clamp, copy, distXY, v3 } from './math3';
 import { Player } from './player';
 import { Rng } from './rng';
 import {
-  ATTACK_LINE,
-  COURT_HALF_LENGTH,
   COURT_HALF_WIDTH,
   GRAVITY,
   NET_HEIGHT,
@@ -13,6 +11,7 @@ import {
   attackDir,
   otherSide,
 } from './rules';
+import { attackSpot, defenceSpot, legalSpot, receptionSpot } from './tactics';
 import { Team } from './team';
 import type { Command, World } from './world';
 
@@ -191,9 +190,36 @@ export class TeamBrain {
       } else {
         s.job = 'idle';
         s.serveHold = 0;
-        s.goal = copy(p.home);
+        // The receiving team takes up a reception formation; the serving team
+        // spreads into its base defensive shape ready for the return.
+        s.goal = serving
+          ? legalSpot(p.side, defenceSpot(p, 0, [], false))
+          : legalSpot(p.side, receptionSpot(p, this.passers()));
       }
     }
+  }
+
+  /**
+   * The three players who take the serve.
+   *
+   * A three-passer reception: the two outsides and whoever is in the back
+   * middle, never the setter — who has to be free to run to the net — and
+   * never a front-row middle, who has to be free to hit the quick.
+   */
+  private passers(): number[] {
+    const eligible = this.team.players.filter(
+      (p) =>
+        p.role !== 'setter' &&
+        p.downTime <= 0 &&
+        !(p.role === 'middle' && this.team.isFrontRow(p)),
+    );
+    // Left to right across the court, so the reception line keeps its shape.
+    const dir = attackDir(this.team.side);
+    return eligible
+      .slice()
+      .sort((a, b) => a.home.x * dir - b.home.x * dir)
+      .slice(0, 3)
+      .map((p) => p.id);
   }
 
   /** Our side has the ball: pass, set, attack, everyone else covers. */
@@ -255,7 +281,8 @@ export class TeamBrain {
         s.goal = v3(this.plannedAttack.x, this.plannedAttack.y - dir * 1.3, 0);
       } else {
         s.job = 'cover';
-        s.goal = this.coverSpot(p, touches);
+        const hitter = this.team.get(attackerId) ?? null;
+        s.goal = legalSpot(p.side, attackSpot(p, hitter, w.ball.pos.x));
       }
     }
   }
@@ -339,7 +366,16 @@ export class TeamBrain {
       }
 
       s.job = 'cover';
-      s.goal = this.defensiveSpot(p);
+      const strong = Math.hypot(w.ball.vel.x, w.ball.vel.y) > 16 || Boolean(threat);
+      s.goal = legalSpot(
+        p.side,
+        defenceSpot(
+          p,
+          blockX,
+          blockers.slice(0, 2).map((b) => b.id),
+          strong,
+        ),
+      );
     }
   }
 
@@ -475,31 +511,7 @@ export class TeamBrain {
     return bestId;
   }
 
-  /** Where a non-involved attacker/cover player should stand while we build. */
-  private coverSpot(p: Player, touches: number): Vec3 {
-    const dir = attackDir(this.team.side);
-    const base = copy(p.home);
-    if (touches >= 1 && this.team.isFrontRow(p) && p.role !== 'setter') {
-      // Front-row players who are not hitting pull back to cover the tip.
-      base.y = -dir * 3.2;
-    }
-    return base;
-  }
 
-  /** Defensive shape: back row deep and wide, spare front player covers tips. */
-  private defensiveSpot(p: Player): Vec3 {
-    const dir = attackDir(this.team.side);
-    const w = this.world;
-    const base = copy(p.home);
-    if (!this.team.isFrontRow(p)) {
-      const bias = clamp(w.ball.pos.x * 0.35, -1.4, 1.4);
-      base.x = clamp(base.x + bias, -COURT_HALF_WIDTH + 0.4, COURT_HALF_WIDTH - 0.4);
-      base.y = -dir * clamp(COURT_HALF_LENGTH - 2.2, ATTACK_LINE + 0.6, COURT_HALF_LENGTH - 0.6);
-    } else {
-      base.y = -dir * 2.6;
-    }
-    return base;
-  }
 
   // ---------------------------------------------------------------- commands
 

@@ -1,7 +1,8 @@
 import { Vec3, copy } from './math3';
 import { Player, PlayerRole, PlayerStats, defaultStats, isFrontRow, slotPosition } from './player';
 import { Rng } from './rng';
-import { POWER_MAX, Side, TEAM_SIZE } from './rules';
+import { POWER_MAX, Side, TEAM_SIZE, attackDir } from './rules';
+import { SETTER_X, SETTER_Y } from './tactics';
 
 export interface TeamConfig {
   name: string;
@@ -167,8 +168,13 @@ export class Team {
   }
 
   /** Where the setter wants to receive the first ball. */
+  /**
+   * Where a pass should be delivered: to the setter's spot at the net, not to
+   * a fixed point in the middle of the court. The two have to agree, or every
+   * pass arrives where the setter is not.
+   */
   setterTarget(): Vec3 {
-    const dir = this.side === 'home' ? -1 : 1;
-    return { x: this.side === 'home' ? 1.5 : -1.5, y: dir * 1.9, z: 2.9 };
+    const dir = attackDir(this.side);
+    return { x: dir > 0 ? SETTER_X : -SETTER_X, y: -dir * (SETTER_Y + 0.7), z: 2.9 };
   }
 }
