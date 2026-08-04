@@ -45,9 +45,12 @@ const CROWD_HAIRS = ['#241a16', '#0f0d10', '#54341c', '#7d5326', '#332520', '#8d
 /** Where the stand starts, how deep it is, and how steeply it climbs. */
 const STAND_FRONT = COURT_HALF_WIDTH + 2.1;
 const STAND_ROWS = 8;
-const STAND_ROW_DEPTH = 0.58;
-const STAND_ROW_RISE = 0.24;
-const STAND_BASE_HEIGHT = 0.8;
+// Shallow rows, and shallower still now the width axis is drawn at twice the
+// scale: every metre of depth climbs the screen, so a stand built to real
+// spacing walks straight out of the top of the frame.
+const STAND_ROW_DEPTH = 0.3;
+const STAND_ROW_RISE = 0.13;
+const STAND_BASE_HEIGHT = 0.45;
 
 const rowDepth = (row: number): number => STAND_FRONT + row * STAND_ROW_DEPTH;
 const rowHeight = (row: number): number => STAND_BASE_HEIGHT + row * STAND_ROW_RISE;

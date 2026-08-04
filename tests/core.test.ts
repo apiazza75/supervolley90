@@ -298,4 +298,51 @@ describe('match simulation', () => {
     // ended with nobody coming for the ball — not a precision target.
     expect(dropped / points).toBeLessThan(0.1);
   });
+
+  it('keeps six players in six places instead of walking through each other', () => {
+    const world = makeWorld(21);
+    // Must match src/render/camera.ts: the flat side elevation compresses the
+    // court's width, so two players a metre apart across it are only 30 px
+    // apart on screen. A formation can be tactically right and still draw as a
+    // heap, which is exactly what happened, so the check is done in screen
+    // space rather than in metres.
+    const PIXELS_PER_METRE = 55;
+    const DEPTH_RISE = 30;
+    const BODY_PX = 46;
+
+    let pairs = 0;
+    let overlapping = 0;
+    let spread = 0;
+    let formations = 0;
+
+    for (let i = 0; i < 120 * 60 * 6; i++) {
+      world.step(null);
+      world.drainEvents();
+      if (i % 12 !== 0) continue;
+      if (world.phase !== 'rally' && world.phase !== 'serve') continue;
+
+      for (const side of ['home', 'away'] as const) {
+        const team = world.team(side).players;
+        const rows = team.map((p) => -p.pos.x * DEPTH_RISE);
+        spread += Math.max(...rows) - Math.min(...rows);
+        formations++;
+        for (let a = 0; a < team.length; a++) {
+          for (let b = a + 1; b < team.length; b++) {
+            const dx = (team[a].pos.y - team[b].pos.y) * PIXELS_PER_METRE;
+            const dy = rows[a] - rows[b];
+            pairs++;
+            if (Math.hypot(dx, dy) < BODY_PX) overlapping++;
+          }
+        }
+      }
+      if (world.phase === 'matchOver') break;
+    }
+
+    expect(formations).toBeGreaterThan(500);
+    // Was 6.9% before the separation term and the widened tactical lanes.
+    expect(overlapping / pairs).toBeLessThan(0.03);
+    // And the six of them have to be spread across the court, not stacked in
+    // the middle of it: a team used to occupy 119 px of the 270 px available.
+    expect(spread / formations).toBeGreaterThan(150);
+  });
 });

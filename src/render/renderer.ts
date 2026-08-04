@@ -8,7 +8,6 @@ import { Arena } from './arena';
 import { Camera } from './camera';
 import { Effects } from './fx';
 import { Officials } from './officials';
-import { Scoreboard } from './scoreboard';
 import { drawActiveRing, drawPlayer, drawPlayerShadow, shade } from './players';
 import { INTRO as REPLAY_INTRO, type ReplayFrame } from '../game/replay';
 
@@ -27,7 +26,6 @@ export class Renderer {
   readonly effects = new Effects();
   private readonly arena = new Arena();
   private readonly officials = new Officials();
-  private readonly scoreboard = new Scoreboard();
   private readonly rng = new Rng(0xbadc0de);
   private readonly rand = () => this.rng.next();
 
@@ -196,9 +194,8 @@ export class Renderer {
     ctx.clearRect(0, 0, cam.viewWidth, cam.viewHeight);
     this.arena.update(dt);
     this.arena.drawBackground(ctx, cam, time);
-    this.scoreboard.draw(ctx, cam, world, time);
     this.officials.update(dt);
-    this.officials.drawFar(ctx, cam);
+    this.officials.drawFar(ctx, cam, time, dt);
     this.effects.drawFloor(ctx, cam);
 
     const drawables: { depth: number; draw: () => void }[] = [];
@@ -221,7 +218,7 @@ export class Renderer {
     drawables.sort((a, b) => b.depth - a.depth);
     for (const d of drawables) d.draw();
 
-    this.officials.drawNear(ctx, cam);
+    this.officials.drawNear(ctx, cam, time, dt);
 
     const ballPos = { x: frame.ball.x, y: frame.ball.y, z: frame.ball.z };
     this.drawBall({ pos: ballPos, vel: { x: 0, y: 0, z: 0 }, roll: frame.ball.roll } as Ball);
@@ -314,14 +311,12 @@ export class Renderer {
     ctx.clearRect(0, 0, cam.viewWidth, cam.viewHeight);
     this.arena.update(dt);
     this.arena.drawBackground(ctx, cam, state.time);
-    this.scoreboard.update(world, dt);
-    this.scoreboard.draw(ctx, cam, world, state.time);
     if (world.phase === 'serve' && this.lastPhase !== 'serve') {
       this.officials.authoriseServe(world.servingSide);
     }
     this.lastPhase = world.phase;
     this.officials.update(dt);
-    this.officials.drawFar(ctx, cam);
+    this.officials.drawFar(ctx, cam, state.time, dt);
 
     this.effects.drawFloor(ctx, cam);
     this.drawLandingMarker(world);
@@ -366,7 +361,7 @@ export class Renderer {
     for (const d of drawables) d.draw();
 
     // Near-side officials sit in front of the play, as they do from this angle.
-    this.officials.drawNear(ctx, cam);
+    this.officials.drawNear(ctx, cam, state.time, dt);
 
     this.effects.draw(ctx, cam);
     this.drawVignette(ctx, cam);

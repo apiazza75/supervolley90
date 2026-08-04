@@ -25,11 +25,17 @@ const PIXELS_PER_METRE = 55;
  * the arcade original shows. An earlier version sheared width diagonally to
  * give the net visible area; that read as an angled 3D scene and was wrong.
  *
- * The ratio to PIXELS_PER_METRE matters: the arcade original compresses the
- * court's 9 m of depth into a shallow band — roughly a tenth of the court's
- * on-screen length — so depth reads as a hint, not as a receding plane.
+ * The ratio to PIXELS_PER_METRE matters, and getting it too small was a real
+ * mistake. At 15 px/m the court's 9 m of width collapsed into a 135 px band —
+ * shorter than a player is tall. Six players in a correct volleyball formation,
+ * which spreads across the WIDTH, then all landed within one body-height of
+ * each other and simply overlapped: the team looked like a crowd bumping into
+ * itself no matter how good the tactics driving it were. At 30 px/m the same
+ * formation occupies 270 px and every role is separately visible, while the
+ * projection stays exactly as flat: nothing converges, lines stay horizontal,
+ * and the net is still a vertical post.
  */
-const DEPTH_RISE = 15;
+const DEPTH_RISE = 30;
 /**
  * How much smaller the far sideline is drawn than the near one. Applied to
  * sprite size only, never to position, so court lines stay exactly parallel.
@@ -78,7 +84,11 @@ export class Camera {
 
   /** Screen row that the court centre line sits on. */
   private get baseline(): number {
-    return this.viewHeight * 0.72;
+    // Raised from 0.72 once the width axis was drawn at twice the scale: the
+    // court is now a much taller band on screen, and at the old baseline its
+    // near sideline — and everyone standing behind it — ran off the bottom of
+    // the frame into the control hints.
+    return this.viewHeight * 0.66;
   }
 
   follow(ballPos: Vec3, dt: number): void {
