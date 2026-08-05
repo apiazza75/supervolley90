@@ -386,6 +386,66 @@ describe('match simulation', () => {
     expect(serveBlocks).toBe(0);
   });
 
+  it('never plays the ball across the net, and never gets a fourth touch', () => {
+    const world = new World({
+      home: TEAMS[0],
+      away: TEAMS[1],
+      seed: 21,
+      difficulty: 1,
+      humanControlsHome: true,
+    });
+    const mash = () => ({
+      moveX: 0,
+      moveY: 0,
+      actionPressed: true,
+      actionHeld: true,
+      jumpPressed: false,
+      aim: { x: 0, depth: 0.4 },
+    });
+
+    let reachOvers = 0;
+    let longestRun = 0;
+    let run = 0;
+    let runSide = '';
+    let contacts = 0;
+
+    for (let i = 0; i < 120 * 60 * 6; i++) {
+      world.step(mash());
+      for (const ev of world.drainEvents()) {
+        if (ev.type === 'point') {
+          run = 0;
+          runSide = '';
+          continue;
+        }
+        if (ev.type !== 'contact') continue;
+        contacts++;
+        // A block is the one contact allowed to meet the ball over the tape,
+        // and it is a free touch, so it breaks the run rather than joining it.
+        if (ev.kind === 'block') {
+          run = 0;
+          runSide = '';
+          continue;
+        }
+        // `at.y` positive means the ball is in the away half; a side may only
+        // play it on its own side. Reaching across scooped balls out of the
+        // opponent's court AND handed the team an extra touch, because the
+        // ball had never changed hands.
+        const dir = ev.side === 'home' ? 1 : -1;
+        if (ev.at.y * dir > 0.05) reachOvers++;
+        if (ev.side === runSide) run++;
+        else {
+          runSide = ev.side;
+          run = 1;
+        }
+        longestRun = Math.max(longestRun, run);
+      }
+    }
+
+    expect(contacts).toBeGreaterThan(150);
+    expect(reachOvers).toBe(0);
+    expect(longestRun).toBeLessThanOrEqual(3);
+  });
+
   it('fields a libero who never serves and never plays the front row', () => {
     const world = makeWorld(21);
     let seen = 0;

@@ -408,9 +408,16 @@ export function drawPlayer(
   // How much of the pose's lean becomes whole-body rotation. Standing poses
   // only hint at it; a dive or a floor sprawl commits fully, laying the body
   // out flat, and the airborne spike rotates enough that the arch reads.
+  // A body sliding on the floor stays laid out; one that has stopped gathers
+  // itself up. Without this the figure snapped upright the instant the dive
+  // touched down, which is what turned the best animation in the game into a
+  // flicker.
+  const sliding = (p as { sliding?: number }).sliding ?? 0;
   const tiltGain =
     animKey === 'dive' || animKey === 'down'
-      ? 0.8
+      ? sliding > 0
+        ? 0.95
+        : 0.8
       : animKey === 'spikeCock' || animKey === 'spikeHit'
         ? 0.55
         : 0.3;

@@ -67,14 +67,19 @@ export function contactRadius(p: Player, ball?: Ball): number {
   // tactic into a wall and cuts the average rally by a quarter. Hitting past
   // the block has to be possible, or there is no reason to aim.
   const blocking = p.airborne && p.anim === 'block' && Math.abs(p.pos.y) < 1.3;
-  const base = PLAYER_RADIUS + (p.diving ? 1.3 : blocking ? 0.42 : 0.95);
+  const base = PLAYER_RADIUS + (p.diving ? 1.15 : blocking ? 0.42 : 0.95);
   if (!ball) return base;
   // A ball travelling at thirty metres a second cannot be casually scooped
   // from a metre and a half away. Reach shrinks with pace, which is what makes
   // a hard attack an actual weapon: with a flat radius, a full-power spike was
   // dug as easily as a free ball and rallies ran on forever.
-  const pace = clamp((Math.hypot(ball.vel.x, ball.vel.y, ball.vel.z) - 15) / 18, 0, 1);
-  return base * (1 - 0.42 * pace);
+  //
+  // Retuned when the earned-power curve landed: with 65% of all attacks being
+  // dug up, rallies ran to ten touches and a well-struck spike was worth no
+  // more than a push. The ramp now starts sooner and bites harder, so pace is
+  // genuinely the thing that beats a defender.
+  const pace = clamp((Math.hypot(ball.vel.x, ball.vel.y, ball.vel.z) - 12) / 16, 0, 1);
+  return base * (1 - 0.55 * pace);
 }
 
 /** Vertical window in which a player can play the ball. */
@@ -177,7 +182,8 @@ export function performServe(ctx: StrikeContext): StrikeResult {
   // cue: meeting the ball at full stretch above the head is a rocket, catching
   // it late and low is a serve you got away with.
   if (player.airborne) {
-    const q = contactQuality(player, ball);
+    // Both halves again: what the player loaded, and how well they met it.
+    const q = clamp(contactQuality(player, ball) * (0.45 + 0.55 * charge), 0, 1);
     // The serve goes where the server is. Aiming purely from the stick meant
     // every jump serve from every spot on the line flew the same corridor;
     // standing wide now sends the ball down that side unless the aim pulls it
@@ -207,11 +213,11 @@ export function performServe(ctx: StrikeContext): StrikeResult {
     // to start the search shorter — which is where the pace comes from, and
     // what makes the timing cue worth hitting.
     const FLIGHTS = [0.62, 0.7, 0.78, 0.86, 0.95, 1.05, 1.2];
-    // Contact quality dials the pace continuously — meeting the ball at full
-    // stretch starts the search at the flattest flight, a scooped contact
-    // starts it two steps safer — so how you time the strike is how you dose
-    // the power.
-    const first = Math.min(3, Math.round((1 - clamp((q - 0.45) / 0.5, 0, 1)) * 3));
+    // Power dials the pace continuously — a loaded serve met at full stretch
+    // starts the search at the flattest, fastest flight; anything less starts
+    // safer. This is where holding the button and hitting on the cue both cash
+    // out, and it is the whole reason to do either.
+    const first = Math.min(4, Math.round((1 - clamp((q - 0.3) / 0.6, 0, 1)) * 4));
     for (let i = first; i < FLIGHTS.length; i++) {
       const flight = FLIGHTS[i];
       const vel = aimThroughSpin(
@@ -238,7 +244,9 @@ export function performServe(ctx: StrikeContext): StrikeResult {
     return { kind: 'serve', target, speed: Math.hypot(safe.x, safe.y, safe.z) };
   }
 
-  const flight = lerp(1.5, 1.05, charge);
+  // Standing serve: the charge decides between a slow, safe, loopy float and a
+  // driven one that skims the tape.
+  const flight = lerp(1.6, 1.0, charge);
   // A floater is lobbed safely over; a driven serve skims the tape and can
   // catch it. The clearance the solver guarantees shrinks as power goes up.
   const vel = solveArcOverNet(from, target, lerp(0.5, 0.22, charge), flight, 2.2);
@@ -422,7 +430,7 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
   target.x = clamp(target.x + s.x, -COURT_HALF_WIDTH - 0.9, COURT_HALF_WIDTH + 0.9);
   target.y += s.y;
 
-  const power = lerp(13.5, 30, charge) * (0.8 + 0.4 * player.stats.power) * (0.75 + 0.35 * q);
+  const power = lerp(18.5, 30, charge) * (0.8 + 0.4 * player.stats.power) * (0.75 + 0.35 * q);
   // A hitter well above the tape may drive the ball down through it — that is
   // the shot. A hitter barely at net height gets the launch lifted just enough
   // to clear, instead of burying a third of all attacks in the net.

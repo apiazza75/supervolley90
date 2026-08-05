@@ -79,6 +79,8 @@ export class Player {
   cheerTime = 0;
   /** Set during a dive; adds reach and forward momentum. */
   diving = false;
+  /** Seconds of floor slide remaining after a dive lands. */
+  sliding = 0;
   /** Non-zero right after a successful hit, used for the arm-swing pose. */
   swing = 0;
   /** Stamina-free arcade "charge" built up while the action button is held. */
@@ -165,10 +167,11 @@ export class Player {
   knockDown(duration = 0.85): void {
     this.downTime = Math.max(this.downTime, duration);
     this.diving = false;
+    this.sliding = 0.3;
     this.height = 0;
     this.vertVel = 0;
-    this.vel.x *= 0.2;
-    this.vel.y *= 0.2;
+    this.vel.x *= 0.55;
+    this.vel.y *= 0.55;
     this.setAnim('down');
   }
 
@@ -253,6 +256,11 @@ export class Player {
     } else if (this.diving) {
       this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * 0.55 * dt);
       this.vel.y = approach(this.vel.y, 0, PLAYER_FRICTION * 0.55 * dt);
+    } else if (this.sliding > 0) {
+      // Skidding along the floor: friction, but far less than standing on it.
+      this.sliding = Math.max(0, this.sliding - dt);
+      this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * 0.9 * dt);
+      this.vel.y = approach(this.vel.y, 0, PLAYER_FRICTION * 0.9 * dt);
     }
 
     this.pos.x += this.vel.x * dt;
@@ -268,7 +276,13 @@ export class Player {
         this.vertVel = 0;
         this.specialArmed = false;
         if (this.diving) {
-          this.downTime = Math.max(this.downTime, 0.32);
+          // Landing from a dive is a SLIDE, not a stop. Killing the run the
+          // instant the body touched the floor made the most spectacular thing
+          // in the sport end in a thud; carrying the momentum and bleeding it
+          // off against the floor is what makes it read as a dive at all.
+          this.diving = false;
+          this.sliding = 0.42;
+          this.downTime = Math.max(this.downTime, 0.5);
           this.setAnim('down');
         } else {
           this.lockout = Math.max(this.lockout, LANDING_LOCK);

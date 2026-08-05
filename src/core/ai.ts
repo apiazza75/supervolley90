@@ -500,8 +500,17 @@ export class TeamBrain {
     const reachable = gap < p.runSpeed * Math.max(0.05, timeToLand) + 0.9;
 
     // A ball that will drop out of reach is worth a dive.
-    if (!reachable && gap < 4.0 && timeToLand < 0.7 && !p.airborne && p.canAct) {
-      if (this.rng.chance(0.08 + this.difficulty * 0.05)) {
+    //
+    // The old gate rolled a 13% chance every step, but only inside a window
+    // that lasted a handful of steps, so a defender who could ONLY save the
+    // ball by going to the floor usually just watched it land — and the dive,
+    // the single most spectacular thing in the sport, showed up about once and
+    // a half a rally. A ball that is genuinely unreachable standing up is not
+    // a coin toss: you go, and how far you commit is what varies.
+    const desperate = !reachable && gap < 4.6 && timeToLand < 0.85;
+    if (desperate && !p.airborne && p.canAct && p.height <= 0.02) {
+      const worthIt = gap > p.runSpeed * Math.max(0.05, timeToLand) + 0.35;
+      if (worthIt && this.rng.chance(0.55 + this.difficulty * 0.2)) {
         p.dive(s.goal.x - p.pos.x, s.goal.y - p.pos.y);
       }
     }
@@ -614,7 +623,11 @@ export class TeamBrain {
     // leaving the floor together — judged apart, the second one waited for its
     // own read, arrived a beat late and stayed down, which is why a block was
     // almost always a single.
-    const withLead = blockIndex > 0 && lead !== undefined && lead.airborne && lead.vertVel > -1;
+    // The partner goes with the lead blocker for the whole of the lead's rise,
+    // not only while it is still going up: judged against `vertVel > -1` the
+    // window was a couple of frames wide, so the second man missed it more
+    // often than not and the block stayed a single.
+    const withLead = blockIndex > 0 && lead !== undefined && lead.airborne && lead.height > 0.1;
     const cue = strikeZone || withLead;
 
     // Mirroring the lead blocker is not a decision to be dithered over: when

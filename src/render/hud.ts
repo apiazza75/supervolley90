@@ -188,12 +188,12 @@ export class Hud {
     const lines =
       world.phase === 'serve'
         ? [
-            `${a} tap: toss · ${a} again when the ball turns RED: jump serve`,
-            `${a} held: underarm serve — the longer you hold, the harder`,
+            `HOLD ${a} to load power, release to toss`,
+            `${a} again when the ball turns RED — the better the timing, the harder`,
             '→ deep · ← short · ↑↓ pick the sideline',
           ]
         : [
-            `${a} tap: jump · ${a} again in the air: spike`,
+            `${a} tap: jump · ${a} again in the air: spike · at the net: BLOCK`,
             `${a} when the ball turns RED: play it`,
             ready
               ? `GAUGE FULL — jump, then ${b} in the air for a LETHAL MANEUVER!`

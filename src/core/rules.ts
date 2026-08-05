@@ -97,7 +97,7 @@ export const SERVE_APPROACH = 0.2;
  * slower than real time, because at 1.0 the exchanges around the net came and
  * went faster than a player could read them.
  */
-export const GAME_SPEED = 0.87;
+export const GAME_SPEED = 0.95;
 
 /** Fixed simulation timestep (120 Hz) — rendering interpolates between steps. */
 export const FIXED_DT = 1 / 120;

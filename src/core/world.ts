@@ -144,6 +144,15 @@ export class World {
   private serveStage: 'hold' | 'toss' = 'hold';
   /** How long the action button has been held with the ball still in hand. */
   private serveHold = 0;
+  /**
+   * Power dialled in before the toss, 0..1.
+   *
+   * The hold used to do nothing but choose an underarm serve, so how long you
+   * held the button had no bearing on how hard the ball was hit — which is
+   * exactly what it looks like it should do. Now it is the first half of the
+   * serve: hold to load, then meet the ball well to spend what you loaded.
+   */
+  private serveCharge = 0;
   private tossedAt = 0;
 
   /** How far into an underarm serve hold we are, 0..1. */
@@ -315,12 +324,16 @@ export class World {
       // rule was firing on every high ball, so pressing to pass a serve
       // launched the passer into a mid-air set instead.
       const attacking = this.possession === p.side && this.touches >= MAX_TOUCHES - 1;
+      // Blocking is a decision about WHERE YOU STAND, not about where the ball
+      // has got to. Gating the jump on the ball already being within 2.2 m of
+      // the net and 3.2 m of the player meant that pressing while the opponent
+      // was still setting — which is exactly when a blocker goes up — did
+      // nothing at all, and the block "often didn't jump when you pressed".
+      // Stand at the net with the opponent in possession, press, and you jump.
       const blocking =
-        this.possession !== p.side &&
-        Math.abs(this.ball.pos.y) < 2.2 &&
-        Math.abs(p.pos.y) < 2.2 &&
-        // Blocking a serve is a fault, so the jump is simply not offered.
-        !this.serveInFlight;
+        this.possession !== p.side && Math.abs(p.pos.y) < 2.4 && !this.serveInFlight;
+      const canCall =
+        blocking || (attacking && !canReach(p, this.ball) && this.ball.pos.z > 1.9 && distXY(p.pos, this.ball.pos) < 3.2);
       if (
         cmd.actionPressed &&
         human !== null &&
@@ -329,10 +342,7 @@ export class World {
         !p.airborne &&
         p.canAct &&
         this.phase === 'rally' &&
-        (attacking || blocking) &&
-        !canReach(p, this.ball) &&
-        this.ball.pos.z > 1.9 &&
-        distXY(p.pos, this.ball.pos) < 3.2
+        canCall
       ) {
         p.jump();
         if (blocking) {
@@ -531,12 +541,11 @@ export class World {
         server.releasedCharge = 0;
         server.charge = 0;
         server.actionBuffer = 0;
-        if (held > UNDERARM_HOLD) {
-          // Underarm serve: slow, safe, and aimed, with the power dosed by
-          // how long the button was down.
-          this.strikeServe(server, cmd, clamp((held - UNDERARM_HOLD) * 0.5, 0, 0.42));
-          return;
-        }
+        // How long the button was down IS the power. A flick is a safe float
+        // served off the floor; a full hold is a loaded jump serve. Either way
+        // the ball goes up and has to be met — the load only decides how much
+        // there is to spend.
+        this.serveCharge = clamp(held / UNDERARM_HOLD, 0, 1);
         this.ball.frozen = false;
         // Stand still to throw. Tossing while walking sent the ball wherever
         // the server happened to be running, and it could never be met.
@@ -560,16 +569,25 @@ export class World {
     // A press that arrives before the window opens is held, not thrown away,
     // so mistiming the swing by a fraction still produces a serve.
     if ((cmd.actionPressed || server.actionBuffer > 0) && this.serveStrikeReady) {
-      // Contact height decides the serve. 1.8 m is roughly a standing chest
-      // strike; full jumping reach pushes the charge towards 1.
-      const charge = clamp((this.ball.pos.z - 1.8) / 1.3, 0, 1);
-      this.strikeServe(server, cmd, charge);
+      // Both halves of the serve, multiplied: what was loaded before the toss,
+      // and how well the ball was met. Loading without meeting it produces
+      // nothing, and a perfect strike on an unloaded serve is a tidy float.
+      const timing = clamp((this.ball.pos.z - 1.8) / 1.3, 0, 1);
+      this.strikeServe(server, cmd, clamp(0.25 + 0.75 * this.serveCharge, 0, 1) * (0.45 + 0.55 * timing));
       return;
     }
 
     // The approach jump is the game's, not the player's: one press tosses,
     // one press hits, and the footwork happens on its own.
-    if (!server.airborne && server.canAct && this.phaseTimer - this.tossedAt > SERVE_APPROACH) {
+    // Only a loaded serve gets an approach jump. A soft one is played off the
+    // floor, which is what a float serve is, and it means the choice you made
+    // holding the button is visible before the ball is even struck.
+    if (
+      this.serveCharge > 0.4 &&
+      !server.airborne &&
+      server.canAct &&
+      this.phaseTimer - this.tossedAt > SERVE_APPROACH
+    ) {
       server.jump();
     }
     if (server.airborne && Math.abs(server.vel.y) < 0.2) {
@@ -679,6 +697,13 @@ export class World {
       // received. Attacking, setting and blocking are unaffected — those are
       // exactly the contacts you leave the ground for.
       if (p.airborne && !p.diving && this.groundedTouchOnly(p)) continue;
+      // You may not play the ball on the other side of the net. Only a block
+      // may meet it over the tape. Reaching across scooped balls out of the
+      // opponent's court, and because the ball never changed hands it also
+      // handed a team a fourth touch it should never have had.
+      if (this.ball.pos.y * attackDir(p.side) > 0.05 && this.classifyContact(p, this.team(p.side)) !== 'block') {
+        continue;
+      }
       // A player may never play the ball twice in a row. Blocks are exempt:
       // after blocking you are allowed to be the next one to touch it.
       if (p.id === this.lastToucherId && !this.lastTouchWasBlock) continue;

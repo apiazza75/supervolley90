@@ -279,7 +279,7 @@ function main(): void {
     const delay = 0.05 + (i / (ATTEMPTS - 1)) * 1.35;
     // Sweep the tap length too: 40 ms to 340 ms covers everything from a
     // flick to a deliberate press.
-    const hold = 0.04 + (i % 7) * 0.05;
+    const hold = 0.04 + (i % 8) * 0.115;
     results.push(attempt(11 + i * 7, delay, hold));
   }
 
@@ -340,6 +340,24 @@ function main(): void {
       `y ±${sd(landed.map((r) => r.landY)).toFixed(2)} m, ` +
       `speed ±${sd(served.map((r) => r.launchSpeed)).toFixed(1)} m/s`,
   );
+
+  // The control the player actually operates: how long the button was held
+  // before the toss. If this does not move the ball, the charge is a lie.
+  console.log('by how long the button was held before the toss:');
+  for (const [lo, hi, label] of [
+    [0, 0.18, 'flick        '],
+    [0.18, 0.36, 'short hold   '],
+    [0.36, 0.6, 'medium hold  '],
+    [0.6, 9, 'full load    '],
+  ] as [number, number, string][]) {
+    const b = served.filter((r) => r.hold >= lo && r.hold < hi);
+    if (!b.length) continue;
+    const air = b.filter((r) => r.jump && r.liftAtHit > 0.25).length;
+    console.log(
+      `  ${label} ${b.length} serves, ${mean(b.map((r) => r.launchSpeed)).toFixed(1)} m/s, ` +
+        `${mean(b.map((r) => r.crossTime)).toFixed(2)} s to cross, ${air} jumped`,
+    );
+  }
 
   const underarm = served.filter((r) => r.hold > 0.5);
   console.log(`served underarm (deliberate hold): ${underarm.length}`);
