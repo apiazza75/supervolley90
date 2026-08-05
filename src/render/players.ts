@@ -212,9 +212,18 @@ export interface PlayerDrawOptions {
 export const OUTLINE = 'rgba(18,16,28,0.85)';
 
 /**
- * Draw a limb segment as a tapered capsule, shaded across its width — lit on
- * the upper-left edge, falling to shadow on the lower-right — with an outline.
- * The cross-shading is what turns a flat sausage into something with volume.
+ * Draw a limb segment, shaded across its width and outlined.
+ *
+ * Not a capsule any more, and that is the point. A straight taper from one
+ * width to another is a stick: real limbs have a BELLY — the biceps sits in
+ * the upper third of the arm, the calf in the upper third of the shin, the
+ * quadriceps just below the hip — and the silhouette swells there and pulls
+ * in hard at the joint below. Drawn as tapers, twelve players read as twelve
+ * assemblies of rods however good the poses driving them are; drawn with the
+ * belly in the right place, the same poses read as bodies.
+ *
+ * `belly` is where along the segment the widest point sits (0 at the top,
+ * 1 at the bottom) and `swell` how much wider than the top it gets.
  */
 export function capsule(
   ctx: CanvasRenderingContext2D,
@@ -227,6 +236,8 @@ export function capsule(
   fill: string,
   outlineWidth: number,
   flat = false,
+  belly = 0.34,
+  swell = 0.12,
 ): void {
   const dx = x1 - x0;
   const dy = y1 - y0;
@@ -235,22 +246,36 @@ export function capsule(
   const ny = dx / len;
   const a = Math.atan2(dy, dx);
 
+  // The widest point, and its half-width.
+  const bx = x0 + dx * belly;
+  const by = y0 + dy * belly;
+  const wb = (Math.max(w0, w1) * (1 + swell)) / 2;
+
   ctx.beginPath();
+  // Round cap at the top joint.
   ctx.arc(x0, y0, w0 / 2, a + Math.PI / 2, a - Math.PI / 2);
-  ctx.lineTo(x1 - (nx * w1) / 2, y1 - (ny * w1) / 2);
+  // Down one side, through the belly, into the lower joint.
+  ctx.quadraticCurveTo(
+    bx - nx * wb * 1.06,
+    by - ny * wb * 1.06,
+    x1 - (nx * w1) / 2,
+    y1 - (ny * w1) / 2,
+  );
   ctx.arc(x1, y1, w1 / 2, a - Math.PI / 2, a + Math.PI / 2);
+  // And back up the other side.
+  ctx.quadraticCurveTo(bx + nx * wb * 1.06, by + ny * wb * 1.06, x0 + (nx * w0) / 2, y0 + (ny * w0) / 2);
   ctx.closePath();
 
   if (flat) {
     ctx.fillStyle = fill;
   } else {
-    const mx = (x0 + x1) / 2;
-    const my = (y0 + y1) / 2;
-    const w = Math.max(w0, w1) * 0.62;
-    const g = ctx.createLinearGradient(mx - nx * w, my - ny * w, mx + nx * w, my + ny * w);
-    g.addColorStop(0, shade(fill, 0.22));
-    g.addColorStop(0.55, fill);
-    g.addColorStop(1, shade(fill, -0.3));
+    // Across the belly, not the midpoint, so the highlight sits on the muscle.
+    const w = wb * 1.3;
+    const g = ctx.createLinearGradient(bx - nx * w, by - ny * w, bx + nx * w, by + ny * w);
+    g.addColorStop(0, shade(fill, 0.3));
+    g.addColorStop(0.32, shade(fill, 0.1));
+    g.addColorStop(0.62, fill);
+    g.addColorStop(1, shade(fill, -0.34));
     ctx.fillStyle = g;
   }
   ctx.fill();
@@ -587,23 +612,40 @@ export function drawPlayer(
       // Legs are bare skin — they are a volleyball player's, not a footballer's.
       // Painting them in the kit colour, as an earlier version did, fused torso,
       // shorts and legs into one solid block with no readable silhouette.
-      capsule(ctx, hipX, hipY, jx, jy, unit * 0.098, unit * 0.064, legFill, outline);
-      capsule(ctx, jx, jy, ex, ey, unit * 0.07, unit * 0.038, legFill, outline);
-      // The shorts leg, worn over the top of the thigh.
+      // Quadriceps just below the hip, calf in the upper third of the shin —
+      // the two most recognisable shapes on a human leg.
+      capsule(ctx, hipX, hipY, jx, jy, unit * 0.098, unit * 0.062, legFill, outline, false, 0.3, 0.16);
+      capsule(ctx, jx, jy, ex, ey, unit * 0.068, unit * 0.032, legFill, outline, false, 0.26, 0.22);
+      // The shorts leg: a straight-cut garment over the top of the thigh with
+      // a hem, and NO muscle belly — cloth does not have one, and letting it
+      // swell like a limb turned the shorts into a blob that swallowed the
+      // whole upper leg.
+      const hemX = lerp(hipX, jx, 0.34);
+      const hemY = lerp(hipY, jy, 0.34);
       capsule(
         ctx,
         hipX,
-        hipY - unit * 0.01,
-        lerp(hipX, jx, 0.34),
-        lerp(hipY, jy, 0.34),
-        unit * 0.112,
-        unit * 0.094,
+        hipY - unit * 0.012,
+        hemX,
+        hemY,
+        unit * 0.108,
+        unit * 0.1,
         shortsFill,
         outline,
+        false,
+        0.5,
+        0,
       );
+      // Hem line, so the garment ends rather than fading into the leg.
+      ctx.beginPath();
+      ctx.moveTo(hemX - unit * 0.05, hemY);
+      ctx.lineTo(hemX + unit * 0.05, hemY);
+      ctx.strokeStyle = shade(shortsFill, -0.35);
+      ctx.lineWidth = outline * 1.1;
+      ctx.stroke();
       // Knee pad — the volleyball player's badge.
       ctx.beginPath();
-      ctx.ellipse(jx, jy, unit * 0.035, unit * 0.03, 0, 0, Math.PI * 2);
+      ctx.ellipse(jx, jy, unit * 0.03, unit * 0.024, 0, 0, Math.PI * 2);
       ctx.fillStyle = '#dbd6cb';
       ctx.fill();
       ctx.lineWidth = outline * 0.8;
@@ -657,8 +699,8 @@ export function drawPlayer(
     const oy = shoulderY + unit * 0.012;
     const { jx, jy, ex, ey } = limbPoints(ox, oy, spec[0], spec[1], upperArm, foreArm);
     // Upper arm thicker at the biceps, forearm tapering to a slim wrist.
-    capsule(ctx, ox, oy, jx, jy, unit * 0.058, unit * 0.046, skin, outline);
-    capsule(ctx, jx, jy, ex, ey, unit * 0.048, unit * 0.032, skin, outline);
+    capsule(ctx, ox, oy, jx, jy, unit * 0.058, unit * 0.044, skin, outline, false, 0.32, 0.14);
+    capsule(ctx, jx, jy, ex, ey, unit * 0.05, unit * 0.028, skin, outline, false, 0.24, 0.18);
     // Deltoid cap and short sleeve over the top of the upper arm.
     capsule(
       ctx,
@@ -677,7 +719,11 @@ export function drawPlayer(
 
   // Far side first, so the body reads with depth.
   drawArm(current.armFar, -1, shade(kit, -0.22));
-  drawLeg(current.legFar, current.feet?.[0] ?? null, -1, shade(skin, -0.14), shade(trim, -0.2), '#dfe4ee');
+  // Shorts are lifted well clear of the second colour they are cut from. At
+  // the raw trim value both legs merged into one dark mass that swallowed the
+  // thighs and read as tights, not as a kit.
+  const shorts = shade(trim, 0.4);
+  drawLeg(current.legFar, current.feet?.[0] ?? null, -1, shade(skin, -0.14), shade(shorts, -0.16), '#dfe4ee');
 
   // ---- torso
   //
@@ -810,7 +856,7 @@ export function drawPlayer(
   }
 
   // Near side.
-  drawLeg(current.legNear, current.feet?.[1] ?? null, 1, skin, trim, '#f2f5fb');
+  drawLeg(current.legNear, current.feet?.[1] ?? null, 1, skin, shorts, '#f2f5fb');
   drawArm(current.armNear, 1, kit);
 
   // ---- head
