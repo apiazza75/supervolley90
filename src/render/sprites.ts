@@ -52,6 +52,19 @@ export interface SheetLayout {
    * top would launch the sprite twice as high as the physics says it is.
    */
   artHasLift: boolean;
+  /**
+   * Frames to skip, by index, because the drawing holds something other than
+   * the player.
+   *
+   * One block frame has the net drawn into it, attached to the hitter's hands,
+   * so it survives every filter as part of the figure and would appear on court
+   * beside the net the game draws for itself. It was briefly rejected by how
+   * wide it measured, but that margin was thin — 1.68 times the sheet's median
+   * against 1.54 for a genuine spike stride — and it stopped holding the moment
+   * the crop changed. Naming the frame is the honest way to say it: this one
+   * cell is not a pose.
+   */
+  skip?: number[];
 }
 
 // Measured off the drawn sheets with tools/measure-sheet.ts, not read off a
@@ -73,7 +86,7 @@ export const SHEETS: Record<SpriteAction, SheetLayout> = {
   idle: { ...GRID },
   approach: { ...GRID },
   spike: { ...GRID, artHasLift: true },
-  block: { ...GRID, artHasLift: true },
+  block: { ...GRID, artHasLift: true, skip: [16] },
   bump: { ...GRID },
   set: { ...GRID },
   dive: { ...GRID, artHasLift: true },
@@ -83,6 +96,20 @@ export const SHEETS: Record<SpriteAction, SheetLayout> = {
 };
 
 const SHEET_SCALE = 0.5;
+
+/**
+ * How much of a row has to be paper for it to count as inside the frame.
+ *
+ * Half was too strict. On the spike sheet the frames where the hitter is at
+ * full stretch put a head, a raised arm and the drawn ball on the same rows,
+ * which between them cover more than half the width — so the frame stopped
+ * growing just under the head and cropped it off, and the headless body was
+ * then scaled up to fill the missing height.
+ *
+ * There is room to be generous: a border or the floor plank is barely paper at
+ * all, so anything above roughly a third separates them from a busy row.
+ */
+const PAPER_FRAC = 0.3;
 
 export interface Frame {
   /** Source rectangle inside the keyed sheet canvas. */
@@ -288,79 +315,6 @@ function keyOut(
 }
 
 /**
- * Erase ruled lines.
- *
- * The cell borders do not vanish with the paper. Their anti-aliased shoulder
- * sits around RGB 170 — too dark to key, light enough to look like a scratch —
- * and because it runs into the figure somewhere along its length the shape
- * filter adopts it and carries it onto the court, where it shows as a pale
- * line ruled across the players.
- *
- * Position cannot tell it apart from the art, since the drawing reaches the
- * edges too, but proportion can: a border is long and one pixel thick, and
- * nothing in a human figure is. So a run that crosses most of the frame while
- * staying a few pixels thick is a border, whatever it is touching.
- */
-function eraseRules(
-  ctx: CanvasRenderingContext2D,
-  rx: number,
-  ry: number,
-  w: number,
-  h: number,
-): void {
-  const img = ctx.getImageData(rx, ry, w, h);
-  const d = img.data;
-  const opaque = (x: number, y: number): boolean => d[(y * w + x) * 4 + 3] >= 40;
-  const MAX_THICK = 4;
-  const kill: number[] = [];
-
-  // `horizontal` sweeps rows; otherwise columns. `along` is the direction the
-  // run travels, `across` the direction it is measured for thickness.
-  const sweep = (horizontal: boolean): void => {
-    const along = horizontal ? w : h;
-    const across = horizontal ? h : w;
-    const at = (a: number, b: number): [number, number] => (horizontal ? [a, b] : [b, a]);
-
-    for (let b = 0; b < across; b++) {
-      let a = 0;
-      while (a < along) {
-        if (!opaque(...at(a, b))) {
-          a++;
-          continue;
-        }
-        const start = a;
-        while (a < along && opaque(...at(a, b))) a++;
-        const len = a - start;
-        if (len < along * 0.6) continue;
-
-        // Thin everywhere along its length, or it belongs to the drawing.
-        let thickest = 0;
-        for (let s = start; s < a; s += Math.max(1, (len / 12) | 0)) {
-          let t = 0;
-          for (let k = -MAX_THICK; k <= MAX_THICK; k++) {
-            const [x, y] = at(s, b + k);
-            if (x < 0 || y < 0 || x >= w || y >= h) continue;
-            if (opaque(x, y)) t++;
-          }
-          thickest = Math.max(thickest, t);
-        }
-        if (thickest > MAX_THICK) continue;
-
-        for (let s = start; s < a; s++) {
-          const [x, y] = at(s, b);
-          kill.push(y * w + x);
-        }
-      }
-    }
-  };
-
-  sweep(true);
-  sweep(false);
-  for (const i of kill) d[i * 4 + 3] = 0;
-  ctx.putImageData(img, rx, ry);
-}
-
-/**
  * Keep only the biggest drawn shape in the frame, and erase the rest.
  *
  * What survives the paper strip is not only the player. Every cell carries its
@@ -474,7 +428,11 @@ function measure(
       count++;
     }
   }
-  return { top: count ? top : 0, bottom: count ? bottom : sh, centreX: count ? sum / count : sw / 2 };
+  return {
+    top: count ? top : 0,
+    bottom: count ? bottom : sh,
+    centreX: count ? sum / count : sw / 2,
+  };
 }
 
 /**
@@ -523,13 +481,13 @@ function paperInterior(
   // cannot leave the cell it started in.
   const mid = (y0 + y1) >> 1;
   let top = mid;
-  while (top > y0 && fracRow(top - 1) >= 0.5) top--;
+  while (top > y0 && fracRow(top - 1) >= PAPER_FRAC) top--;
   let bottom = mid;
-  while (bottom < y1 && fracRow(bottom + 1) >= 0.5) bottom++;
+  while (bottom < y1 && fracRow(bottom + 1) >= PAPER_FRAC) bottom++;
   let left = x0;
-  while (left < x1 && fracCol(left) < 0.5) left++;
+  while (left < x1 && fracCol(left) < PAPER_FRAC) left++;
   let right = x1;
-  while (right > left && fracCol(right) < 0.5) right--;
+  while (right > left && fracCol(right) < PAPER_FRAC) right--;
 
   // A couple of pixels off the top and sides. The row where paper meets border
   // is a blend of the two, light enough to pass as paper and dark enough to
@@ -557,11 +515,13 @@ function paperInterior(
  * sheet's own median defers to the nearest frame that is not, which costs a
  * little animation and never shows a monster.
  */
-function dropOutliers(frames: Frame[]): Frame[] {
+function dropOutliers(frames: Frame[], skip: number[]): Frame[] {
   const heights = frames.map((f) => f.footY - f.boxTop);
   const median = [...heights].sort((a, b) => a - b)[heights.length >> 1];
   if (!median) return frames;
-  const ok = heights.map((h) => h > median * 0.55 && h < median * 1.5);
+  const ok = heights.map(
+    (h, i) => h > median * 0.55 && h < median * 1.5 && !skip.includes(i),
+  );
   if (ok.every(Boolean) || !ok.some(Boolean)) return frames;
 
   return frames.map((f, i) => {
@@ -628,7 +588,6 @@ async function loadOne(url: string, layout: SheetLayout): Promise<Sheet | null> 
       if (!rect) continue;
       const { sx, sy, sw, sh } = rect;
       keyOut(ctx, sx, sy, sw, sh);
-      eraseRules(ctx, sx, sy, sw, sh);
       keepLargestBlob(ctx, sx, sy, sw, sh);
       const m = measure(ctx, sx, sy, sw, sh);
       frames.push({
@@ -667,7 +626,7 @@ async function loadOne(url: string, layout: SheetLayout): Promise<Sheet | null> 
   // the frames themselves were provably clean — measuring one found no wide
   // run of pixels in it anywhere. Give each frame empty space to bleed into
   // and there is nothing left to drag in.
-  const picked = dropOutliers(frames);
+  const picked = dropOutliers(frames, layout.skip ?? []);
   const gut = 3;
   const cellW = Math.ceil(Math.max(...picked.map((f) => f.sw)) * SHEET_SCALE) + gut * 2;
   const cellH = Math.ceil(Math.max(...picked.map((f) => f.sh)) * SHEET_SCALE) + gut * 2;
