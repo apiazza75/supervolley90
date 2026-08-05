@@ -401,7 +401,13 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
   // swing was a rocket and almost every rally ended on the first attack. Only
   // the top of the quality band now produces a full-blooded spike; below it
   // the ball comes over as a controlled drive that a defence can read.
-  const charge = clamp((q - 0.62) / 0.34, 0, 1);
+  //
+  // The band was too wide and the result was counted twice: the same contact
+  // quality drove `charge` AND multiplied the power again at the end, so a
+  // routine swing came out at 33 m/s and 69% of all spikes were at the top of
+  // the scale. Full power is now the top sliver of the band, and it is the
+  // only thing that sets the pace.
+  const charge = clamp((q - 0.79) / 0.19, 0, 1);
 
   // A tip is what you get when the ball is not above the net line: it drops
   // just behind the block.
@@ -430,7 +436,7 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
   target.x = clamp(target.x + s.x, -COURT_HALF_WIDTH - 0.9, COURT_HALF_WIDTH + 0.9);
   target.y += s.y;
 
-  const power = lerp(18.5, 30, charge) * (0.8 + 0.4 * player.stats.power) * (0.75 + 0.35 * q);
+  const power = lerp(16, 29, charge) * (0.88 + 0.24 * player.stats.power);
   // A hitter well above the tape may drive the ball down through it — that is
   // the shot. A hitter barely at net height gets the launch lifted just enough
   // to clear, instead of burying a third of all attacks in the net.

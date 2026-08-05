@@ -27,7 +27,8 @@ export type PlayerAnim =
   | 'serve'
   | 'land'
   | 'cheer'
-  | 'down';
+  | 'down'
+  | 'getUp';
 
 /** Per-player attributes, 0..1. The AI and the strike solver both read these. */
 export interface PlayerStats {
@@ -81,6 +82,8 @@ export class Player {
   diving = false;
   /** Seconds of floor slide remaining after a dive lands. */
   sliding = 0;
+  /** Seconds left of pushing back up onto the feet after a sprawl. */
+  gettingUp = 0;
   /** Non-zero right after a successful hit, used for the arm-swing pose. */
   swing = 0;
   /** Stamina-free arcade "charge" built up while the action button is held. */
@@ -197,13 +200,22 @@ export class Player {
       else if (this.anim !== 'cheer') this.cheerTime = 0;
     }
 
+    if (this.gettingUp > 0) {
+      this.gettingUp -= dt;
+      if (this.gettingUp <= 0 && this.anim === 'getUp') this.setAnim('idle');
+    }
+
     if (this.downTime > 0) {
       this.downTime -= dt;
       moveX = 0;
       moveY = 0;
       if (this.downTime <= 0) {
         this.diving = false;
-        this.setAnim('idle');
+        // Push up off the floor rather than teleporting to a ready stance.
+        // Snapping straight from prone to idle was a single-frame pop at the
+        // end of the best animation in the game.
+        this.setAnim('getUp');
+        this.gettingUp = 0.26;
       }
     }
 
@@ -217,6 +229,7 @@ export class Player {
       this.downTime <= 0 &&
       this.swing <= 0 &&
       !this.heldAction &&
+      this.gettingUp <= 0 &&
       this.animTime > 0.45 &&
       TRANSIENT_ANIMS.includes(this.anim)
     ) {

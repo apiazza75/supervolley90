@@ -113,7 +113,10 @@ const POSES: Record<string, Pose> = {
   ]),
   // Full-extension dig: body laid out horizontal (the draw code rotates it
   // flat), both arms locked straight past the head, legs trailing.
-  dive: pose(0.35, 1.35, [2.66, -0.06], [2.56, -0.1], [-0.35, 0.5], [-0.6, 0.35], -0.42, 0.25, 0.35),
+  // Airborne dive: fully extended, both arms thrown forward at the ball,
+  // legs straight out behind. This is the most spectacular thing in the sport
+  // and it has to read as one line from fingertips to toes.
+  dive: pose(0.16, 1.5, [2.02, -0.05], [1.94, -0.08], [0.1, 0.08], [-0.02, 0.14], -0.5, 0.3, 0.4),
   // Absorbing the landing: deep flex, arms out for balance.
   land: pose(0.66, 0.2, [0.6, -0.7], [0.42, -0.8], [0.34, 0.95], [-0.3, 0.95], 0.06, -0.18, 1, [
     [-0.14, 0],
@@ -125,7 +128,14 @@ const POSES: Record<string, Pose> = {
     [0.12, 0],
   ]),
   // Sprawled on the floor after the dive, pushing up on one arm.
-  down: pose(0.8, 1.5, [1.2, -0.55], [0.5, -0.9], [-0.3, 0.7], [-0.55, 0.5], -0.5, -0.1),
+  // Sprawled on the floor after a dive: chest down, arms reaching ahead, legs
+  // trailing out straight behind. The old values kept the knees folded at 0.7
+  // and 0.5 under a deep crouch, which put the figure on all fours — a crab,
+  // not a player who has just hit the deck.
+  // Pushing back up: hands planted, hips rising, one knee still down. The
+  // beat between hitting the floor and being ready again.
+  getUp: pose(0.72, 0.72, [1.55, -0.5], [1.38, -0.55], [0.34, 0.9], [-0.18, 0.55], -0.2, -0.18),
+  down: pose(0.28, 1.62, [1.85, -0.18], [1.72, -0.24], [0.22, 0.12], [0.06, 0.2], -0.62, 0.22),
 };
 
 const blend = (a: Pose, b: Pose, t: number): Pose => ({
@@ -414,7 +424,9 @@ export function drawPlayer(
   // flicker.
   const sliding = (p as { sliding?: number }).sliding ?? 0;
   const tiltGain =
-    animKey === 'dive' || animKey === 'down'
+    animKey === 'getUp'
+      ? 0.55
+      : animKey === 'dive' || animKey === 'down'
       ? sliding > 0
         ? 0.95
         : 0.8
