@@ -21,7 +21,8 @@
     "shots:action": "tsx tools/action-shots.ts",
     "poses": "tsx tools/pose-sheet.ts",
     "serve:lab": "tsx tools/serve-lab.ts",
-    "anims": "tsx tools/anim-sheet.ts"
+    "anims": "tsx tools/anim-sheet.ts",
+    "rig": "tsx tools/rig-sheet.ts"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
