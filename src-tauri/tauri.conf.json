@@ -26,7 +26,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: tauri: http://tauri.localhost https://tauri.localhost http://asset.localhost https://asset.localhost; connect-src 'self' blob: asset: tauri: http://tauri.localhost https://tauri.localhost http://asset.localhost https://asset.localhost"
     }
   },
   "bundle": {

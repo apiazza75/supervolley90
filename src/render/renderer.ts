@@ -60,9 +60,53 @@ export class Renderer {
     // Taken on one at a time as each finishes preparing, rather than all at the
     // end: the match is playable from the first frame and simply swaps each
     // action over to its drawn sheet as that sheet becomes ready.
-    void loadSheets('sprites', (action, sheet) => {
-      this.sheets[action] = sheet;
-    }).catch(() => undefined);
+    void loadSheets(
+      'sprites',
+      (action, sheet) => {
+        this.sheets[action] = sheet;
+      },
+      (action, reason) => {
+        this.spriteErrors.push(`${action}: ${reason}`);
+      },
+    ).catch((err: unknown) => {
+      this.spriteErrors.push(String(err));
+    });
+  }
+
+  /**
+   * Why the drawn art is missing, shown on screen.
+   *
+   * A packaged build has no console to open, so a sheet that fails to load has
+   * no way of saying so — and falling back to the vector figures looks exactly
+   * like a game that was never given any art. This is only drawn when
+   * something actually went wrong, so a working build never shows it.
+   */
+  private spriteErrors: string[] = [];
+
+  private drawSpriteTrouble(h: number): void {
+    if (!this.spriteErrors.length) return;
+    const ctx = this.ctx;
+    const lines = [
+      `drawn art unavailable — ${this.spriteCount}/10 sheets loaded`,
+      ...this.spriteErrors.slice(0, 4),
+    ];
+    ctx.save();
+    // Alignment is set explicitly. The drawing code that runs before this
+    // leaves it centred, which put every line of the message a few hundred
+    // pixels off the left edge of the screen — a diagnostic you cannot read is
+    // no better than the silence it replaced.
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = '600 13px ui-monospace, monospace';
+    const width = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 24;
+    const top = h * 0.18;
+    ctx.fillStyle = 'rgba(30, 6, 10, 0.88)';
+    ctx.fillRect(12, top - 18, width, 20 * lines.length + 12);
+    ctx.fillStyle = '#ff9b9b';
+    lines.forEach((l, i) => {
+      ctx.fillText(l, 24, top + 20 * i);
+    });
+    ctx.restore();
   }
 
   /** How many drawn actions are available, for the diagnostics overlay. */
@@ -397,6 +441,7 @@ export class Renderer {
     this.drawVignette(ctx, cam);
     this.drawTimingCue(world, state.time);
     this.drawPowerCoach(world, state.time, state.jumpLabel ?? 'SHIFT');
+    this.drawSpriteTrouble(cam.viewHeight);
     if (this.flash > 0) {
       ctx.fillStyle = `rgba(255,236,196,${this.flash})`;
       ctx.fillRect(0, 0, cam.viewWidth, cam.viewHeight);

@@ -705,6 +705,7 @@ export type SheetSet = Partial<Record<SpriteAction, Sheet>>;
 export async function loadSheets(
   base = 'sprites',
   onSheet?: (action: SpriteAction, sheet: Sheet) => void,
+  onError?: (action: SpriteAction, reason: string) => void,
 ): Promise<SheetSet> {
   const names = Object.keys(SHEETS) as SpriteAction[];
   const out: SheetSet = {};
@@ -724,6 +725,7 @@ export async function loadSheets(
       // how a build shipped where NOTHING loaded and the only clue was that
       // the players looked like the old ones.
       console.error(`[sprites] ${n} failed to load from ${url}:`, err);
+      onError?.(n, err instanceof Error ? err.message : String(err));
       return null;
     });
     if (sheet) {
