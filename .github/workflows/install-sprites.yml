@@ -22,7 +22,7 @@ jobs:
 
       - name: Download and validate sprite archive
         env:
-          SPRITES_URL: "https://ufficioservice-my.sharepoint.com/:u:/g/personal/alessandro_piazza_ufficioservice_it/IQAP9srKWCstTacTZ3p0CB0_AdjvSNIrHkub0xjjfbfLuBs?download=1"
+          SPRITES_URL: "https://sdmntprindiasocentral.oaiusercontent.com/files/00000000-32a8-8211-97d9-f922dc0770d5/raw?se=2026-08-05T12:25:40Z&sp=r&sv=2026-02-06&sr=b&scid=979e1a03-6401-56c7-8762-596617b5f22f&skoid=a0b9f82a-c86e-4064-a822-2aa38890bb37&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-05T04:32:21Z&ske=2026-08-06T04:32:21Z&sks=b&skv=2026-02-06&sig=3V9z81018wxFZF%2BXthQVyIS/W6HJKEokqJe0hivKFR8%3D"
         run: |
           set -euo pipefail
           curl -fL --retry 4 --retry-all-errors "$SPRITES_URL" -o /tmp/supervolley-sprites.zip
