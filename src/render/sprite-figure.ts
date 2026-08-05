@@ -1,26 +1,18 @@
 import { clamp } from '../core/math3';
-import { Player } from '../core/player';
-import { Camera } from './camera';
-import { SpriteAction, SheetSet, drawFrame } from './sprites';
+import type { ContactKind } from '../core/contact';
+import type { Player } from '../core/player';
+import type { Camera } from './camera';
+import { type SpriteAction, type SheetSet, drawFrame } from './sprites';
 
-/**
- * Choosing a frame.
- *
- * The simulation already knows everything needed: which action a player is in,
- * how far through it they are, how high off the floor. This maps that onto the
- * 24 drawn frames of the matching sheet. Nothing here interpolates — drawn
- * animation is played, not blended, and trying to blend between two drawings
- * is how sprite work is ruined.
- */
-
-interface Playhead {
+/** A selected frame from one action sheet. */
+export interface Playhead {
   action: SpriteAction;
-  /** 0..23. */
+  /** Zero-based, 0..23. */
   frame: number;
 }
 
 /** How long each action's 24 frames are meant to take, in seconds. */
-const DURATION: Record<SpriteAction, number> = {
+export const DURATION: Record<SpriteAction, number> = {
   idle: 1.6,
   approach: 0.75,
   spike: 1.1,
@@ -34,17 +26,22 @@ const DURATION: Record<SpriteAction, number> = {
 };
 
 /** Actions that hold on their last frame rather than looping. */
-const ONESHOT: SpriteAction[] = ['spike', 'block', 'bump', 'set', 'dive', 'serve', 'jumpServe'];
+const ONESHOT = new Set<SpriteAction>([
+  'spike',
+  'block',
+  'bump',
+  'set',
+  'dive',
+  'serve',
+  'jumpServe',
+]);
 
 /**
- * The frame of a sheet at which the ball is actually struck.
- *
- * The simulation decides when a contact happens; the art has its own moment.
- * Lining the two up is what makes a sprite hit look like it caused the ball to
- * move rather than waving at it afterwards, so the playhead is driven BACKWARDS
- * from the contact: at the instant of the strike the sprite is on this frame.
+ * Frame on which the simulated contact must appear in the drawing.
+ * Values are zero-based; docs/ART-SPEC.md lists the human-facing
+ * one-based numbers.
  */
-const CONTACT_FRAME: Partial<Record<SpriteAction, number>> = {
+export const CONTACT_FRAME: Partial<Record<SpriteAction, number>> = {
   spike: 19,
   block: 16,
   bump: 12,
@@ -53,6 +50,40 @@ const CONTACT_FRAME: Partial<Record<SpriteAction, number>> = {
   serve: 12,
   jumpServe: 16,
 };
+
+interface Head {
+  action: SpriteAction;
+  t: number;
+  /** Keep playing this action through its recovery after a contact. */
+  forced: boolean;
+  /** The first draw after a contact is the exact authored frame. */
+  exactFrame?: number;
+}
+
+/** The sheet that represents a physical contact event. */
+export function spriteActionForContact(
+  kind: ContactKind,
+  airborne: boolean,
+): SpriteAction | null {
+  switch (kind) {
+    case 'serve':
+      return airborne ? 'jumpServe' : 'serve';
+    case 'save':
+      return 'dive';
+    case 'block':
+      return 'block';
+    case 'set':
+      return 'set';
+    case 'bump':
+      return 'bump';
+    case 'spike':
+    case 'tip':
+    case 'power':
+      return 'spike';
+    default:
+      return null;
+  }
+}
 
 function actionFor(p: Player): SpriteAction {
   if (p.diving || p.anim === 'down' || p.anim === 'getUp') return 'dive';
@@ -67,23 +98,80 @@ function actionFor(p: Player): SpriteAction {
   return 'idle';
 }
 
-const heads = new Map<number, { action: SpriteAction; t: number }>();
+function frameAt(action: SpriteAction, t: number): number {
+  const span = DURATION[action];
+  const u = ONESHOT.has(action) ? clamp(t / span, 0, 0.999) : (t / span) % 1;
+  return Math.floor(u * 24);
+}
 
-function advance(p: Player, dt: number): Playhead {
-  const action = actionFor(p);
-  let h = heads.get(p.id);
-  if (!h || h.action !== action) {
-    h = { action, t: 0 };
-    heads.set(p.id, h);
-  } else {
-    h.t += dt;
+/**
+ * Stateful sprite clock, deliberately independent from rendering.
+ * This makes contact alignment testable without a canvas.
+ */
+export class SpriteTimeline {
+  private readonly heads = new Map<number, Head>();
+
+  /** Pin the player's next rendered pose to the authored contact. */
+  cue(playerId: number, kind: ContactKind, airborne: boolean): void {
+    const action = spriteActionForContact(kind, airborne);
+    if (!action) return;
+    const frame = CONTACT_FRAME[action];
+    if (frame === undefined) return;
+    this.heads.set(playerId, {
+      action,
+      // Start in the middle of the contact frame so floating-point
+      // rounding cannot send the following draw backwards.
+      t: ((frame + 0.5) / 24) * DURATION[action],
+      forced: true,
+      exactFrame: frame,
+    });
   }
 
-  const span = DURATION[action];
-  const u = ONESHOT.includes(action)
-    ? clamp(h.t / span, 0, 0.999)
-    : (h.t / span) % 1;
-  return { action, frame: Math.floor(u * 24) };
+  reset(playerId?: number): void {
+    if (playerId === undefined) this.heads.clear();
+    else this.heads.delete(playerId);
+  }
+
+  frameFor(p: Player, dt: number, actionHint?: SpriteAction): Playhead {
+    const observed = actionHint ?? actionFor(p);
+    let h = this.heads.get(p.id);
+    if (!h) {
+      h = { action: observed, t: 0, forced: false };
+      this.heads.set(p.id, h);
+    }
+
+    if (h.exactFrame !== undefined) {
+      const frame = h.exactFrame;
+      delete h.exactFrame;
+      return { action: h.action, frame };
+    }
+
+    if (h.forced) {
+      h.t += dt;
+      const frame = frameAt(h.action, h.t);
+      if (h.t >= DURATION[h.action]) h.forced = false;
+      return { action: h.action, frame };
+    }
+
+    if (h.action !== observed) {
+      h.action = observed;
+      h.t = 0;
+    } else {
+      h.t += dt;
+    }
+    return { action: h.action, frame: frameAt(h.action, h.t) };
+  }
+}
+
+const timeline = new SpriteTimeline();
+
+/** Called by the renderer on the simulation's exact contact event. */
+export function cueSpriteContact(
+  playerId: number,
+  kind: ContactKind,
+  airborne: boolean,
+): void {
+  timeline.cue(playerId, kind, airborne);
 }
 
 /**
@@ -97,14 +185,14 @@ export function drawSpritePlayer(
   sheets: SheetSet,
   dt: number,
   kit?: string,
+  actionHint?: SpriteAction,
 ): boolean {
-  const head = advance(p, dt);
+  const head = timeline.frameFor(p, dt, actionHint);
   const sheet = sheets[head.action];
   if (!sheet) return false;
 
-  // The art of a jumping action already contains the lift, so the sprite is
-  // planted on the floor and the drawing does the rising. Everything else is
-  // lifted by the simulation.
+  // The art of a jumping action already contains the lift, so the
+  // sprite is planted on the floor and the drawing does the rising.
   const lift = sheet.layout.artHasLift ? 0 : p.height;
   const feet = cam.project(p.pos.x, p.pos.y, lift);
   const bodyPx = 1.9 * feet.scale * 42;
@@ -117,7 +205,7 @@ export function drawSpritePlayer(
   return true;
 }
 
-/** Where in a sheet's timeline the ball is struck, for lining art up to play. */
+/** Where in a sheet's timeline the ball is struck. Zero-based. */
 export function contactFrame(action: SpriteAction): number {
   return CONTACT_FRAME[action] ?? 12;
 }

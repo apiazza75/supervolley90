@@ -9,7 +9,7 @@ import { Camera } from './camera';
 import { Effects } from './fx';
 import { Officials } from './officials';
 import { drawActiveRing, drawPlayer, drawPlayerShadow, shade } from './players';
-import { drawSpritePlayer } from './sprite-figure';
+import { cueSpriteContact, drawSpritePlayer } from './sprite-figure';
 import { type SheetSet, loadSheets } from './sprites';
 import { INTRO as REPLAY_INTRO, type ReplayFrame } from '../game/replay';
 
@@ -150,6 +150,8 @@ export class Renderer {
           break;
         }
         case 'contact': {
+          const player = world.findPlayer(ev.playerId);
+          cueSpriteContact(ev.playerId, ev.kind, player?.airborne ?? false);
           const power = clamp(ev.speed / 3, 1, 12);
           if (ev.kind === 'power') {
             this.effects.impact(ev.at, 34, this.rand, 'rgba(255,190,90,');
@@ -408,7 +410,36 @@ export class Renderer {
           draw: () => {
             if (p.id === active) drawActiveRing(ctx, cam, p, '#7ef0ff', state.time);
             const kit = kitFor(p, team.config.colors);
-            if (this.useSprites && drawSpritePlayer(ctx, cam, p, this.sheets, dt, kit[0]))
+            const serverHint =
+              world.phase === 'serve' && p.id === world.team(world.servingSide).server.id
+                ? p.airborne
+                  ? 'jumpServe'
+                  : 'serve'
+                : undefined;
+            const bufferedHint =
+              p.actionBuffer > 0 || p.heldAction
+                ? world.possession !== p.side
+                  ? p.airborne && Math.abs(p.pos.y) < 2.4
+                    ? 'block'
+                    : 'bump'
+                  : world.touches === 1
+                    ? 'set'
+                    : world.touches >= 2
+                      ? 'spike'
+                      : undefined
+                : undefined;
+            if (
+              this.useSprites &&
+              drawSpritePlayer(
+                ctx,
+                cam,
+                p,
+                this.sheets,
+                dt,
+                kit[0],
+                serverHint ?? bufferedHint,
+              )
+            )
               return;
             drawPlayer(ctx, cam, p, kit, {
               active: p.id === active,

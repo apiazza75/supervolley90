@@ -131,6 +131,11 @@ export interface Sheet {
   layout: SheetLayout;
   /** Hue of the kit as drawn, in degrees. Used to find what to recolour. */
   kitHue: number;
+  /**
+   * Authored standing-body height after packing. Present only on strict
+   * transparent sheets, whose 24 poses must all share one scale.
+   */
+  nativeBodyHeight?: number;
   /** Recoloured copies, keyed by target colour. */
   variants: Map<string, HTMLCanvasElement>;
 }
@@ -412,7 +417,7 @@ function measure(
   sy: number,
   sw: number,
   sh: number,
-): { top: number; bottom: number; centreX: number } {
+): { top: number; bottom: number; centreX: number; pixels: number } {
   const img = ctx.getImageData(sx, sy, sw, sh);
   const d = img.data;
   let top = sh;
@@ -432,6 +437,7 @@ function measure(
     top: count ? top : 0,
     bottom: count ? bottom : sh,
     centreX: count ? sum / count : sw / 2,
+    pixels: count,
   };
 }
 
@@ -601,6 +607,7 @@ function pack(
   picked: Frame[],
   layout: SheetLayout,
   kitHue: number,
+  nativeBodyHeight?: number,
 ): Sheet | null {
   const gut = 3;
   const cellW = Math.ceil(Math.max(...picked.map((f) => f.sw)) * SHEET_SCALE) + gut * 2;
@@ -631,7 +638,15 @@ function pack(
     };
   });
 
-  return { canvas: small, frames, layout, kitHue, variants: new Map() };
+  return {
+    canvas: small,
+    frames,
+    layout,
+    kitHue,
+    nativeBodyHeight:
+      nativeBodyHeight === undefined ? undefined : nativeBodyHeight * SHEET_SCALE,
+    variants: new Map(),
+  };
 }
 
 /**
@@ -642,7 +657,11 @@ function pack(
  * every sheet puts the floor on the same line, so a figure above it is in the
  * air and the game does not have to work out which.
  */
-const CUT_OUT_FLOOR = 470 / 512;
+const CUT_OUT_CELL = 512;
+const CUT_OUT_COLS = 6;
+const CUT_OUT_ROWS = 4;
+const CUT_OUT_FLOOR = 470 / CUT_OUT_CELL;
+const CUT_OUT_BODY_HEIGHT = 340;
 
 /**
  * Clear a flat background, and report whether the sheet arrived cut out.
@@ -673,30 +692,49 @@ function sliceCutOut(
   ctx: CanvasRenderingContext2D,
   layout: SheetLayout,
 ): Sheet | null {
-  const cw = canvas.width / layout.cols;
-  const ch = canvas.height / layout.rows;
-  const frames: Frame[] = [];
+  const expectedWidth = CUT_OUT_CELL * CUT_OUT_COLS;
+  const expectedHeight = CUT_OUT_CELL * CUT_OUT_ROWS;
+  if (canvas.width !== expectedWidth || canvas.height !== expectedHeight) {
+    throw new Error(
+      `transparent sheet must be ${expectedWidth}x${expectedHeight}; got ${canvas.width}x${canvas.height}`,
+    );
+  }
+  if (layout.cols !== CUT_OUT_COLS || layout.rows !== CUT_OUT_ROWS) {
+    throw new Error(`transparent sheet layout must be ${CUT_OUT_COLS}x${CUT_OUT_ROWS}`);
+  }
 
-  for (let r = 0; r < layout.rows; r++) {
-    for (let c = 0; c < layout.cols; c++) {
-      const sx = Math.round(c * cw);
-      const sy = Math.round(r * ch);
-      const sw = Math.round(cw);
-      const sh = Math.round(ch);
-      const m = measure(ctx, sx, sy, sw, sh);
+  const frames: Frame[] = [];
+  for (let r = 0; r < CUT_OUT_ROWS; r++) {
+    for (let c = 0; c < CUT_OUT_COLS; c++) {
+      const sx = c * CUT_OUT_CELL;
+      const sy = r * CUT_OUT_CELL;
+      const m = measure(ctx, sx, sy, CUT_OUT_CELL, CUT_OUT_CELL);
+      if (m.pixels < 64) {
+        throw new Error(`transparent sheet frame ${r * CUT_OUT_COLS + c + 1} is empty`);
+      }
       frames.push({
         sx,
         sy,
-        sw,
-        sh,
-        footX: sw / 2,
-        footY: sh * CUT_OUT_FLOOR,
+        sw: CUT_OUT_CELL,
+        sh: CUT_OUT_CELL,
+        footX: CUT_OUT_CELL / 2,
+        footY: CUT_OUT_CELL * CUT_OUT_FLOOR,
         boxTop: m.top,
         boxBottom: m.bottom,
       });
     }
   }
-  return pack(canvas, dropOutliers(frames, layout.skip ?? []), layout, dominantHue(ctx, frames));
+
+  // No outlier substitution here. A strict cut-out sheet contains 24
+  // intentional poses; silently replacing a crouch, dive or full reach
+  // would destroy authored animation while pretending to repair it.
+  return pack(
+    canvas,
+    frames,
+    layout,
+    dominantHue(ctx, frames),
+    CUT_OUT_BODY_HEIGHT,
+  );
 }
 
 async function loadOne(url: string, layout: SheetLayout): Promise<Sheet | null> {
@@ -848,7 +886,7 @@ export function drawFrame(
   // Scale so the drawn body occupies `height`, measured from the sheet's floor
   // line to the highest drawn pixel. Scaling by the cell instead would make the
   // figure shrink and grow as the pose reached higher or lower.
-  const drawn = Math.max(1, f.footY - f.boxTop);
+  const drawn = sheet.nativeBodyHeight ?? Math.max(1, f.footY - f.boxTop);
   const k = height / drawn;
 
   ctx.save();
