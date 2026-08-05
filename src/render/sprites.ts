@@ -54,14 +54,18 @@ export interface SheetLayout {
   artHasLift: boolean;
 }
 
+// Measured off the drawn sheets with tools/measure-sheet.ts, not read off a
+// picture. The first set of these numbers was guessed from looking at one, and
+// every one of them was wrong — the footer is nearly twice as deep as it looks
+// and the floor line sits far lower in the cell than the drawing suggests.
 const GRID: SheetLayout = {
   cols: 6,
   rows: 4,
-  top: 0.072,
-  bottom: 0.052,
-  left: 0.006,
-  right: 0.006,
-  baseline: 0.93,
+  top: 0.079,
+  bottom: 0.095,
+  left: 0.0076,
+  right: 0.0076,
+  baseline: 0.978,
   artHasLift: false,
 };
 
@@ -77,6 +81,8 @@ export const SHEETS: Record<SpriteAction, SheetLayout> = {
   jumpServe: { ...GRID, artHasLift: true },
   celebrate: { ...GRID },
 };
+
+const SHEET_SCALE = 0.5;
 
 export interface Frame {
   /** Source rectangle inside the keyed sheet canvas. */
@@ -281,6 +287,170 @@ function keyOut(
   ctx.putImageData(img, rx, ry);
 }
 
+/**
+ * Erase ruled lines.
+ *
+ * The cell borders do not vanish with the paper. Their anti-aliased shoulder
+ * sits around RGB 170 — too dark to key, light enough to look like a scratch —
+ * and because it runs into the figure somewhere along its length the shape
+ * filter adopts it and carries it onto the court, where it shows as a pale
+ * line ruled across the players.
+ *
+ * Position cannot tell it apart from the art, since the drawing reaches the
+ * edges too, but proportion can: a border is long and one pixel thick, and
+ * nothing in a human figure is. So a run that crosses most of the frame while
+ * staying a few pixels thick is a border, whatever it is touching.
+ */
+function eraseRules(
+  ctx: CanvasRenderingContext2D,
+  rx: number,
+  ry: number,
+  w: number,
+  h: number,
+): void {
+  const img = ctx.getImageData(rx, ry, w, h);
+  const d = img.data;
+  const opaque = (x: number, y: number): boolean => d[(y * w + x) * 4 + 3] >= 40;
+  const MAX_THICK = 4;
+  const kill: number[] = [];
+
+  // `horizontal` sweeps rows; otherwise columns. `along` is the direction the
+  // run travels, `across` the direction it is measured for thickness.
+  const sweep = (horizontal: boolean): void => {
+    const along = horizontal ? w : h;
+    const across = horizontal ? h : w;
+    const at = (a: number, b: number): [number, number] => (horizontal ? [a, b] : [b, a]);
+
+    for (let b = 0; b < across; b++) {
+      let a = 0;
+      while (a < along) {
+        if (!opaque(...at(a, b))) {
+          a++;
+          continue;
+        }
+        const start = a;
+        while (a < along && opaque(...at(a, b))) a++;
+        const len = a - start;
+        if (len < along * 0.6) continue;
+
+        // Thin everywhere along its length, or it belongs to the drawing.
+        let thickest = 0;
+        for (let s = start; s < a; s += Math.max(1, (len / 12) | 0)) {
+          let t = 0;
+          for (let k = -MAX_THICK; k <= MAX_THICK; k++) {
+            const [x, y] = at(s, b + k);
+            if (x < 0 || y < 0 || x >= w || y >= h) continue;
+            if (opaque(x, y)) t++;
+          }
+          thickest = Math.max(thickest, t);
+        }
+        if (thickest > MAX_THICK) continue;
+
+        for (let s = start; s < a; s++) {
+          const [x, y] = at(s, b);
+          kill.push(y * w + x);
+        }
+      }
+    }
+  };
+
+  sweep(true);
+  sweep(false);
+  for (const i of kill) d[i * 4 + 3] = 0;
+  ctx.putImageData(img, rx, ry);
+}
+
+/**
+ * Keep only the biggest drawn shape in the frame, and erase the rest.
+ *
+ * What survives the paper strip is not only the player. Every cell carries its
+ * frame number in the corner, several carry the ball the artist drew, and the
+ * cell borders leave fragments along the edges. Cropping them away is not an
+ * option: the numbers sit exactly where a jumping figure's head goes, so any
+ * inset big enough to lose the number decapitates the spike.
+ *
+ * They are all, however, separate from the body — and much smaller than it. So
+ * the figure is found rather than framed: label the connected shapes, keep the
+ * largest, clear everything else. That also drops the drawn ball for free,
+ * which the game needs gone regardless since it draws its own.
+ */
+function keepLargestBlob(
+  ctx: CanvasRenderingContext2D,
+  rx: number,
+  ry: number,
+  w: number,
+  h: number,
+): void {
+  const img = ctx.getImageData(rx, ry, w, h);
+  const d = img.data;
+  const label = new Int32Array(w * h).fill(-1);
+  const sizes: number[] = [];
+  const queue = new Int32Array(w * h);
+
+  for (let start = 0; start < w * h; start++) {
+    if (label[start] >= 0 || d[start * 4 + 3] < 40) continue;
+    const id = sizes.length;
+    let size = 0;
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = start;
+    label[start] = id;
+    while (head < tail) {
+      const i = queue[head++];
+      size++;
+      const x = i % w;
+      const y = (i / w) | 0;
+      // Eight-connected: drawn linework thins to a diagonal hairline at the
+      // wrists and ankles, and four-connectivity snaps a hand off there.
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const n = ny * w + nx;
+          if (label[n] >= 0 || d[n * 4 + 3] < 40) continue;
+          label[n] = id;
+          queue[tail++] = n;
+        }
+      }
+    }
+    sizes.push(size);
+  }
+
+  if (!sizes.length) return;
+  let largest = 0;
+  for (let i = 1; i < sizes.length; i++) if (sizes[i] > sizes[largest]) largest = i;
+
+  // Biggest is not always the player. Some frames have the net drawn in, and a
+  // net is a tall lattice that can outweigh the figure — on one block frame it
+  // won outright and the player was the thing that got erased. Among shapes
+  // substantial enough to be a body, take the one nearest the middle of the
+  // cell: the artist composed the player there and put the net at the edge.
+  const centreX = w / 2;
+  let best = largest;
+  let bestDist = Infinity;
+  const sums = new Float64Array(sizes.length);
+  const counts = new Float64Array(sizes.length);
+  for (let i = 0; i < w * h; i++) {
+    const id = label[i];
+    if (id < 0) continue;
+    sums[id] += i % w;
+    counts[id]++;
+  }
+  for (let id = 0; id < sizes.length; id++) {
+    if (sizes[id] < sizes[largest] * 0.25) continue;
+    const dist = Math.abs(sums[id] / counts[id] - centreX);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = id;
+    }
+  }
+  for (let i = 0; i < w * h; i++) {
+    if (label[i] !== best) d[i * 4 + 3] = 0;
+  }
+  ctx.putImageData(img, rx, ry);
+}
+
 /** Tight bounds of the drawn pixels inside a source rectangle. */
 function measure(
   ctx: CanvasRenderingContext2D,
@@ -307,6 +477,105 @@ function measure(
   return { top: count ? top : 0, bottom: count ? bottom : sh, centreX: count ? sum / count : sw / 2 };
 }
 
+/**
+ * The paper interior of one cell.
+ *
+ * A uniform grid is close but never exact — the borders wander a few pixels
+ * from where dividing the sheet evenly says they are — and cropping on a
+ * nominal edge leaves part of the border inside the frame. That residue is not
+ * harmless: the anti-aliased shoulder of a border sits around RGB 170, too
+ * dark to be keyed as paper, and it touches the figure often enough that the
+ * blob filter adopts it, so pale hairlines trail off the player.
+ *
+ * Chasing the border by looking for the darkest line nearby fails on the
+ * bottom edge, where the darkest line is the far side of the floor plank and
+ * snapping to it drags the whole plank into frame.
+ *
+ * So the frame is defined by what it IS rather than by what surrounds it: find
+ * the rows and columns that are mostly paper. Borders are not paper, the plank
+ * is not paper, and a figure never covers enough of a row or column to make it
+ * stop being mostly paper. The bottom of that region is where the paper meets
+ * the plank, which is exactly the line the artist drew the feet standing on.
+ */
+function paperInterior(
+  isPaperAt: (x: number, y: number) => boolean,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): { sx: number; sy: number; sw: number; sh: number } | null {
+  const fracRow = (y: number): number => {
+    let n = 0;
+    for (let x = x0; x <= x1; x += 2) if (isPaperAt(x, y)) n++;
+    return n / ((x1 - x0) / 2 + 1);
+  };
+  const fracCol = (x: number): number => {
+    let n = 0;
+    for (let y = y0; y <= y1; y += 2) if (isPaperAt(x, y)) n++;
+    return n / ((y1 - y0) / 2 + 1);
+  };
+
+  // Rows grow OUTWARD from the middle of the cell. Scanning inward from below
+  // instead put the bottom edge wherever the first mostly-paper row happened to
+  // be, and with the grid drifting a few pixels that row belongs to the NEXT
+  // cell: the crop then swallowed the floor plank and a slice of the frame
+  // underneath. Starting inside and stopping at the first row that is not paper
+  // cannot leave the cell it started in.
+  const mid = (y0 + y1) >> 1;
+  let top = mid;
+  while (top > y0 && fracRow(top - 1) >= 0.5) top--;
+  let bottom = mid;
+  while (bottom < y1 && fracRow(bottom + 1) >= 0.5) bottom++;
+  let left = x0;
+  while (left < x1 && fracCol(left) < 0.5) left++;
+  let right = x1;
+  while (right > left && fracCol(right) < 0.5) right--;
+
+  // A couple of pixels off the top and sides. The row where paper meets border
+  // is a blend of the two, light enough to pass as paper and dark enough to
+  // survive keying, and it shows up as a hairline ruled across the top of the
+  // frame. The bottom is left alone: that edge is the floor.
+  top += 5;
+  left += 2;
+  right -= 2;
+
+  if (right - left < 16 || bottom - top < 16) return null;
+  return { sx: left, sy: top, sw: right - left + 1, sh: bottom - top + 1 };
+}
+
+/**
+ * Replace frames that do not hold a whole figure.
+ *
+ * Not every cell on a drawn sheet is a pose. One block sheet spends a frame on
+ * a close-up of the player's face, and a couple of others are mostly net. Drawn
+ * as-is these are scaled to body height like everything else, so the close-up
+ * becomes a head the size of a person and the net-only cell becomes a player
+ * who vanishes for a frame.
+ *
+ * They are recognisable without knowing what they contain: a sheet's frames all
+ * hold a figure of roughly one height, and these do not. Anything far off the
+ * sheet's own median defers to the nearest frame that is not, which costs a
+ * little animation and never shows a monster.
+ */
+function dropOutliers(frames: Frame[]): Frame[] {
+  const heights = frames.map((f) => f.footY - f.boxTop);
+  const median = [...heights].sort((a, b) => a - b)[heights.length >> 1];
+  if (!median) return frames;
+  const ok = heights.map((h) => h > median * 0.55 && h < median * 1.5);
+  if (ok.every(Boolean) || !ok.some(Boolean)) return frames;
+
+  return frames.map((f, i) => {
+    if (ok[i]) return f;
+    for (let d = 1; d < frames.length; d++) {
+      const a = i - d;
+      const b = i + d;
+      if (a >= 0 && ok[a]) return frames[a];
+      if (b < frames.length && ok[b]) return frames[b];
+    }
+    return f;
+  });
+}
+
 async function loadOne(url: string, layout: SheetLayout): Promise<Sheet | null> {
   const img = await new Promise<HTMLImageElement | null>((resolve) => {
     const el = new Image();
@@ -330,39 +599,105 @@ async function loadOne(url: string, layout: SheetLayout): Promise<Sheet | null> 
   const cw = gw / layout.cols;
   const ch = gh / layout.rows;
 
+  // One pass over the sheet, used to locate each cell's paper interior.
+  const full = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  const isPaperAt = (x: number, y: number): boolean => {
+    const i = (y * canvas.width + x) * 4;
+    return full[i] > 218 && full[i + 1] > 218 && full[i + 2] > 214;
+  };
+
   const frames: Frame[] = [];
   for (let r = 0; r < layout.rows; r++) {
     for (let c = 0; c < layout.cols; c++) {
-      // Inset: the cells carry a border, and a frame number in the top-left
-      // corner that would otherwise be keyed as part of the drawing and follow
-      // the player around the court.
-      const pad = cw * 0.035;
-      const numberBand = ch * 0.1;
-      const sx = Math.round(gx + c * cw + pad);
-      const sy = Math.round(gy + r * ch + pad + numberBand);
-      const sw = Math.round(cw - pad * 2);
-      const sh = Math.round(ch - pad * 2 - numberBand);
+      // Yield between cells. Preparing a whole sheet in one go blocks for the
+      // better part of a second, and ten of those in a row is long enough that
+      // the opening keypresses land on a frozen game and are lost. A cell is
+      // small enough that nobody can see the pause.
+      await new Promise((res) => setTimeout(res, 0));
+      // A small inset clears the cell border. The bottom is cut at the floor
+      // line instead, which is what removes the wooden plank the artist drew
+      // under each row — keyed art would otherwise carry a length of flooring
+      // around the court under every player.
+      const rect = paperInterior(
+        isPaperAt,
+        Math.max(0, Math.round(gx + c * cw) - 2),
+        Math.max(0, Math.round(gy + r * ch) - 2),
+        Math.min(canvas.width - 1, Math.round(gx + (c + 1) * cw) + 2),
+        Math.min(canvas.height - 1, Math.round(gy + (r + 1) * ch) + 2),
+      );
+      if (!rect) continue;
+      const { sx, sy, sw, sh } = rect;
       keyOut(ctx, sx, sy, sw, sh);
+      eraseRules(ctx, sx, sy, sw, sh);
+      keepLargestBlob(ctx, sx, sy, sw, sh);
       const m = measure(ctx, sx, sy, sw, sh);
       frames.push({
         sx,
         sy,
         sw,
         sh,
-        footX: m.centreX,
-        footY: sh * ((layout.baseline - 0.1) / 0.9),
+        // Anchored on the cell's centre rather than the drawing's centroid.
+        // The centroid shifts whenever a limb extends, so a run cycle anchored
+        // on it slides the player sideways on every frame; the artist composed
+        // each pose inside its cell, so the cell is the registration.
+        footX: sw / 2,
+        // The paper ends where the plank begins, so the bottom of the crop
+        // IS the line the artist drew the feet standing on.
+        footY: sh,
         boxTop: m.top,
         boxBottom: m.bottom,
       });
     }
   }
-  return {
-    canvas,
-    frames,
-    layout,
-    kitHue: dominantHue(ctx, frames),
-    variants: new Map(),
-  };
+  const kitHue = dominantHue(ctx, frames);
+
+  // Kept at half size from here on. The sheets are drawn far larger than they
+  // are ever shown — a frame is over 200 pixels tall and a player on court is
+  // under 90 — and every recoloured kit is a whole copy of the sheet, so at
+  // full resolution the two teams and their liberos would hold a quarter of a
+  // gigabyte of canvases between them. The keying and the shape-finding were
+  // done at full resolution, where the edges are still crisp; only the result
+  // is shrunk.
+  // Repacked with a transparent gutter around every frame, rather than kept as
+  // one shrunken photograph of the sheet.
+  //
+  // Drawing a sub-rectangle of an image at a reduced size samples slightly
+  // OUTSIDE that rectangle, and what lies immediately outside a frame is the
+  // cell border. That bleed put a pale line across the players on court while
+  // the frames themselves were provably clean — measuring one found no wide
+  // run of pixels in it anywhere. Give each frame empty space to bleed into
+  // and there is nothing left to drag in.
+  const picked = dropOutliers(frames);
+  const gut = 3;
+  const cellW = Math.ceil(Math.max(...picked.map((f) => f.sw)) * SHEET_SCALE) + gut * 2;
+  const cellH = Math.ceil(Math.max(...picked.map((f) => f.sh)) * SHEET_SCALE) + gut * 2;
+
+  const small = document.createElement('canvas');
+  small.width = cellW * layout.cols;
+  small.height = cellH * layout.rows;
+  const sctx = small.getContext('2d', { willReadFrequently: true });
+  if (!sctx) return null;
+  sctx.imageSmoothingQuality = 'high';
+
+  const scaled = picked.map((f, i) => {
+    const dw = Math.round(f.sw * SHEET_SCALE);
+    const dh = Math.round(f.sh * SHEET_SCALE);
+    const dx = (i % layout.cols) * cellW + gut;
+    const dy = ((i / layout.cols) | 0) * cellH + gut;
+    sctx.drawImage(canvas, f.sx, f.sy, f.sw, f.sh, dx, dy, dw, dh);
+    return {
+      sx: dx,
+      sy: dy,
+      sw: dw,
+      sh: dh,
+      footX: f.footX * SHEET_SCALE,
+      footY: f.footY * SHEET_SCALE,
+      boxTop: f.boxTop * SHEET_SCALE,
+      boxBottom: f.boxBottom * SHEET_SCALE,
+    };
+  });
+
+  return { canvas: small, frames: scaled, layout, kitHue, variants: new Map() };
 }
 
 export type SheetSet = Partial<Record<SpriteAction, Sheet>>;
@@ -371,16 +706,26 @@ export type SheetSet = Partial<Record<SpriteAction, Sheet>>;
  * Load whatever is present under `/sprites`. Missing files are not an error:
  * the caller falls back to the vector figures for anything absent.
  */
-export async function loadSheets(base = 'sprites'): Promise<SheetSet> {
+export async function loadSheets(
+  base = 'sprites',
+  onSheet?: (action: SpriteAction, sheet: Sheet) => void,
+): Promise<SheetSet> {
   const names = Object.keys(SHEETS) as SpriteAction[];
-  const loaded = await Promise.all(
-    names.map((n) => loadOne(`${base}/${n}.png`, SHEETS[n]).catch(() => null)),
-  );
   const out: SheetSet = {};
-  names.forEach((n, i) => {
-    const sheet = loaded[i];
-    if (sheet) out[n] = sheet;
-  });
+  // One sheet at a time, yielding in between. Preparing all ten at once holds
+  // the main thread for seconds — long enough that the game does not respond to
+  // its first inputs — because each one is flood-filled and shape-labelled a
+  // cell at a time. Handing each finished sheet over as it arrives means the
+  // match starts on vector figures and takes on the drawn ones as they land,
+  // instead of waiting for the slowest.
+  for (const n of names) {
+    const sheet = await loadOne(`${base}/${n}.png`, SHEETS[n]).catch(() => null);
+    if (sheet) {
+      out[n] = sheet;
+      onSheet?.(n, sheet);
+    }
+    await new Promise((r) => setTimeout(r, 0));
+  }
   return out;
 }
 

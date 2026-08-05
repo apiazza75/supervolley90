@@ -57,13 +57,12 @@ export class Renderer {
   useSprites = true;
 
   constructor(private readonly ctx: CanvasRenderingContext2D) {
-    void loadSheets()
-      .then((s) => {
-        this.sheets = s;
-      })
-      .catch(() => {
-        this.sheets = {};
-      });
+    // Taken on one at a time as each finishes preparing, rather than all at the
+    // end: the match is playable from the first frame and simply swaps each
+    // action over to its drawn sheet as that sheet becomes ready.
+    void loadSheets('sprites', (action, sheet) => {
+      this.sheets[action] = sheet;
+    }).catch(() => undefined);
   }
 
   /** How many drawn actions are available, for the diagnostics overlay. */

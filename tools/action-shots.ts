@@ -35,14 +35,22 @@ async function main(): Promise<void> {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   await page.goto('http://localhost:5177/', { waitUntil: 'networkidle' });
   await page.waitForTimeout(400);
-  for (let i = 0; i < 4; i++) {
+  // Press until the match actually starts, rather than assuming four presses
+  // at a fixed cadence get through the menu. The menu holds a cooldown between
+  // presses and the sheets are being prepared in the background, so a fixed
+  // rhythm can lose a press and leave the harness waiting on a menu.
+  for (let i = 0; i < 40; i++) {
+    const started = await page.evaluate(
+      () => Boolean((window as unknown as { __sv90?: { world?: unknown } }).__sv90?.world),
+    );
+    if (started) break;
     await page.keyboard.press('Space');
-    await page.waitForTimeout(360);
+    await page.waitForTimeout(300);
   }
   await page.waitForFunction(
     () => (window as unknown as { __sv90?: { world?: { phase: string } } }).__sv90?.world?.phase === 'serve',
     undefined,
-    { timeout: 8000 },
+    { timeout: 15000 },
   );
 
   const snap = (): Promise<Snapshot> =>
