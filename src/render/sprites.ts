@@ -579,6 +579,126 @@ async function decode(url: string): Promise<ImageBitmap | HTMLImageElement> {
   }
 }
 
+/**
+ * Shrink the sheet and repack the frames with a transparent gutter.
+ *
+ * Drawing a sub-rectangle of an image at a reduced size samples slightly
+ * OUTSIDE that rectangle, and what lies immediately outside a frame is its
+ * neighbour. That bleed put a pale line across the players on court while the
+ * frames themselves were provably clean — measuring one found no wide run of
+ * pixels in it anywhere. Give each frame empty space to bleed into and there is
+ * nothing left to drag in.
+ *
+ * Half size, too. The sheets are drawn far larger than they are ever shown — a
+ * frame is hundreds of pixels tall and a player on court is under ninety — and
+ * every recoloured kit is a whole copy of the sheet, so at full resolution the
+ * two teams and their liberos would hold a quarter of a gigabyte of canvases
+ * between them. Whatever separating work was needed happened at full
+ * resolution, where the edges are still crisp; only the result is shrunk.
+ */
+function pack(
+  source: HTMLCanvasElement,
+  picked: Frame[],
+  layout: SheetLayout,
+  kitHue: number,
+): Sheet | null {
+  const gut = 3;
+  const cellW = Math.ceil(Math.max(...picked.map((f) => f.sw)) * SHEET_SCALE) + gut * 2;
+  const cellH = Math.ceil(Math.max(...picked.map((f) => f.sh)) * SHEET_SCALE) + gut * 2;
+
+  const small = document.createElement('canvas');
+  small.width = cellW * layout.cols;
+  small.height = cellH * layout.rows;
+  const sctx = small.getContext('2d', { willReadFrequently: true });
+  if (!sctx) return null;
+  sctx.imageSmoothingQuality = 'high';
+
+  const frames = picked.map((f, i) => {
+    const dw = Math.round(f.sw * SHEET_SCALE);
+    const dh = Math.round(f.sh * SHEET_SCALE);
+    const dx = (i % layout.cols) * cellW + gut;
+    const dy = ((i / layout.cols) | 0) * cellH + gut;
+    sctx.drawImage(source, f.sx, f.sy, f.sw, f.sh, dx, dy, dw, dh);
+    return {
+      sx: dx,
+      sy: dy,
+      sw: dw,
+      sh: dh,
+      footX: f.footX * SHEET_SCALE,
+      footY: f.footY * SHEET_SCALE,
+      boxTop: f.boxTop * SHEET_SCALE,
+      boxBottom: f.boxBottom * SHEET_SCALE,
+    };
+  });
+
+  return { canvas: small, frames, layout, kitHue, variants: new Map() };
+}
+
+/**
+ * Where the floor sits in a cell that was delivered already cut out.
+ *
+ * Fixed by the specification rather than measured, because there is nothing
+ * left in the image to measure it from — which is the point. Every frame of
+ * every sheet puts the floor on the same line, so a figure above it is in the
+ * air and the game does not have to work out which.
+ */
+const CUT_OUT_FLOOR = 470 / 512;
+
+/**
+ * Clear a flat background, and report whether the sheet arrived cut out.
+ *
+ * Returns false for the sheets drawn on paper, which need the whole apparatus
+ * below. Returns true when the figures already stand alone: either the image
+ * carries transparency, or it was drawn on a single flat colour, which is the
+ * fallback for tools that cannot export an alpha channel.
+ */
+function cutOut(ctx: CanvasRenderingContext2D, w: number, h: number): boolean {
+  const d = ctx.getImageData(0, 0, w, h).data;
+  let empty = 0;
+  let seen = 0;
+  for (let i = 0; i < w * h; i += 37) {
+    seen++;
+    if (d[i * 4 + 3] < 16) empty++;
+  }
+  // A real cut-out sheet is mostly empty space — a figure occupies a fraction
+  // of its cell and the rest is nothing. Asking for a lot of transparency
+  // rather than any avoids reading a stray soft pixel in a paper sheet as a
+  // whole different kind of delivery.
+  return seen > 0 && empty / seen > 0.15;
+}
+
+/** Cut a cut-out sheet on an exact grid. No searching, nothing to remove. */
+function sliceCutOut(
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  layout: SheetLayout,
+): Sheet | null {
+  const cw = canvas.width / layout.cols;
+  const ch = canvas.height / layout.rows;
+  const frames: Frame[] = [];
+
+  for (let r = 0; r < layout.rows; r++) {
+    for (let c = 0; c < layout.cols; c++) {
+      const sx = Math.round(c * cw);
+      const sy = Math.round(r * ch);
+      const sw = Math.round(cw);
+      const sh = Math.round(ch);
+      const m = measure(ctx, sx, sy, sw, sh);
+      frames.push({
+        sx,
+        sy,
+        sw,
+        sh,
+        footX: sw / 2,
+        footY: sh * CUT_OUT_FLOOR,
+        boxTop: m.top,
+        boxBottom: m.bottom,
+      });
+    }
+  }
+  return pack(canvas, dropOutliers(frames, layout.skip ?? []), layout, dominantHue(ctx, frames));
+}
+
 async function loadOne(url: string, layout: SheetLayout): Promise<Sheet | null> {
   const img = await decode(url);
 
@@ -588,6 +708,17 @@ async function loadOne(url: string, layout: SheetLayout): Promise<Sheet | null> 
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return null;
   ctx.drawImage(img, 0, 0);
+
+  // A sheet drawn on nothing needs none of what follows.
+  //
+  // Everything below this point — the paper flood, the shape labelling, the
+  // hunt for the floor plank, the skipped cells — exists to separate a figure
+  // from the page it was drawn on. A sheet delivered already cut out, on
+  // transparency or on one flat colour, has no page: the figure is the only
+  // thing in the cell, so the cell is simply cut on an exact grid and used.
+  // See docs/ART-SPEC.md; this is the form worth asking for.
+  const cut = cutOut(ctx, canvas.width, canvas.height);
+  if (cut) return sliceCutOut(canvas, ctx, layout);
 
   const gx = layout.left * canvas.width;
   const gy = layout.top * canvas.height;
@@ -654,46 +785,7 @@ async function loadOne(url: string, layout: SheetLayout): Promise<Sheet | null> 
   // gigabyte of canvases between them. The keying and the shape-finding were
   // done at full resolution, where the edges are still crisp; only the result
   // is shrunk.
-  // Repacked with a transparent gutter around every frame, rather than kept as
-  // one shrunken photograph of the sheet.
-  //
-  // Drawing a sub-rectangle of an image at a reduced size samples slightly
-  // OUTSIDE that rectangle, and what lies immediately outside a frame is the
-  // cell border. That bleed put a pale line across the players on court while
-  // the frames themselves were provably clean — measuring one found no wide
-  // run of pixels in it anywhere. Give each frame empty space to bleed into
-  // and there is nothing left to drag in.
-  const picked = dropOutliers(frames, layout.skip ?? []);
-  const gut = 3;
-  const cellW = Math.ceil(Math.max(...picked.map((f) => f.sw)) * SHEET_SCALE) + gut * 2;
-  const cellH = Math.ceil(Math.max(...picked.map((f) => f.sh)) * SHEET_SCALE) + gut * 2;
-
-  const small = document.createElement('canvas');
-  small.width = cellW * layout.cols;
-  small.height = cellH * layout.rows;
-  const sctx = small.getContext('2d', { willReadFrequently: true });
-  if (!sctx) return null;
-  sctx.imageSmoothingQuality = 'high';
-
-  const scaled = picked.map((f, i) => {
-    const dw = Math.round(f.sw * SHEET_SCALE);
-    const dh = Math.round(f.sh * SHEET_SCALE);
-    const dx = (i % layout.cols) * cellW + gut;
-    const dy = ((i / layout.cols) | 0) * cellH + gut;
-    sctx.drawImage(canvas, f.sx, f.sy, f.sw, f.sh, dx, dy, dw, dh);
-    return {
-      sx: dx,
-      sy: dy,
-      sw: dw,
-      sh: dh,
-      footX: f.footX * SHEET_SCALE,
-      footY: f.footY * SHEET_SCALE,
-      boxTop: f.boxTop * SHEET_SCALE,
-      boxBottom: f.boxBottom * SHEET_SCALE,
-    };
-  });
-
-  return { canvas: small, frames: scaled, layout, kitHue, variants: new Map() };
+  return pack(canvas, dropOutliers(frames, layout.skip ?? []), layout, kitHue);
 }
 
 export type SheetSet = Partial<Record<SpriteAction, Sheet>>;
