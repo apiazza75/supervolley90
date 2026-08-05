@@ -238,6 +238,12 @@ export function capsule(
   flat = false,
   belly = 0.34,
   swell = 0.12,
+  /**
+   * Cel shading: one lit tone and one shadow tone meeting at a hard line,
+   * the way drawn animation does it. A soft gradient reads as an airbrushed
+   * 3D render, which is the opposite of the look this game is after.
+   */
+  cel = false,
 ): void {
   const dx = x1 - x0;
   const dy = y1 - y0;
@@ -272,10 +278,17 @@ export function capsule(
     // Across the belly, not the midpoint, so the highlight sits on the muscle.
     const w = wb * 1.3;
     const g = ctx.createLinearGradient(bx - nx * w, by - ny * w, bx + nx * w, by + ny * w);
-    g.addColorStop(0, shade(fill, 0.3));
-    g.addColorStop(0.32, shade(fill, 0.1));
-    g.addColorStop(0.62, fill);
-    g.addColorStop(1, shade(fill, -0.34));
+    if (cel) {
+      g.addColorStop(0, shade(fill, 0.12));
+      g.addColorStop(0.58, shade(fill, 0.12));
+      g.addColorStop(0.581, shade(fill, -0.3));
+      g.addColorStop(1, shade(fill, -0.3));
+    } else {
+      g.addColorStop(0, shade(fill, 0.3));
+      g.addColorStop(0.32, shade(fill, 0.1));
+      g.addColorStop(0.62, fill);
+      g.addColorStop(1, shade(fill, -0.34));
+    }
     ctx.fillStyle = g;
   }
   ctx.fill();

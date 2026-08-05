@@ -180,212 +180,348 @@ export function sampleRig(keys: Keyframe[], t: number): RigPose {
  * absorb the landing. Every one of those has to exist as its own instant or
  * the movement has nothing in the middle.
  */
+/**
+ * The spike, read frame by frame off a 24-frame reference sheet.
+ *
+ * Every earlier attempt at this was me typing angles and then judging the
+ * result myself, and my judgement of "does this look like a spiker" was not
+ * good enough — five rounds of it produced something worse than what it
+ * replaced. These keys are not invented: each one is a numbered frame of an
+ * actual drawn sequence, read off and converted into joint angles.
+ *
+ * What the reference makes obvious, and what nothing I wrote from imagination
+ * had, is that a spike is mostly APPROACH. Ten of its twenty-four frames are
+ * the run-up; the arms swing UP TOGETHER at the plant rather than one at a
+ * time; the body stays tall through it instead of hunching; and the landing is
+ * a deep two-footed absorb, not a touchdown.
+ */
 export const SPIKE: Keyframe[] = [
-  // Last stride of the approach: leg out in front, arms trailing behind.
+  // 1-2 — ready stance, waiting for the set.
   {
     t: 0,
     pose: {
-      hipHeight: 0.47,
-      lumbar: -0.2,
-      thorax: -0.15,
-      head: -0.16,
-      clavicleFar: -0.15,
-      shoulderFar: -0.75,
-      elbowFar: 0.5,
-      wristFar: -0.15,
-      clavicleNear: 0.15,
-      shoulderNear: -0.95,
-      elbowNear: 0.45,
-      hipFar: 0.5,
-      kneeFar: -0.5,
-      ankleFar: 0.25,
-      hipNear: -0.34,
-      kneeNear: -0.28,
-      ankleNear: 0.12,
+      hipHeight: 0.46,
+      lumbar: -0.12,
+      thorax: -0.1,
+      head: -0.08,
+      shoulderFar: -0.15,
+      elbowFar: 0.35,
+      shoulderNear: -0.1,
+      elbowNear: 0.3,
+      hipFar: 0.12,
+      kneeFar: -0.35,
+      ankleFar: 0.15,
+      hipNear: -0.08,
+      kneeNear: -0.3,
+      ankleNear: 0.15,
     },
   },
-  // Plant and load: both feet down, deepest crouch, arms swung fully back.
+  // 3 — first step, weight tipping forward over the front foot.
   {
     t: 0.13,
     pose: {
-      hipHeight: 0.30,
+      hipHeight: 0.45,
+      lumbar: -0.28,
+      thorax: -0.22,
+      head: -0.14,
+      shoulderFar: 0.5,
+      elbowFar: 0.8,
+      shoulderNear: -0.6,
+      elbowNear: 0.7,
+      hipFar: 0.45,
+      kneeFar: -0.5,
+      ankleFar: 0.2,
+      hipNear: -0.3,
+      kneeNear: -0.25,
+      ankleNear: 0.3,
+    },
+  },
+  // 4-5 — running stride, arms driving contralaterally.
+  {
+    t: 0.26,
+    pose: {
+      hipHeight: 0.47,
+      lumbar: -0.3,
+      thorax: -0.2,
+      head: -0.12,
+      shoulderFar: -0.7,
+      elbowFar: 1.1,
+      shoulderNear: 0.7,
+      elbowNear: 1.0,
+      hipFar: 0.7,
+      kneeFar: -0.3,
+      ankleFar: 0.1,
+      hipNear: -0.5,
+      kneeNear: -0.9,
+      ankleNear: 0.4,
+    },
+  },
+  // 6-7 — the opposite stride.
+  {
+    t: 0.4,
+    pose: {
+      hipHeight: 0.47,
+      lumbar: -0.3,
+      thorax: -0.2,
+      head: -0.12,
+      shoulderFar: 0.7,
+      elbowFar: 1.0,
+      shoulderNear: -0.7,
+      elbowNear: 1.1,
+      hipFar: -0.5,
+      kneeFar: -0.9,
+      ankleFar: 0.4,
+      hipNear: 0.7,
+      kneeNear: -0.3,
+      ankleNear: 0.1,
+    },
+  },
+  // 8-9 — the long accelerating stride into the plant, body dropping.
+  {
+    t: 0.54,
+    pose: {
+      hipHeight: 0.44,
       lumbar: -0.34,
-      thorax: -0.27,
-      head: -0.3,
-      clavicleFar: -0.2,
-      shoulderFar: -1.35,
-      elbowFar: 0.2,
-      wristFar: -0.1,
-      clavicleNear: 0.2,
-      shoulderNear: -1.5,
-      elbowNear: 0.15,
-      hipFar: 0.42,
+      thorax: -0.24,
+      head: -0.16,
+      shoulderFar: -0.85,
+      elbowFar: 0.95,
+      shoulderNear: 0.8,
+      elbowNear: 0.9,
+      hipFar: 0.85,
+      kneeFar: -0.35,
+      ankleFar: 0.1,
+      hipNear: -0.6,
+      kneeNear: -1.0,
+      ankleNear: 0.45,
+    },
+  },
+  // 10 — last step down, BOTH arms swung back and low, ready to throw.
+  {
+    t: 0.66,
+    pose: {
+      hipHeight: 0.42,
+      lumbar: -0.3,
+      thorax: -0.2,
+      head: -0.12,
+      shoulderFar: -1.0,
+      elbowFar: 0.3,
+      shoulderNear: -1.1,
+      elbowNear: 0.25,
+      hipFar: 0.6,
+      kneeFar: -0.6,
+      ankleFar: 0.3,
+      hipNear: -0.2,
+      kneeNear: -0.6,
+      ankleNear: 0.35,
+    },
+  },
+  // 11-12 — the plant. Deepest crouch, both arms swinging up together, which
+  // is the double-arm swing that produces the height and the single thing
+  // every version written from imagination got wrong.
+  {
+    t: 0.76,
+    pose: {
+      hipHeight: 0.34,
+      lumbar: -0.2,
+      thorax: -0.1,
+      head: 0.02,
+      shoulderFar: 1.6,
+      elbowFar: 0.35,
+      shoulderNear: 1.8,
+      elbowNear: 0.3,
+      hipFar: 0.35,
       kneeFar: -1.15,
-      ankleFar: 0.5,
-      hipNear: 0.3,
-      kneeNear: -1.25,
+      ankleFar: 0.55,
+      hipNear: 0.25,
+      kneeNear: -1.2,
       ankleNear: 0.55,
     },
   },
-  // Throw the arms and extend: the block-and-drive that produces the height.
+  // 13 — extension. Legs drive straight, both arms high, feet leaving.
   {
-    t: 0.24,
+    t: 0.86,
     pose: {
-      hipHeight: 0.60,
-      lumbar: -0.16,
-      thorax: -0.1,
-      head: -0.05,
-      clavicleFar: -0.1,
-      shoulderFar: 1.5,
-      elbowFar: 0.35,
-      wristFar: 0.1,
-      clavicleNear: 0.1,
-      shoulderNear: 1.7,
-      elbowNear: 0.3,
-      hipFar: -0.1,
+      hipHeight: 0.56,
+      lumbar: 0,
+      thorax: 0.05,
+      head: 0.08,
+      shoulderFar: 2.6,
+      elbowFar: 0.25,
+      shoulderNear: 2.8,
+      elbowNear: 0.2,
+      hipFar: -0.05,
       kneeFar: -0.1,
       ankleFar: -0.35,
-      hipNear: -0.05,
+      hipNear: 0,
       kneeNear: -0.08,
       ankleNear: -0.4,
     },
   },
-  // Rising, both arms high, body long.
+  // 15-16 — rising, both arms up, legs tucking back under.
   {
-    t: 0.36,
+    t: 0.98,
     pose: {
-      hipHeight: 0.66,
-      lumbar: 0.06,
+      hipHeight: 0.76,
+      lumbar: 0.08,
       thorax: 0.1,
-      head: 0.06,
-      clavicleFar: -0.05,
-      shoulderFar: 2.5,
-      elbowFar: 0.25,
-      wristFar: 0.05,
-      clavicleNear: 0.05,
-      shoulderNear: 2.7,
-      elbowNear: 0.2,
-      hipFar: -0.2,
-      kneeFar: -0.3,
+      head: 0.1,
+      shoulderFar: 2.9,
+      elbowFar: 0.2,
+      shoulderNear: 3.0,
+      elbowNear: 0.15,
+      hipFar: -0.35,
+      kneeFar: -0.7,
       ankleFar: -0.2,
-      hipNear: -0.05,
-      kneeNear: -0.45,
+      hipNear: -0.2,
+      kneeNear: -0.85,
       ankleNear: -0.25,
     },
   },
-  // The bow. Back arched, hitting elbow high and behind the head, off arm
-  // extended at the ball — the shape everyone recognises as a spike.
+  // 17-18 — the arm separates: hitting elbow drawn high and back, off arm
+  // held out in front tracking the ball.
   {
-    t: 0.5,
+    t: 1.08,
     pose: {
-      hipHeight: 0.84,
-      lumbar: 0.2,
-      thorax: 0.13,
-      head: 0.2,
-      clavicleFar: 0.1,
-      shoulderFar: 3.35,
-      elbowFar: -1.15,
-      wristFar: 0.35,
-      clavicleNear: -0.05,
-      shoulderNear: 2.35,
+      hipHeight: 0.83,
+      lumbar: 0.16,
+      thorax: 0.1,
+      head: 0.12,
+      shoulderFar: 3.3,
+      elbowFar: 1.0,
+      wristFar: 0.2,
+      shoulderNear: 1.9,
       elbowNear: 0.2,
-      hipFar: -0.55,
+      hipFar: -0.5,
       kneeFar: -0.75,
       ankleFar: -0.15,
-      hipNear: -0.35,
+      hipNear: -0.3,
+      kneeNear: -0.9,
+      ankleNear: -0.2,
+    },
+  },
+  // 19 — the bow at its deepest: back arched, elbow above the shoulder.
+  {
+    t: 1.18,
+    pose: {
+      hipHeight: 0.84,
+      lumbar: 0.28,
+      thorax: 0.14,
+      head: 0.16,
+      shoulderFar: 3.5,
+      elbowFar: 1.5,
+      wristFar: 0.3,
+      shoulderNear: 2.1,
+      elbowNear: 0.25,
+      hipFar: -0.6,
+      kneeFar: -0.85,
+      ankleFar: -0.15,
+      hipNear: -0.4,
       kneeNear: -0.95,
       ankleNear: -0.2,
     },
   },
-  // Contact. The bow releases: torso jackknifes forward, hitting arm snaps
-  // straight, the wrist rolls over the top of the ball, legs pike through.
+  // 20 — contact. Arm snaps straight overhead, wrist rolls over the ball, the
+  // torso jackknifes and the off arm is pulled down hard.
   {
-    t: 0.58,
+    t: 1.26,
     pose: {
       hipHeight: 0.83,
-      lumbar: -0.14,
-      thorax: -0.14,
-      head: -0.1,
-      clavicleFar: 0.05,
-      shoulderFar: 2.72,
-      elbowFar: 0.02,
-      wristFar: -0.55,
-      clavicleNear: -0.1,
-      shoulderNear: 1.15,
-      elbowNear: 0.85,
-      hipFar: 0.55,
-      kneeFar: -0.35,
-      ankleFar: 0.1,
-      hipNear: 0.4,
-      kneeNear: -0.5,
-      ankleNear: 0.1,
+      lumbar: -0.1,
+      thorax: -0.12,
+      head: -0.02,
+      shoulderFar: 2.75,
+      elbowFar: 0.05,
+      wristFar: -0.4,
+      shoulderNear: 0.9,
+      elbowNear: 0.9,
+      hipFar: 0.3,
+      kneeFar: -0.45,
+      ankleFar: 0.05,
+      hipNear: 0.2,
+      kneeNear: -0.55,
+      ankleNear: 0.05,
     },
   },
-  // Follow-through: the arm carries down and across the body, which is where
-  // the energy goes and the single most-missed beat in a cheap swing.
+  // 21 — follow-through, the arm carried down and across the body.
   {
-    t: 0.72,
+    t: 1.36,
     pose: {
-      hipHeight: 0.78,
-      lumbar: -0.38,
-      thorax: -0.34,
-      head: -0.22,
-      clavicleFar: 0,
-      shoulderFar: 1.05,
-      elbowFar: 0.55,
-      wristFar: -0.3,
-      clavicleNear: -0.05,
-      shoulderNear: 0.35,
-      elbowNear: 0.7,
-      hipFar: 0.75,
-      kneeFar: -0.55,
+      hipHeight: 0.72,
+      lumbar: -0.32,
+      thorax: -0.3,
+      head: -0.16,
+      shoulderFar: 1.2,
+      elbowFar: 0.5,
+      wristFar: -0.2,
+      shoulderNear: 0.2,
+      elbowNear: 0.8,
+      hipFar: 0.6,
+      kneeFar: -0.5,
       ankleFar: 0.15,
-      hipNear: 0.6,
-      kneeNear: -0.7,
+      hipNear: 0.45,
+      kneeNear: -0.6,
       ankleNear: 0.15,
     },
   },
-  // Landing, absorbed through the knees.
+  // 22 — reaching for the floor, torso forward over the knees.
   {
-    t: 0.92,
+    t: 1.48,
     pose: {
-      hipHeight: 0.32,
-      lumbar: -0.3,
-      thorax: -0.24,
-      head: -0.18,
-      clavicleFar: 0,
-      shoulderFar: -0.4,
-      elbowFar: 0.75,
-      wristFar: -0.1,
-      clavicleNear: 0,
-      shoulderNear: -0.25,
-      elbowNear: 0.8,
-      hipFar: 0.25,
-      kneeFar: -1.1,
-      ankleFar: 0.45,
-      hipNear: 0.15,
-      kneeNear: -1.2,
-      ankleNear: 0.5,
+      hipHeight: 0.5,
+      lumbar: -0.36,
+      thorax: -0.3,
+      head: -0.2,
+      shoulderFar: 0.2,
+      elbowFar: 0.7,
+      shoulderNear: -0.1,
+      elbowNear: 0.75,
+      hipFar: 0.35,
+      kneeFar: -0.8,
+      ankleFar: 0.3,
+      hipNear: 0.25,
+      kneeNear: -0.85,
+      ankleNear: 0.3,
     },
   },
-  // Recover to the ready stance.
+  // 23 — the absorb: deep, both feet, weight down through the heels.
   {
-    t: 1.15,
+    t: 1.58,
+    pose: {
+      hipHeight: 0.33,
+      lumbar: -0.34,
+      thorax: -0.26,
+      head: -0.16,
+      shoulderFar: -0.2,
+      elbowFar: 0.9,
+      shoulderNear: -0.35,
+      elbowNear: 0.95,
+      hipFar: 0.3,
+      kneeFar: -1.2,
+      ankleFar: 0.55,
+      hipNear: 0.2,
+      kneeNear: -1.25,
+      ankleNear: 0.55,
+    },
+  },
+  // 24 — back up into the ready stance.
+  {
+    t: 1.74,
     pose: {
       hipHeight: 0.45,
-      lumbar: -0.22,
-      thorax: -0.16,
-      head: -0.12,
-      shoulderFar: -0.35,
-      elbowFar: 0.55,
-      shoulderNear: -0.2,
-      elbowNear: 0.6,
-      hipFar: 0.16,
-      kneeFar: -0.55,
-      ankleFar: 0.22,
-      hipNear: -0.1,
-      kneeNear: -0.62,
-      ankleNear: 0.28,
+      lumbar: -0.16,
+      thorax: -0.12,
+      head: -0.08,
+      shoulderFar: -0.18,
+      elbowFar: 0.4,
+      shoulderNear: -0.12,
+      elbowNear: 0.35,
+      hipFar: 0.14,
+      kneeFar: -0.4,
+      ankleFar: 0.18,
+      hipNear: -0.06,
+      kneeNear: -0.34,
+      ankleNear: 0.18,
     },
   },
 ];
@@ -416,7 +552,10 @@ export function drawRig(
 ): void {
   const s = solveRig(pose);
   const hip = (pose.hipHeight ?? 0.47) * unit;
-  const out = Math.max(0.7, unit * 0.017);
+  // Heavier than the old figure's. Drawn animation is defined by its line:
+  // a hairline outline reads as a vector illustration, a confident one reads
+  // as a cel.
+  const out = Math.max(1.1, unit * 0.026);
 
   const P = (j: Joint): { x: number; y: number } => ({
     x: originX + s.at[j].x * unit * facing,
@@ -432,7 +571,8 @@ export function drawRig(
     fill: string,
     belly: number,
     swell: number,
-  ): void => capsule(ctx, a.x, a.y, b.x, b.y, w0 * unit, w1 * unit, fill, out, false, belly, swell);
+  ): void =>
+    capsule(ctx, a.x, a.y, b.x, b.y, w0 * unit, w1 * unit, fill, out, false, belly, swell, true);
 
   /** A hand or a foot, aligned to the bone it hangs from. */
   const extremity = (
@@ -504,6 +644,19 @@ export function drawRig(
   limb(P('elbowNear'), P('wristNear'), 0.044, 0.026, style.skin, 0.24, 0.18);
   extremity('wristNear', 0.03, 0.02, style.skin, 0.45);
 
+  // Knee pads. Black, chunky, and sitting proud of the leg — in the reference
+  // they are one of the strongest reads in the whole silhouette.
+  for (const j of ['kneeFar', 'kneeNear'] as const) {
+    const k = P(j);
+    ctx.beginPath();
+    ctx.ellipse(k.x, k.y, unit * 0.05, unit * 0.043, 0, 0, Math.PI * 2);
+    ctx.fillStyle = j === 'kneeFar' ? '#141822' : '#1d2230';
+    ctx.fill();
+    ctx.lineWidth = out;
+    ctx.strokeStyle = OUTLINE;
+    ctx.stroke();
+  }
+
   // Neck last of the body, so it tucks under the head and over the collar.
   limb(P('thorax'), P('neck'), 0.05, 0.044, shade(style.skin, -0.1), 0.5, 0);
 
@@ -552,10 +705,26 @@ export function drawRig(
   ctx.fillStyle = style.skin;
   ctx.fill();
   ctx.stroke();
+  // Spiked hair, drawn as a run of points around the skull rather than a
+  // smooth cap. It is the single clearest style marker in the reference and
+  // costs one loop.
   ctx.beginPath();
-  ctx.ellipse(-hw * 0.1, -hh * 0.24, hw * 0.98, hh * 0.72, 0, Math.PI * 0.98, Math.PI * 2.02);
+  ctx.moveTo(-hw * 1.02, hh * 0.18);
+  const spikes = 7;
+  for (let i = 0; i <= spikes; i++) {
+    const u = i / spikes;
+    const a = Math.PI * (1.02 + u * 0.96);
+    const r = 1 + (i % 2 === 0 ? 0.34 : 0.08);
+    ctx.lineTo(Math.cos(a) * hw * r - hw * 0.08, Math.sin(a) * hh * r - hh * 0.2);
+  }
+  ctx.lineTo(hw * 0.92, -hh * 0.05);
+  ctx.quadraticCurveTo(hw * 0.2, hh * 0.1, -hw * 1.02, hh * 0.18);
+  ctx.closePath();
   ctx.fillStyle = style.hair;
   ctx.fill();
+  ctx.lineWidth = out * 0.8;
+  ctx.strokeStyle = OUTLINE;
+  ctx.stroke();
   if (hw > 6) {
     ctx.beginPath();
     ctx.ellipse(hw * 0.4, hh * 0.02, hw * 0.11, hh * 0.1, 0, 0, Math.PI * 2);

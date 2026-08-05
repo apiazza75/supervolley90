@@ -12,7 +12,7 @@ import { SPIKE, drawRig, sampleRig } from '../render/rig';
 
 const SAMPLE = 0.075;
 const SIM_DT = 1 / 120;
-const SPAN = 1.15;
+const SPAN = 1.8;
 
 function main(): void {
   const canvas = document.getElementById('sheet') as HTMLCanvasElement | null;
@@ -110,7 +110,7 @@ function main(): void {
   }
 
   // ---- row 1: the rig
-  label(1, 'RIG', '9 keyframes · 19 joints · wrist, ankle, articulated spine');
+  label(1, 'RIG', '16 keyframes read off the 24-frame reference · 19 joints');
   for (let col = 0; col < cols; col++) {
     const t = col * SAMPLE;
     const c = cell(1, col);
