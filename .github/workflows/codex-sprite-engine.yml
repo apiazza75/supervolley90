@@ -1,0 +1,463 @@
+name: Harden transparent sprite pipeline
+
+on:
+  push:
+    branches:
+      - claude/volley-2d-macos-game-cl9ary
+    paths:
+      - .github/workflows/codex-sprite-engine.yml
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out target branch
+        uses: actions/checkout@v4
+        with:
+          ref: claude/volley-2d-macos-game-cl9ary
+          fetch-depth: 0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply sprite-engine corrections
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path('.')
+
+          # -----------------------------------------------------------------
+          # A deterministic animation playhead. Contact events pin the drawing
+          # to the exact frame named by the art specification; the ordinary
+          # state machine supplies anticipation and recovery between contacts.
+          # -----------------------------------------------------------------
+          (root / 'src/render/sprite-figure.ts').write_text(r'''import { clamp } from '../core/math3';
+          import type { ContactKind } from '../core/contact';
+          import type { Player } from '../core/player';
+          import type { Camera } from './camera';
+          import { type SpriteAction, type SheetSet, drawFrame } from './sprites';
+
+          /** A selected frame from one action sheet. */
+          export interface Playhead {
+            action: SpriteAction;
+            /** Zero-based, 0..23. */
+            frame: number;
+          }
+
+          /** How long each action's 24 frames are meant to take, in seconds. */
+          export const DURATION: Record<SpriteAction, number> = {
+            idle: 1.6,
+            approach: 0.75,
+            spike: 1.1,
+            block: 1.0,
+            bump: 0.85,
+            set: 0.9,
+            dive: 1.3,
+            serve: 1.6,
+            jumpServe: 1.5,
+            celebrate: 1.6,
+          };
+
+          /** Actions that hold on their last frame rather than looping. */
+          const ONESHOT = new Set<SpriteAction>([
+            'spike',
+            'block',
+            'bump',
+            'set',
+            'dive',
+            'serve',
+            'jumpServe',
+          ]);
+
+          /**
+           * Frame on which the simulated contact must appear in the drawing.
+           * Values are zero-based; docs/ART-SPEC.md lists the human-facing
+           * one-based numbers.
+           */
+          export const CONTACT_FRAME: Partial<Record<SpriteAction, number>> = {
+            spike: 19,
+            block: 16,
+            bump: 12,
+            set: 11,
+            dive: 13,
+            serve: 12,
+            jumpServe: 16,
+          };
+
+          interface Head {
+            action: SpriteAction;
+            t: number;
+            /** Keep playing this action through its recovery after a contact. */
+            forced: boolean;
+            /** The first draw after a contact is the exact authored frame. */
+            exactFrame?: number;
+          }
+
+          /** The sheet that represents a physical contact event. */
+          export function spriteActionForContact(
+            kind: ContactKind,
+            airborne: boolean,
+          ): SpriteAction | null {
+            switch (kind) {
+              case 'serve':
+                return airborne ? 'jumpServe' : 'serve';
+              case 'save':
+                return 'dive';
+              case 'block':
+                return 'block';
+              case 'set':
+                return 'set';
+              case 'bump':
+                return 'bump';
+              case 'spike':
+              case 'tip':
+              case 'power':
+                return 'spike';
+              default:
+                return null;
+            }
+          }
+
+          function actionFor(p: Player): SpriteAction {
+            if (p.diving || p.anim === 'down' || p.anim === 'getUp') return 'dive';
+            if (p.anim === 'cheer') return 'celebrate';
+            if (p.anim === 'block') return 'block';
+            if (p.anim === 'serve') return 'serve';
+            if (p.anim === 'set') return 'set';
+            if (p.anim === 'bump') return 'bump';
+            if (p.anim === 'spike' || (p.airborne && p.swing > 0)) return 'spike';
+            if (p.airborne) return 'spike';
+            if (Math.hypot(p.vel.x, p.vel.y) > 0.9) return 'approach';
+            return 'idle';
+          }
+
+          function frameAt(action: SpriteAction, t: number): number {
+            const span = DURATION[action];
+            const u = ONESHOT.has(action) ? clamp(t / span, 0, 0.999) : (t / span) % 1;
+            return Math.floor(u * 24);
+          }
+
+          /**
+           * Stateful sprite clock, deliberately independent from rendering.
+           * This makes contact alignment testable without a canvas.
+           */
+          export class SpriteTimeline {
+            private readonly heads = new Map<number, Head>();
+
+            /** Pin the player's next rendered pose to the authored contact. */
+            cue(playerId: number, kind: ContactKind, airborne: boolean): void {
+              const action = spriteActionForContact(kind, airborne);
+              if (!action) return;
+              const frame = CONTACT_FRAME[action];
+              if (frame === undefined) return;
+              this.heads.set(playerId, {
+                action,
+                // Start in the middle of the contact frame so floating-point
+                // rounding cannot send the following draw backwards.
+                t: ((frame + 0.5) / 24) * DURATION[action],
+                forced: true,
+                exactFrame: frame,
+              });
+            }
+
+            reset(playerId?: number): void {
+              if (playerId === undefined) this.heads.clear();
+              else this.heads.delete(playerId);
+            }
+
+            frameFor(p: Player, dt: number, actionHint?: SpriteAction): Playhead {
+              const observed = actionHint ?? actionFor(p);
+              let h = this.heads.get(p.id);
+              if (!h) {
+                h = { action: observed, t: 0, forced: false };
+                this.heads.set(p.id, h);
+              }
+
+              if (h.exactFrame !== undefined) {
+                const frame = h.exactFrame;
+                delete h.exactFrame;
+                return { action: h.action, frame };
+              }
+
+              if (h.forced) {
+                h.t += dt;
+                const frame = frameAt(h.action, h.t);
+                if (h.t >= DURATION[h.action]) h.forced = false;
+                return { action: h.action, frame };
+              }
+
+              if (h.action !== observed) {
+                h.action = observed;
+                h.t = 0;
+              } else {
+                h.t += dt;
+              }
+              return { action: h.action, frame: frameAt(h.action, h.t) };
+            }
+          }
+
+          const timeline = new SpriteTimeline();
+
+          /** Called by the renderer on the simulation's exact contact event. */
+          export function cueSpriteContact(
+            playerId: number,
+            kind: ContactKind,
+            airborne: boolean,
+          ): void {
+            timeline.cue(playerId, kind, airborne);
+          }
+
+          /**
+           * Draw a player from sprites, if a sheet for their current action exists.
+           * Returns false when it does not, so the caller can fall back.
+           */
+          export function drawSpritePlayer(
+            ctx: CanvasRenderingContext2D,
+            cam: Camera,
+            p: Player,
+            sheets: SheetSet,
+            dt: number,
+            kit?: string,
+            actionHint?: SpriteAction,
+          ): boolean {
+            const head = timeline.frameFor(p, dt, actionHint);
+            const sheet = sheets[head.action];
+            if (!sheet) return false;
+
+            // The art of a jumping action already contains the lift, so the
+            // sprite is planted on the floor and the drawing does the rising.
+            const lift = sheet.layout.artHasLift ? 0 : p.height;
+            const feet = cam.project(p.pos.x, p.pos.y, lift);
+            const bodyPx = 1.9 * feet.scale * 42;
+            if (bodyPx < 6) return true;
+
+            ctx.save();
+            ctx.globalAlpha = 1 - clamp((p.pos.x + 4.5) / 9, 0, 1) * 0.09;
+            drawFrame(ctx, sheet, head.frame, feet.x, feet.y, bodyPx, p.facing >= 0 ? 1 : -1, kit);
+            ctx.restore();
+            return true;
+          }
+
+          /** Where in a sheet's timeline the ball is struck. Zero-based. */
+          export function contactFrame(action: SpriteAction): number {
+            return CONTACT_FRAME[action] ?? 12;
+          }
+          ''', encoding='utf-8')
+
+          # -----------------------------------------------------------------
+          # Transparent sheets are a strict interchange format, not something
+          # to guess at: exact geometry, no legacy outlier replacement, and one
+          # fixed authored body scale for all 24 poses.
+          # -----------------------------------------------------------------
+          sprites_path = root / 'src/render/sprites.ts'
+          sprites = sprites_path.read_text(encoding='utf-8')
+
+          old = """export interface Sheet {\n  canvas: HTMLCanvasElement;\n  frames: Frame[];\n  layout: SheetLayout;\n  /** Hue of the kit as drawn, in degrees. Used to find what to recolour. */\n  kitHue: number;\n  /** Recoloured copies, keyed by target colour. */\n  variants: Map<string, HTMLCanvasElement>;\n}"""
+          new = """export interface Sheet {\n  canvas: HTMLCanvasElement;\n  frames: Frame[];\n  layout: SheetLayout;\n  /** Hue of the kit as drawn, in degrees. Used to find what to recolour. */\n  kitHue: number;\n  /**\n   * Authored standing-body height after packing. Present only on strict\n   * transparent sheets, whose 24 poses must all share one scale.\n   */\n  nativeBodyHeight?: number;\n  /** Recoloured copies, keyed by target colour. */\n  variants: Map<string, HTMLCanvasElement>;\n}"""
+          assert old in sprites, 'Sheet interface changed unexpectedly'
+          sprites = sprites.replace(old, new, 1)
+
+          old = """function pack(\n  source: HTMLCanvasElement,\n  picked: Frame[],\n  layout: SheetLayout,\n  kitHue: number,\n): Sheet | null {"""
+          new = """function pack(\n  source: HTMLCanvasElement,\n  picked: Frame[],\n  layout: SheetLayout,\n  kitHue: number,\n  nativeBodyHeight?: number,\n): Sheet | null {"""
+          assert old in sprites, 'pack signature changed unexpectedly'
+          sprites = sprites.replace(old, new, 1)
+
+          old = "return { canvas: small, frames, layout, kitHue, variants: new Map() };"
+          new = """return {\n    canvas: small,\n    frames,\n    layout,\n    kitHue,\n    nativeBodyHeight:\n      nativeBodyHeight === undefined ? undefined : nativeBodyHeight * SHEET_SCALE,\n    variants: new Map(),\n  };"""
+          assert old in sprites, 'pack return changed unexpectedly'
+          sprites = sprites.replace(old, new, 1)
+
+          old = "): { top: number; bottom: number; centreX: number } {"
+          new = "): { top: number; bottom: number; centreX: number; pixels: number } {"
+          assert old in sprites, 'measure signature changed unexpectedly'
+          sprites = sprites.replace(old, new, 1)
+
+          old = "centreX: count ? sum / count : sw / 2,\n  };"
+          new = "centreX: count ? sum / count : sw / 2,\n    pixels: count,\n  };"
+          assert old in sprites, 'measure return changed unexpectedly'
+          sprites = sprites.replace(old, new, 1)
+
+          old = "const CUT_OUT_FLOOR = 470 / 512;"
+          new = """const CUT_OUT_CELL = 512;\nconst CUT_OUT_COLS = 6;\nconst CUT_OUT_ROWS = 4;\nconst CUT_OUT_FLOOR = 470 / CUT_OUT_CELL;\nconst CUT_OUT_BODY_HEIGHT = 340;"""
+          assert old in sprites, 'cut-out constants changed unexpectedly'
+          sprites = sprites.replace(old, new, 1)
+
+          replacement = r'''function sliceCutOut(
+            canvas: HTMLCanvasElement,
+            ctx: CanvasRenderingContext2D,
+            layout: SheetLayout,
+          ): Sheet | null {
+            const expectedWidth = CUT_OUT_CELL * CUT_OUT_COLS;
+            const expectedHeight = CUT_OUT_CELL * CUT_OUT_ROWS;
+            if (canvas.width !== expectedWidth || canvas.height !== expectedHeight) {
+              throw new Error(
+                `transparent sheet must be ${expectedWidth}x${expectedHeight}; got ${canvas.width}x${canvas.height}`,
+              );
+            }
+            if (layout.cols !== CUT_OUT_COLS || layout.rows !== CUT_OUT_ROWS) {
+              throw new Error(`transparent sheet layout must be ${CUT_OUT_COLS}x${CUT_OUT_ROWS}`);
+            }
+
+            const frames: Frame[] = [];
+            for (let r = 0; r < CUT_OUT_ROWS; r++) {
+              for (let c = 0; c < CUT_OUT_COLS; c++) {
+                const sx = c * CUT_OUT_CELL;
+                const sy = r * CUT_OUT_CELL;
+                const m = measure(ctx, sx, sy, CUT_OUT_CELL, CUT_OUT_CELL);
+                if (m.pixels < 64) {
+                  throw new Error(`transparent sheet frame ${r * CUT_OUT_COLS + c + 1} is empty`);
+                }
+                frames.push({
+                  sx,
+                  sy,
+                  sw: CUT_OUT_CELL,
+                  sh: CUT_OUT_CELL,
+                  footX: CUT_OUT_CELL / 2,
+                  footY: CUT_OUT_CELL * CUT_OUT_FLOOR,
+                  boxTop: m.top,
+                  boxBottom: m.bottom,
+                });
+              }
+            }
+
+            // No outlier substitution here. A strict cut-out sheet contains 24
+            // intentional poses; silently replacing a crouch, dive or full reach
+            // would destroy authored animation while pretending to repair it.
+            return pack(
+              canvas,
+              frames,
+              layout,
+              dominantHue(ctx, frames),
+              CUT_OUT_BODY_HEIGHT,
+            );
+          }
+
+          async function loadOne'''
+          sprites, n = re.subn(
+              r"function sliceCutOut\([\s\S]*?\n}\n\nasync function loadOne",
+              replacement,
+              sprites,
+              count=1,
+          )
+          assert n == 1, 'sliceCutOut function changed unexpectedly'
+
+          old = "const drawn = Math.max(1, f.footY - f.boxTop);"
+          new = "const drawn = sheet.nativeBodyHeight ?? Math.max(1, f.footY - f.boxTop);"
+          assert old in sprites, 'drawFrame scale changed unexpectedly'
+          sprites = sprites.replace(old, new, 1)
+
+          sprites_path.write_text(sprites, encoding='utf-8')
+
+          # -----------------------------------------------------------------
+          # Renderer: use the exact simulation contact as the sprite cue, and
+          # provide an early hint while the action button is buffered. This is
+          # what makes the pre-contact half of bump/set/serve visible.
+          # -----------------------------------------------------------------
+          renderer_path = root / 'src/render/renderer.ts'
+          renderer = renderer_path.read_text(encoding='utf-8')
+
+          old = "import { drawSpritePlayer } from './sprite-figure';"
+          new = "import { cueSpriteContact, drawSpritePlayer } from './sprite-figure';"
+          assert old in renderer, 'renderer sprite import changed unexpectedly'
+          renderer = renderer.replace(old, new, 1)
+
+          old = """        case 'contact': {\n          const power = clamp(ev.speed / 3, 1, 12);"""
+          new = """        case 'contact': {\n          const player = world.findPlayer(ev.playerId);\n          cueSpriteContact(ev.playerId, ev.kind, player?.airborne ?? false);\n          const power = clamp(ev.speed / 3, 1, 12);"""
+          assert old in renderer, 'contact event block changed unexpectedly'
+          renderer = renderer.replace(old, new, 1)
+
+          old = """            const kit = kitFor(p, team.config.colors);\n            if (this.useSprites && drawSpritePlayer(ctx, cam, p, this.sheets, dt, kit[0]))\n              return;"""
+          new = """            const kit = kitFor(p, team.config.colors);\n            const serverHint =\n              world.phase === 'serve' && p.id === world.team(world.servingSide).server.id\n                ? p.airborne\n                  ? 'jumpServe'\n                  : 'serve'\n                : undefined;\n            const bufferedHint =\n              p.actionBuffer > 0 || p.heldAction\n                ? world.possession !== p.side\n                  ? p.airborne && Math.abs(p.pos.y) < 2.4\n                    ? 'block'\n                    : 'bump'\n                  : world.touches === 1\n                    ? 'set'\n                    : world.touches >= 2\n                      ? 'spike'\n                      : undefined\n                : undefined;\n            if (\n              this.useSprites &&\n              drawSpritePlayer(\n                ctx,\n                cam,\n                p,\n                this.sheets,\n                dt,\n                kit[0],\n                serverHint ?? bufferedHint,\n              )\n            )\n              return;"""
+          assert old in renderer, 'live sprite draw changed unexpectedly'
+          renderer = renderer.replace(old, new, 1)
+          renderer_path.write_text(renderer, encoding='utf-8')
+
+          # -----------------------------------------------------------------
+          # Pure timeline tests: they prove the event is not merely documented
+          # but actually selects the correct frame, including jump serve.
+          # -----------------------------------------------------------------
+          (root / 'tests/sprites.test.ts').write_text(r'''import { describe, expect, it } from 'vitest';
+          import { Player, defaultStats } from '../src/core/player';
+          import {
+            CONTACT_FRAME,
+            SpriteTimeline,
+            spriteActionForContact,
+          } from '../src/render/sprite-figure';
+
+          const player = (): Player =>
+            new Player(7, 'home', 'outside', 'TEST', defaultStats());
+
+          describe('sprite contact timeline', () => {
+            const cases = [
+              ['spike', false, 'spike', 19],
+              ['power', true, 'spike', 19],
+              ['tip', true, 'spike', 19],
+              ['block', true, 'block', 16],
+              ['bump', false, 'bump', 12],
+              ['set', false, 'set', 11],
+              ['save', false, 'dive', 13],
+              ['serve', false, 'serve', 12],
+              ['serve', true, 'jumpServe', 16],
+            ] as const;
+
+            it.each(cases)(
+              '%s contact selects %s frame %i',
+              (kind, airborne, action, frame) => {
+                const p = player();
+                const timeline = new SpriteTimeline();
+                timeline.cue(p.id, kind, airborne);
+                expect(timeline.frameFor(p, 0)).toEqual({ action, frame });
+              },
+            );
+
+            it('keeps an authored contact exact even after another action was playing', () => {
+              const p = player();
+              const timeline = new SpriteTimeline();
+              p.vel.y = 4;
+              expect(timeline.frameFor(p, 0.2).action).toBe('approach');
+              timeline.cue(p.id, 'set', false);
+              expect(timeline.frameFor(p, 0)).toEqual({ action: 'set', frame: 11 });
+            });
+
+            it('distinguishes standing and jump serves', () => {
+              expect(spriteActionForContact('serve', false)).toBe('serve');
+              expect(spriteActionForContact('serve', true)).toBe('jumpServe');
+              expect(CONTACT_FRAME.serve).toBe(12);
+              expect(CONTACT_FRAME.jumpServe).toBe(16);
+            });
+          });
+          ''', encoding='utf-8')
+          PY
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit and simulation tests
+        run: npm test
+
+      - name: Web build
+        run: npx vite build
+
+      - name: Commit verified engine corrections
+        run: |
+          set -euo pipefail
+          git config user.name "Codex Sprite Engineering"
+          git config user.email "noreply@openai.com"
+          git add src/render/sprites.ts \
+                  src/render/sprite-figure.ts \
+                  src/render/renderer.ts \
+                  tests/sprites.test.ts
+          git rm .github/workflows/codex-sprite-engine.yml
+          git commit -m "Make transparent sprites deterministic and contact-synchronised"
+          git push origin HEAD:claude/volley-2d-macos-game-cl9ary
