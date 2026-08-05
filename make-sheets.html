@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Super Volley 90 — placeholder sheet maker</title>
+    <style>body { margin: 0; background: #0b0f1a; } canvas { display: none; }</style>
+  </head>
+  <body>
+    <canvas id="sheet"></canvas>
+    <script type="module">
+      import { renderSheet, ACTIONS } from '/src/dev/make-sheets.ts';
+      const canvas = document.getElementById('sheet');
+      window.__makeSheet = (action) => {
+        renderSheet(canvas, action);
+        return canvas.toDataURL('image/png');
+      };
+      window.__actions = ACTIONS;
+    </script>
+  </body>
+</html>

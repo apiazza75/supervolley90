@@ -9,6 +9,8 @@ import { Camera } from './camera';
 import { Effects } from './fx';
 import { Officials } from './officials';
 import { drawActiveRing, drawPlayer, drawPlayerShadow, shade } from './players';
+import { drawSpritePlayer } from './sprite-figure';
+import { type SheetSet, loadSheets } from './sprites';
 import { INTRO as REPLAY_INTRO, type ReplayFrame } from '../game/replay';
 
 /** Interpolated view of a rally, so rendering is smooth between sim steps. */
@@ -43,8 +45,31 @@ export class Renderer {
   private callIndex = 0;
   /** Last phase seen, so the referee can whistle each serve into play. */
   private lastPhase = '';
+  /**
+   * Drawn sprite sheets, if any were found.
+   *
+   * Loading is fire-and-forget and failure is silent by design: until the art
+   * exists the game draws its vector figures, and dropping a PNG into
+   * public/sprites is the entire installation procedure.
+   */
+  private sheets: SheetSet = {};
+  /** Turn the drawn figures off, for comparing them against the vector ones. */
+  useSprites = true;
 
-  constructor(private readonly ctx: CanvasRenderingContext2D) {}
+  constructor(private readonly ctx: CanvasRenderingContext2D) {
+    void loadSheets()
+      .then((s) => {
+        this.sheets = s;
+      })
+      .catch(() => {
+        this.sheets = {};
+      });
+  }
+
+  /** How many drawn actions are available, for the diagnostics overlay. */
+  get spriteCount(): number {
+    return Object.keys(this.sheets).length;
+  }
 
   resize(width: number, height: number): void {
     this.camera.resize(width, height);
@@ -339,7 +364,10 @@ export class Renderer {
           depth: proj.depth,
           draw: () => {
             if (p.id === active) drawActiveRing(ctx, cam, p, '#7ef0ff', state.time);
-            drawPlayer(ctx, cam, p, kitFor(p, team.config.colors), {
+            const kit = kitFor(p, team.config.colors);
+            if (this.useSprites && drawSpritePlayer(ctx, cam, p, this.sheets, dt, kit[0]))
+              return;
+            drawPlayer(ctx, cam, p, kit, {
               active: p.id === active,
               // The only thing still worth charging is the underarm serve, so
               // that is the only time a meter appears over anyone's head.
