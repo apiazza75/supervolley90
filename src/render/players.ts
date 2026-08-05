@@ -332,7 +332,7 @@ function limbPoints(
  * of a 90s arcade sprite, drawn with vectors instead of pixels.
  */
 export function drawPlayer(
-  ctx: CanvasRenderingContext2D,
+  outCtx: CanvasRenderingContext2D,
   cam: Camera,
   p: Player,
   colors: [string, string],
@@ -491,11 +491,25 @@ export function drawPlayer(
   const foreArm = unit * 0.15;
   const outline = Math.max(0.7, unit * 0.018);
 
+  // ---- draw the body onto its own surface, not straight onto the court
+  //
+  // Everything that separates a 2026 figure from a 1994 one needs the body's
+  // SILHOUETTE, and drawing limb by limb straight onto the court never
+  // produces one: no rim light, no reflection, no ambient occlusion, because
+  // there is nothing to mask against. Rendering into a scratch canvas first
+  // costs one blit and unlocks all three.
+  const pad = unit * 0.9;
+  const sw = Math.ceil(unit * 2.6 + pad);
+  const sh = Math.ceil(unit * 2.4 + pad);
+  const scratch = scratchFor(sw, sh);
+  const ctx = scratch.ctx;
+  ctx.clearRect(0, 0, scratch.canvas.width, scratch.canvas.height);
+  // The figure's feet sit here in scratch space.
+  const originX = sw / 2;
+  const originY = sh * 0.82;
+
   ctx.save();
-  // Depth haze follows how far across the court the player is, not which team
-  // they are on: in this projection the far half of *both* courts is upstage.
-  ctx.globalAlpha = 1 - clamp((p.pos.x + 4.5) / 9, 0, 1) * 0.09;
-  ctx.translate(feet.x, feet.y);
+  ctx.translate(originX, originY);
   ctx.rotate(st.tilt * facing);
   // Scaled about the feet, which is where the floor is: squashing about the
   // centre would sink the shoes through it.
@@ -903,7 +917,82 @@ export function drawPlayer(
 
   ctx.restore();
 
-  if (opts.charge > 0.05) drawChargeMeter(ctx, feet.x, feet.y - unit * 1.16, unit, opts.charge);
+  // ---- light the silhouette, then place it on the court
+  //
+  // `source-atop` paints only where the body already is, which is exactly what
+  // a rim light and an ambient shade are: they follow the figure's own shape.
+  // Isolated on the scratch surface it cannot touch the court underneath.
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-atop';
+
+  // Overhead key light: the top of the body is lifted, the underside sinks.
+  const key = ctx.createLinearGradient(0, originY - unit * 2.0, 0, originY + unit * 0.1);
+  key.addColorStop(0, 'rgba(255,246,224,0.20)');
+  key.addColorStop(0.45, 'rgba(255,246,224,0.03)');
+  key.addColorStop(1, 'rgba(10,16,32,0.26)');
+  ctx.fillStyle = key;
+  ctx.fillRect(0, 0, sw, sh);
+
+  // Cool rim down the back edge, the single strongest "modern" cue: arena
+  // lighting is never one flat lamp, and an edge picked out against the dark
+  // is what makes a figure sit IN a scene rather than on top of it.
+  const rim = ctx.createLinearGradient(originX - unit * 0.62, 0, originX + unit * 0.62, 0);
+  const back = facing >= 0 ? 0 : 1;
+  rim.addColorStop(back, 'rgba(150,205,255,0.34)');
+  rim.addColorStop(0.42 + back * 0.16, 'rgba(150,205,255,0)');
+  ctx.fillStyle = rim;
+  ctx.fillRect(0, 0, sw, sh);
+  ctx.restore();
+
+  outCtx.save();
+  // Depth haze follows how far across the court the player is, not which team
+  // they are on: in this projection the far half of *both* courts is upstage.
+  outCtx.globalAlpha = 1 - clamp((p.pos.x + 4.5) / 9, 0, 1) * 0.09;
+
+  // Reflection in the varnish, under the feet and fading out fast. A polished
+  // sports floor gives back a soft, short, heavily damped image — anything
+  // more reads as a mirror and anything less is a matte 90s floor.
+  if (p.height < 0.9) {
+    outCtx.save();
+    outCtx.globalAlpha *= 0.17 * (1 - p.height / 0.9);
+    // Mirror about the FEET line, not about the bottom of the scratch surface.
+    // Reflecting about the surface put the image half a body below the shoes,
+    // detached, like a second player lying in the floor.
+    outCtx.translate(feet.x - originX, feet.y);
+    outCtx.scale(1, -0.42);
+    outCtx.drawImage(scratch.canvas, 0, 0, sw, sh, 0, -originY, sw, sh);
+    outCtx.restore();
+  }
+
+  outCtx.drawImage(scratch.canvas, 0, 0, sw, sh, feet.x - originX, feet.y - originY, sw, sh);
+  outCtx.restore();
+
+  if (opts.charge > 0.05) drawChargeMeter(outCtx, feet.x, feet.y - unit * 1.16, unit, opts.charge);
+}
+
+/**
+ * A reusable offscreen surface for one figure.
+ *
+ * Module-level and grown on demand: allocating a canvas per player per frame
+ * would cost more than everything it enables.
+ */
+const scratch: { canvas: HTMLCanvasElement | null; ctx: CanvasRenderingContext2D | null } = {
+  canvas: null,
+  ctx: null,
+};
+
+function scratchFor(w: number, h: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+  if (!scratch.canvas) {
+    scratch.canvas = document.createElement('canvas');
+    scratch.ctx = scratch.canvas.getContext('2d');
+  }
+  const c = scratch.canvas;
+  if (c.width < w || c.height < h) {
+    c.width = Math.max(c.width, w);
+    c.height = Math.max(c.height, h);
+    scratch.ctx = c.getContext('2d');
+  }
+  return { canvas: c, ctx: scratch.ctx as CanvasRenderingContext2D };
 }
 
 /**

@@ -397,6 +397,24 @@ export class Renderer {
     v.addColorStop(1, 'rgba(2,4,10,0.5)');
     ctx.fillStyle = v;
     ctx.fillRect(0, 0, w, h);
+
+    // A warm lift through the band the play happens in, and a cool cast in the
+    // shadows. This is colour grading, and it is the cheapest thing that stops
+    // a picture reading as flat fills straight out of a 1990s palette.
+    ctx.globalCompositeOperation = 'lighter';
+    const warm = ctx.createLinearGradient(0, h * 0.34, 0, h * 0.92);
+    warm.addColorStop(0, 'rgba(255,196,120,0)');
+    warm.addColorStop(0.45, 'rgba(255,190,116,0.055)');
+    warm.addColorStop(1, 'rgba(255,180,110,0)');
+    ctx.fillStyle = warm;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.globalCompositeOperation = 'source-over';
+    const cool = ctx.createLinearGradient(0, 0, 0, h * 0.42);
+    cool.addColorStop(0, 'rgba(24,44,92,0.2)');
+    cool.addColorStop(1, 'rgba(24,44,92,0)');
+    ctx.fillStyle = cool;
+    ctx.fillRect(0, 0, w, h * 0.42);
     ctx.restore();
   }
 

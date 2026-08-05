@@ -104,8 +104,10 @@ export class Arena {
 
     this.drawCrowd(ctx, cam, time);
     this.drawRoof(ctx, cam);
+    this.drawShafts(ctx, cam, time);
     this.drawBarrier(ctx, cam);
     this.drawFloor(ctx, cam);
+    this.drawRibbon(ctx, cam, time);
   }
 
   /**
@@ -216,6 +218,93 @@ export class Arena {
         ctx.fill();
       }
     }
+    ctx.restore();
+  }
+
+  /**
+   * Light shafts from the roof banks down onto the court.
+   *
+   * The lamps were bright dots with a glow and nothing between them and the
+   * floor, which is why the hall read as a flat backdrop with a court painted
+   * on it. Real arena light is visible in the air — that volume is most of
+   * what makes a lit space look lit, and it costs five gradients.
+   */
+  private drawShafts(ctx: CanvasRenderingContext2D, cam: Camera, time: number): void {
+    const { viewWidth: w, viewHeight: h } = cam;
+    const back = rowDepth(STAND_ROWS - 1);
+    const top = cam.project(back, -34, rowHeight(STAND_ROWS - 1) + 0.55).y - 26;
+    const floorY = cam.projectFloor(0, 0).y;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 5; i++) {
+      const cx = (w * (i + 0.5)) / 5;
+      // A shaft widens as it falls and shimmers very slightly, which is what
+      // stops five identical cones reading as wallpaper.
+      const sway = Math.sin(time * 0.5 + i) * 6;
+      const spread = w * 0.085;
+      const grad = ctx.createLinearGradient(0, top, 0, floorY);
+      grad.addColorStop(0, 'rgba(255,244,214,0.1)');
+      grad.addColorStop(0.55, 'rgba(255,240,206,0.035)');
+      grad.addColorStop(1, 'rgba(255,236,196,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(cx - 26, top);
+      ctx.lineTo(cx + 26, top);
+      ctx.lineTo(cx + spread + sway, floorY);
+      ctx.lineTo(cx - spread + sway, floorY);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+    void h;
+  }
+
+  /**
+   * The LED ribbon that runs the length of the barrier.
+   *
+   * Every arena built since about 2005 has one, and nothing dates a hall
+   * faster than its absence: a static painted hoarding is a 1990s photograph.
+   */
+  private drawRibbon(ctx: CanvasRenderingContext2D, cam: Camera, time: number): void {
+    const x = STAND_FRONT - 0.34;
+    const top = cam.project(x, -34, 0.62);
+    const bottom = cam.project(x, -34, 0.12);
+    const right = cam.project(x, 34, 0.12);
+    const height = bottom.y - top.y;
+    const width = right.x - top.x;
+    if (height < 4) return;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(top.x, top.y, width, height);
+    ctx.clip();
+    ctx.fillStyle = '#070a14';
+    ctx.fillRect(top.x, top.y, width, height);
+
+    // A band of lit cells sliding along the boards.
+    const cell = 13;
+    const offset = (time * 62) % (cell * 2);
+    for (let i = -2; i * cell < width + cell * 2; i++) {
+      const cx = top.x + i * cell - offset;
+      const phase = (i * 0.35 + time * 0.9) % 3;
+      const hue = phase < 1 ? '255,196,72' : phase < 2 ? '90,170,255' : '236,240,255';
+      // Dim. A ribbon board is scenery at the edge of the eye, and at full
+      // strength it pulled attention clean off the court — the one thing the
+      // background must never do.
+      const lit = 0.07 + 0.16 * Math.abs(Math.sin(i * 0.7 + time * 2.2));
+      ctx.fillStyle = `rgba(${hue},${lit})`;
+      ctx.fillRect(cx, top.y + 1, cell - 3, height - 2);
+    }
+
+    // Bloom over the strip, so it reads as emitting rather than painted.
+    const glow = ctx.createLinearGradient(0, top.y - height, 0, top.y + height * 2);
+    glow.addColorStop(0, 'rgba(255,220,150,0)');
+    glow.addColorStop(0.5, 'rgba(255,220,150,0.06)');
+    glow.addColorStop(1, 'rgba(255,220,150,0)');
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = glow;
+    ctx.fillRect(top.x, top.y - height, width, height * 3);
     ctx.restore();
   }
 
