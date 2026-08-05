@@ -536,18 +536,55 @@ function dropOutliers(frames: Frame[], skip: number[]): Frame[] {
   });
 }
 
-async function loadOne(url: string, layout: SheetLayout): Promise<Sheet | null> {
-  const img = await new Promise<HTMLImageElement | null>((resolve) => {
+/**
+ * Decode a sheet into something a canvas can be read back from.
+ *
+ * Fetched as bytes and decoded from a Blob rather than pointed at with an
+ * `<img src>`. Every part of this file works by reading pixels back out of a
+ * canvas, and a canvas that has had a cross-origin image drawn into it refuses
+ * to be read — `getImageData` throws instead of returning. In the browser, dev
+ * server and page share an origin so nothing is cross-origin; in the packaged
+ * application the files arrive over the shell's own protocol, which need not
+ * count as the same origin as the page. A Blob always does.
+ */
+function fromUrl(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
     const el = new Image();
     el.onload = () => resolve(el);
-    el.onerror = () => resolve(null);
-    el.src = url;
+    el.onerror = () => reject(new Error(`could not decode ${src}`));
+    el.src = src;
   });
-  if (!img) return null;
+}
+
+async function decode(url: string): Promise<ImageBitmap | HTMLImageElement> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const blob = await res.blob();
+    if (typeof createImageBitmap === 'function') return await createImageBitmap(blob);
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      return await fromUrl(objectUrl);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  } catch (err) {
+    // The packaged application restricts what the page may connect to, and the
+    // fetch itself can be refused. Loading the file directly is then the only
+    // route left; it risks the tainting this function exists to avoid, but a
+    // route that might work beats one that certainly does not, and the caller
+    // reports it either way.
+    console.warn(`[sprites] fetch failed for ${url}, loading directly:`, err);
+    return fromUrl(url);
+  }
+}
+
+async function loadOne(url: string, layout: SheetLayout): Promise<Sheet | null> {
+  const img = await decode(url);
 
   const canvas = document.createElement('canvas');
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
+  canvas.width = img.width;
+  canvas.height = img.height;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return null;
   ctx.drawImage(img, 0, 0);
@@ -678,7 +715,17 @@ export async function loadSheets(
   // match starts on vector figures and takes on the drawn ones as they land,
   // instead of waiting for the slowest.
   for (const n of names) {
-    const sheet = await loadOne(`${base}/${n}.png`, SHEETS[n]).catch(() => null);
+    // Resolved against the document rather than left relative, so it does not
+    // depend on what the page's path happens to be once bundled.
+    const url = new URL(`${base}/${n}.png`, document.baseURI).href;
+    const sheet = await loadOne(url, SHEETS[n]).catch((err: unknown) => {
+      // Said out loud. Falling back to the vector figures is the right
+      // behaviour when a sheet is genuinely absent, but doing it silently is
+      // how a build shipped where NOTHING loaded and the only clue was that
+      // the players looked like the old ones.
+      console.error(`[sprites] ${n} failed to load from ${url}:`, err);
+      return null;
+    });
     if (sheet) {
       out[n] = sheet;
       onSheet?.(n, sheet);

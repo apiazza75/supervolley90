@@ -25,7 +25,8 @@
     "rig": "tsx tools/rig-sheet.ts",
     "sheets": "tsx tools/make-sheets.ts",
     "frames": "tsx tools/dump-frames.ts",
-    "measure:sheet": "tsx tools/measure-sheet.ts"
+    "measure:sheet": "tsx tools/measure-sheet.ts",
+    "check:build": "npm run build && tsx tools/build-check.ts"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",

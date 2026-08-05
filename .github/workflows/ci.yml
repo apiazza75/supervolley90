@@ -34,6 +34,14 @@ jobs:
       - name: Web build
         run: npx vite build
 
+      # The build is what ships, and it is not the dev server: paths resolve
+      # differently and the page and its assets need not share an origin. A
+      # build went out in which no sprite sheet loaded at all and the game fell
+      # back to its vector figures without a word, so the bundle is now started
+      # and asked whether the drawn art actually arrived.
+      - name: Built bundle loads its assets
+        run: npx playwright install --with-deps chromium && npx tsx tools/build-check.ts
+
       # The balance harness doubles as an integration test: if a tuning change
       # collapses rallies or stops matches from finishing, it fails here rather
       # than being noticed weeks later while playing.
