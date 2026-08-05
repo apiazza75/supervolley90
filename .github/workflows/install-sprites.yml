@@ -1,0 +1,55 @@
+name: Install generated volleyball sprite sheets
+
+on:
+  push:
+    branches:
+      - claude/volley-2d-macos-game-cl9ary
+    paths:
+      - .github/workflows/install-sprites.yml
+
+permissions:
+  contents: write
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out target branch
+        uses: actions/checkout@v4
+        with:
+          ref: claude/volley-2d-macos-game-cl9ary
+          fetch-depth: 0
+
+      - name: Download and validate sprite archive
+        env:
+          SPRITES_URL: "https://ufficioservice-my.sharepoint.com/:u:/g/personal/alessandro_piazza_ufficioservice_it/IQAP9srKWCstTacTZ3p0CB0_AdjvSNIrHkub0xjjfbfLuBs?download=1"
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 --retry-all-errors "$SPRITES_URL" -o /tmp/supervolley-sprites.zip
+          unzip -t /tmp/supervolley-sprites.zip
+          mkdir -p public/sprites
+          unzip -o /tmp/supervolley-sprites.zip -d public/sprites
+
+          expected=(spike.png approach.png block.png bump.png set.png dive.png serve.png jumpServe.png celebrate.png)
+          for file in "${expected[@]}"; do
+            test -s "public/sprites/$file"
+            file "public/sprites/$file" | grep -q 'PNG image data'
+          done
+
+      - name: Commit the nine final sheets to this branch
+        run: |
+          set -euo pipefail
+          git config user.name "ChatGPT Sprite Installer"
+          git config user.email "noreply@openai.com"
+          git add public/sprites/spike.png \
+                  public/sprites/approach.png \
+                  public/sprites/block.png \
+                  public/sprites/bump.png \
+                  public/sprites/set.png \
+                  public/sprites/dive.png \
+                  public/sprites/serve.png \
+                  public/sprites/jumpServe.png \
+                  public/sprites/celebrate.png
+          git rm .github/workflows/install-sprites.yml
+          git commit -m "Replace placeholder sprite sheets with final artwork"
+          git push origin HEAD:claude/volley-2d-macos-game-cl9ary
