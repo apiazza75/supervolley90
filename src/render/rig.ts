@@ -185,9 +185,9 @@ export const SPIKE: Keyframe[] = [
   {
     t: 0,
     pose: {
-      hipHeight: 0.46,
-      lumbar: -0.12,
-      thorax: 0.18,
+      hipHeight: 0.47,
+      lumbar: -0.2,
+      thorax: -0.15,
       head: -0.16,
       clavicleFar: -0.15,
       shoulderFar: -0.75,
@@ -199,18 +199,18 @@ export const SPIKE: Keyframe[] = [
       hipFar: 0.5,
       kneeFar: -0.5,
       ankleFar: 0.25,
-      hipNear: -0.55,
-      kneeNear: -0.75,
-      ankleNear: -0.2,
+      hipNear: -0.34,
+      kneeNear: -0.28,
+      ankleNear: 0.12,
     },
   },
   // Plant and load: both feet down, deepest crouch, arms swung fully back.
   {
     t: 0.13,
     pose: {
-      hipHeight: 0.33,
-      lumbar: -0.3,
-      thorax: 0.42,
+      hipHeight: 0.30,
+      lumbar: -0.34,
+      thorax: -0.27,
       head: -0.3,
       clavicleFar: -0.2,
       shoulderFar: -1.35,
@@ -231,9 +231,9 @@ export const SPIKE: Keyframe[] = [
   {
     t: 0.24,
     pose: {
-      hipHeight: 0.58,
-      lumbar: -0.05,
-      thorax: 0.05,
+      hipHeight: 0.60,
+      lumbar: -0.16,
+      thorax: -0.1,
       head: -0.05,
       clavicleFar: -0.1,
       shoulderFar: 1.5,
@@ -254,9 +254,9 @@ export const SPIKE: Keyframe[] = [
   {
     t: 0.36,
     pose: {
-      hipHeight: 0.86,
+      hipHeight: 0.66,
       lumbar: 0.06,
-      thorax: -0.1,
+      thorax: 0.1,
       head: 0.06,
       clavicleFar: -0.05,
       shoulderFar: 2.5,
@@ -278,9 +278,9 @@ export const SPIKE: Keyframe[] = [
   {
     t: 0.5,
     pose: {
-      hipHeight: 1.0,
-      lumbar: 0.34,
-      thorax: -0.42,
+      hipHeight: 0.84,
+      lumbar: 0.2,
+      thorax: 0.13,
       head: 0.2,
       clavicleFar: 0.1,
       shoulderFar: 3.35,
@@ -302,9 +302,9 @@ export const SPIKE: Keyframe[] = [
   {
     t: 0.58,
     pose: {
-      hipHeight: 0.98,
-      lumbar: -0.24,
-      thorax: 0.3,
+      hipHeight: 0.83,
+      lumbar: -0.14,
+      thorax: -0.14,
       head: -0.1,
       clavicleFar: 0.05,
       shoulderFar: 2.72,
@@ -327,8 +327,8 @@ export const SPIKE: Keyframe[] = [
     t: 0.72,
     pose: {
       hipHeight: 0.78,
-      lumbar: -0.32,
-      thorax: 0.4,
+      lumbar: -0.38,
+      thorax: -0.34,
       head: -0.22,
       clavicleFar: 0,
       shoulderFar: 1.05,
@@ -349,9 +349,9 @@ export const SPIKE: Keyframe[] = [
   {
     t: 0.92,
     pose: {
-      hipHeight: 0.34,
-      lumbar: -0.22,
-      thorax: 0.3,
+      hipHeight: 0.32,
+      lumbar: -0.3,
+      thorax: -0.24,
       head: -0.18,
       clavicleFar: 0,
       shoulderFar: -0.4,
@@ -372,9 +372,9 @@ export const SPIKE: Keyframe[] = [
   {
     t: 1.15,
     pose: {
-      hipHeight: 0.44,
-      lumbar: -0.14,
-      thorax: 0.2,
+      hipHeight: 0.45,
+      lumbar: -0.22,
+      thorax: -0.16,
       head: -0.12,
       shoulderFar: -0.35,
       elbowFar: 0.55,
