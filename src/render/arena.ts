@@ -6,6 +6,7 @@ import {
   COURT_HALF_WIDTH,
   NET_HEIGHT,
 } from '../core/rules';
+import { ArenaArtwork } from './arena-art';
 import { Camera } from './camera';
 
 const LINE = 'rgba(255,255,255,0.94)';
@@ -38,9 +39,9 @@ const CROWD_HAIRS = ['#241a16', '#0f0d10', '#54341c', '#7d5326', '#332520', '#8d
  * Arena scenery drawn for the flat side-on camera: crowd, floor, court
  * markings, net and posts.
  *
- * Everything is procedural, so the build stays asset-free and the court is
- * razor sharp at any resolution — including the 2x backing store a Retina Mac
- * gives us.
+ * Illustrated layers are loaded when present; the procedural arena remains
+ * a complete fallback. Court lines, lighting and match reactions stay live and
+ * razor sharp at any resolution, including a Retina Mac backing store.
  */
 /** Where the stand starts, how deep it is, and how steeply it climbs. */
 const STAND_FRONT = COURT_HALF_WIDTH + 2.1;
@@ -59,6 +60,8 @@ export class Arena {
   private crowd: Spectator[] = [];
   /** Rises after a point and decays, making the stand come alive. */
   private excitement = 0;
+  /** Optional illustrated layers; procedural drawing remains the fallback. */
+  private readonly artwork = new ArenaArtwork();
 
   constructor(seed = 4242) {
     const rng = new Rng(seed);
@@ -97,17 +100,20 @@ export class Arena {
   drawBackground(ctx: CanvasRenderingContext2D, cam: Camera, time: number): void {
     const { viewWidth: w, viewHeight: h } = cam;
 
-    // Flat fills, deliberately: gradients read as a lit 3D scene, and this
-    // game is meant to read as a drawn 2D one.
-    ctx.fillStyle = '#10182b';
-    ctx.fillRect(0, 0, w, h);
+    const illustrated = this.artwork.drawBackdrop(ctx, w, h);
+    if (!illustrated) {
+      // Flat procedural fallback: always available when an asset is absent.
+      ctx.fillStyle = '#10182b';
+      ctx.fillRect(0, 0, w, h);
+      this.drawCrowd(ctx, cam, time);
+      this.drawRoof(ctx, cam);
+    }
 
-    this.drawCrowd(ctx, cam, time);
-    this.drawRoof(ctx, cam);
+    // Dynamic light still belongs to the game and sits over either backdrop.
     this.drawShafts(ctx, cam, time);
-    this.drawBarrier(ctx, cam);
+    if (!illustrated) this.drawBarrier(ctx, cam);
     this.drawFloor(ctx, cam);
-    this.drawRibbon(ctx, cam, time);
+    if (!illustrated) this.drawRibbon(ctx, cam, time);
   }
 
   /**
@@ -361,7 +367,9 @@ export class Arena {
       COURT_NEAR,
     );
 
-    this.drawGrain(ctx, cam, outX, outY);
+    if (!this.artwork.drawCourtFloor(ctx, cam, COURT_HALF_WIDTH, COURT_HALF_LENGTH)) {
+      this.drawGrain(ctx, cam, outX, outY);
+    }
     this.drawLightPools(ctx, cam, outX, outY);
     this.drawLines(ctx, cam);
   }
@@ -498,6 +506,12 @@ export class Arena {
     const tapeNear = cam.project(-W, 0, NET_HEIGHT).y;
     const footFar = cam.project(W, 0, 0).y;
     const footNear = cam.project(-W, 0, 0).y;
+    const antennaTop = Math.min(
+      cam.project(W, 0, ANTENNA_HEIGHT).y,
+      cam.project(-W, 0, ANTENNA_HEIGHT).y,
+    );
+
+    if (this.artwork.drawNet(ctx, cx, antennaTop, footNear, u)) return;
 
     ctx.save();
 
