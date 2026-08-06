@@ -39,11 +39,16 @@ const SEED = 1337;
 /**
  * How much faster than real time the match runs while stills are captured.
  *
- * At 1, waiting for a jump serve or a Lethal Maneuver took minutes per shot
- * and the whole pass ran past twenty. The simulation steps are identical; only
- * the wall clock is compressed.
+ * At 1, waiting for a jump serve or a Lethal Maneuver took minutes per shot and
+ * the whole pass ran past twenty. The simulation steps are identical; only the
+ * wall clock is compressed.
+ *
+ * It is not set higher because the observer can only sample once per animation
+ * frame: at 6x that is roughly 96 ms of simulated time between looks, which is
+ * wide enough to step over a short-lived state — the settled serve formation
+ * was missed entirely. Three keeps the sampling fine enough to see it.
  */
-const FAST = 6;
+const FAST = 3;
 
 /** Chromium in CI images is not always where the bundled version expects. */
 const executablePath =
@@ -61,7 +66,28 @@ const LAUNCH = {
  */
 const CONDITIONS = `
 window.__qaCond = {
-  serveReady: (g, w) => w.phase === 'serve' && w.ball.frozen,
+  // Not merely "the serve phase has begun": at that instant the teams are still
+  // jogging back into formation from the previous rally, and the shot showed a
+  // court full of running. This waits for a composed formation — nobody running
+  // and nobody driving an attack approach.
+  //
+  // It deliberately does not demand all eleven at a dead stop. That state is
+  // real but brief, and an observer sampling once per animation frame steps
+  // over it often enough to make the run slow and flaky. The strict form of the
+  // requirement is measured instead, across every serve in the sample, by
+  // serveFormationSettled — better evidence anyway, since one photograph only
+  // shows that it happened once.
+  serveReady: (g, w) => {
+    if (w.phase !== 'serve' || !w.ball.frozen) return false;
+    const serverId = w.team(w.servingSide).server.id;
+    return window
+      .__qaPlayers(w)
+      .filter((p) => p.id !== serverId)
+      .every((p) => {
+        const loco = p.presentation.locomotion;
+        return loco !== 'run' && loco !== 'approach' && Math.hypot(p.vel.x, p.vel.y) < 1.6;
+      });
+  },
   jumpServeToss: (g, w) => {
     const s = w.team(w.servingSide).server;
     // The whole flight of the toss, not just its rise: a two-frame window is
@@ -151,7 +177,7 @@ interface Shot {
 
 /** Every required screenshot, and the real moment each one waits for. */
 const SHOT_LIST: Shot[] = [
-  { file: '02-formation-ready.png', condition: 'serveReady' },
+  { file: '02-formation-ready.png', condition: 'serveReady', timeout: 120 },
   { file: '03-jump-serve-toss.png', condition: 'jumpServeToss', timeout: 60 },
   { file: '04-jump-serve-approach.png', condition: 'jumpServeApproach', timeout: 60 },
   { file: '05-jump-serve-apex.png', condition: 'jumpServeApex', timeout: 60 },
@@ -162,7 +188,7 @@ const SHOT_LIST: Shot[] = [
   { file: '10-block-apex.png', condition: 'blockApex' },
   { file: '11-bump-contact.png', condition: 'bumpContact' },
   { file: '12-set-contact.png', condition: 'setContact' },
-  { file: '13-officials.png', condition: 'serveReady' },
+  { file: '13-officials.png', condition: 'serveReady', timeout: 120 },
   { file: '17-super-fx.png', condition: 'powerMove', timeout: 90 },
   { file: '18-replay.png', condition: 'replay', timeout: 90 },
 ];

@@ -58,6 +58,16 @@ export interface GameplayMetrics {
   preTossApproachSamples: number;
   /** Covering players borrowing the attack approach. */
   coverApproachSamples: number;
+  /** Serve phases played. */
+  serveFormationPhases: number;
+  /**
+   * Serve phases in which every player but the server came to a complete stop.
+   *
+   * The brief asks that serve-ready show twelve still, ready players. A single
+   * screenshot cannot establish that — it establishes that it happened once —
+   * so it is measured over every serve in the sample instead.
+   */
+  serveFormationSettled: number;
   jumpServe: SequenceMetrics;
   spike: SequenceMetrics;
   block: {
@@ -130,6 +140,8 @@ export function measureGameplay(seeds: number[], steps: number): GameplayMetrics
     serveReadyApproachPlayers: 0,
     preTossApproachSamples: 0,
     coverApproachSamples: 0,
+    serveFormationPhases: 0,
+    serveFormationSettled: 0,
     jumpServe: emptySequence(),
     spike: emptySequence(),
     block: { attempts: 0, contacts: 0, apexHeight: 0, airborneContacts: 0, groundedContacts: 0 },
@@ -145,6 +157,9 @@ export function measureGameplay(seeds: number[], steps: number): GameplayMetrics
     const approachRun = new Map<number, number>();
     const phases = new Map<number, string[]>();
     let overTwo = 0;
+    // Serve-formation bookkeeping: did this serve phase ever settle?
+    let inServePhase = false;
+    let settledThisServe = false;
 
     const notePhase = (p: Player): void => {
       const key = `${p.presentation.action}:${p.presentation.phase}`;
@@ -162,6 +177,23 @@ export function measureGameplay(seeds: number[], steps: number): GameplayMetrics
       const serverId = w.team(w.servingSide).server.id;
       const players = [...w.home.players, ...w.away.players];
       let approachingNow = 0;
+
+      if (w.phase === 'serve') {
+        if (!inServePhase) {
+          inServePhase = true;
+          settledThisServe = false;
+          m.serveFormationPhases++;
+        }
+        const stillNow = players
+          .filter((p) => p.id !== serverId)
+          .every((p) => Math.hypot(p.vel.x, p.vel.y) < 0.45);
+        if (stillNow && !settledThisServe) {
+          settledThisServe = true;
+          m.serveFormationSettled++;
+        }
+      } else {
+        inServePhase = false;
+      }
 
       for (const p of players) {
         notePhase(p);
@@ -266,6 +298,17 @@ export function checkGameplayGates(m: GameplayMetrics): Violation[] {
     String(m.serveReadyApproachPlayers),
   );
   need(m.coverApproachSamples === 0, 'coverApproachSamples', '0', String(m.coverApproachSamples));
+  // Twelve still, ready players before the serve — over the whole sample, not
+  // in one lucky frame. A little slack for a rally that ends far from base.
+  const settledRatio = m.serveFormationPhases
+    ? m.serveFormationSettled / m.serveFormationPhases
+    : 0;
+  need(
+    settledRatio >= 0.8,
+    'serveFormationSettled',
+    '>= 80% of serve phases',
+    `${m.serveFormationSettled}/${m.serveFormationPhases}`,
+  );
   need(
     m.longestApproachRun <= 1.6,
     'longestApproachRun',

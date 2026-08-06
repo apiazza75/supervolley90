@@ -39,6 +39,9 @@ console.log(`longest spell above two:  ${metrics.longestOverTwoApproach.toFixed(
 console.log(`longest approach run:     ${metrics.longestApproachRun.toFixed(2)} s`);
 console.log(`serve-ready approaches:   ${metrics.serveReadyApproachPlayers}`);
 console.log(
+  `serve formation settled:  ${metrics.serveFormationSettled}/${metrics.serveFormationPhases}`,
+);
+console.log(
   `spike:      n=${metrics.spike.count} approach=${metrics.spike.approachDistance.toFixed(2)} m ` +
     `apex=${metrics.spike.apexHeight.toFixed(2)} m allAirborne=${metrics.spike.airborneContact} ` +
     `(best ${metrics.spike.bestApproachDistance.toFixed(2)} m / ${metrics.spike.bestApexHeight.toFixed(2)} m)`,
