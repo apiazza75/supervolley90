@@ -1,0 +1,49 @@
+name: Install complete visual overhaul
+
+on:
+  push:
+    branches:
+      - codex/visual-overhaul-2026
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download verified overhaul payload
+        env:
+          PAYLOAD_URL: https://ufficioservice-my.sharepoint.com/:u:/g/personal/alessandro_piazza_ufficioservice_it/IQCrPrFPKcfjSYux_x7Y5PNXAW9VOrYL9Vs0J3kzRFWlfv0?download=1
+          PAYLOAD_SHA256: f80a2abac0ddd505f06766bfd3acc2efdfeec4d39605b7693d6d93802370d54a
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 5 --retry-all-errors "$PAYLOAD_URL" -o /tmp/sv90-overhaul.tar.gz
+          echo "$PAYLOAD_SHA256  /tmp/sv90-overhaul.tar.gz" | sha256sum --check --strict
+
+      - name: Apply production assets and code
+        run: |
+          set -euo pipefail
+          tar -xzf /tmp/sv90-overhaul.tar.gz -C .
+          rm -f public/arena/net.png
+          rm -f .github/workflows/codex-install-visual-overhaul.yml
+          rm -f .github/workflows/codex-export-worktree.yml
+          rm -f .github/workflows/codex-toolchain.yml
+
+      - name: Commit the complete overhaul
+        run: |
+          set -euo pipefail
+          git config user.name "Codex Visual Systems"
+          git config user.email "noreply@openai.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "Rebuild Super Volley 90 visual system"
+          git push origin HEAD:codex/visual-overhaul-2026
