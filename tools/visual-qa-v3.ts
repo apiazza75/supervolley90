@@ -77,7 +77,7 @@ window.__qaCond = {
     return s.plansJumpServe && s.airborne && s.vertVel <= 0.2 && s.height > 0.4;
   },
   jumpServeContact: (g, w) =>
-    w.lastEvents.some((e) => e.type === 'contact' && e.kind === 'serve' && e.airborne),
+    window.__qaSince(w).some((e) => e.type === 'contact' && e.kind === 'serve' && e.airborne),
   spikeApproach: (g, w) =>
     window.__qaPlayers(w).some(
       (p) => p.presentation.locomotion === 'approach' && p.presentation.sourceJob === 'attack',
@@ -85,18 +85,25 @@ window.__qaCond = {
   spikePlant: (g, w) =>
     window.__qaPlayers(w).some((p) => p.presentation.action === 'spike' && p.presentation.phase === 'plant'),
   spikeContact: (g, w) =>
-    w.lastEvents.some((e) => e.type === 'contact' && (e.kind === 'spike' || e.kind === 'power') && e.airborne),
+    window.__qaSince(w).some(
+      (e) => e.type === 'contact' && (e.kind === 'spike' || e.kind === 'power') && e.airborne,
+    ),
   blockApex: (g, w) =>
     window.__qaPlayers(w).some(
       (p) => p.presentation.action === 'block' && p.airborne && p.height > 0.45 && p.vertVel <= 0.3,
     ),
-  bumpContact: (g, w) => w.lastEvents.some((e) => e.type === 'contact' && e.kind === 'bump'),
-  setContact: (g, w) => w.lastEvents.some((e) => e.type === 'contact' && e.kind === 'set'),
-  powerMove: (g, w) => w.lastEvents.some((e) => e.type === 'powerMove'),
+  bumpContact: (g, w) => window.__qaSince(w).some((e) => e.type === 'contact' && e.kind === 'bump'),
+  setContact: (g, w) => window.__qaSince(w).some((e) => e.type === 'contact' && e.kind === 'set'),
+  powerMove: (g, w) => window.__qaSince(w).some((e) => e.type === 'powerMove'),
   rally: (g, w) => w.phase === 'rally',
   replay: (g) => Boolean(g.replay && g.replay.isPlaying),
 };
 window.__qaPlayers = (w) => [...w.home.players, ...w.away.players];
+// Events emitted since the current condition was armed. Checking only the last
+// frame's events is a one-frame race: a contact can be emitted and overwritten
+// between two observations.
+window.__qaSince = (w) =>
+  w.recentEvents.filter((r) => r.seq > (window.__qaSeq || 0)).map((r) => r.event);
 `;
 
 /** Install the observer: it watches every frame and freezes on a match. */
@@ -106,6 +113,8 @@ window.__qaArm = (name) => {
   window.__qaHit = null;
   window.__qaWanted = name;
   const g = window.__sv90;
+  // Only events from here on count towards this condition.
+  window.__qaSeq = g && g.world ? g.world.eventSeq : 0;
   if (g) g.qaFreeze = false;
 };
 window.__qaRelease = () => {

@@ -1183,10 +1183,27 @@ export class World {
    */
   lastEvents: GameEvent[] = [];
 
+  /** Monotonic counter over every event ever emitted. */
+  eventSeq = 0;
+  /**
+   * A short history of emitted events, newest last.
+   *
+   * `lastEvents` only survives one frame, which is a race for any observer:
+   * a contact emitted on one frame is gone by the time the next one is
+   * examined. The window is what an observer actually needs — "has this
+   * happened since I started watching?" — so it is kept explicitly, with a
+   * sequence number to answer that question exactly.
+   */
+  recentEvents: { seq: number; event: GameEvent }[] = [];
+
   /** Drain accumulated events; the presentation layer calls this once a frame. */
   drainEvents(): GameEvent[] {
     const out = this.events;
     this.lastEvents = out;
+    for (const event of out) this.recentEvents.push({ seq: ++this.eventSeq, event });
+    if (this.recentEvents.length > 128) {
+      this.recentEvents.splice(0, this.recentEvents.length - 128);
+    }
     this.events = [];
     return out;
   }

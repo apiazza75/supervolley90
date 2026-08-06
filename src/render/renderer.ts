@@ -2,7 +2,7 @@ import { Ball } from '../core/ball';
 import { Vec3, clamp } from '../core/math3';
 import { Player } from '../core/player';
 import { Rng } from '../core/rng';
-import { BALL_RADIUS, NET_HEIGHT, isInsideCourt } from '../core/rules';
+import { BALL_RADIUS, GAME_SPEED, NET_HEIGHT, isInsideCourt } from '../core/rules';
 import { GameEvent, World } from '../core/world';
 import { Arena } from './arena';
 import { Camera } from './camera';
@@ -420,6 +420,14 @@ export class Renderer {
     // One display frame begins here; the body-draw counter is per frame.
     beginRenderFrame();
 
+    // The sprite clock has to run on the same time base as the simulation.
+    // The world advances at GAME_SPEED, but the sheets were being played at
+    // wall-clock rate, so the poses ran about a fifth faster than the bodies
+    // they belong to: feet cycled quicker than the player travelled, and every
+    // action read as hurried. This is the coordination the pace work needs —
+    // slowing the game down without it just made the mismatch more obvious.
+    const animDt = dt * GAME_SPEED;
+
     if (this.hitStop > 0) this.hitStop = Math.max(0, this.hitStop - dt);
     if (this.flash > 0) this.flash = Math.max(0, this.flash - dt * 2.4);
     if (this.powerTrail > 0) this.powerTrail = Math.max(0, this.powerTrail - dt);
@@ -485,7 +493,7 @@ export class Renderer {
                 cam,
                 p,
                 this.sheets,
-                dt,
+                animDt,
                 spriteStyle,
                 serverHint ?? bufferedHint,
               )

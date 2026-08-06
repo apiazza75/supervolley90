@@ -60,18 +60,27 @@ export interface SpriteRenderStyle {
   alpha?: number;
 }
 
-/** How long each action's 24 frames are meant to take, in seconds. */
+/**
+ * How long each action's 24 frames are meant to take, in simulation seconds.
+ *
+ * These are consumed on the simulation's clock, not the wall clock, so the
+ * time an action actually occupies on screen is this divided by GAME_SPEED.
+ * They are chosen so that those on-screen durations land inside the brief's
+ * readability budget: roughly 2.4 s for the idle loop, 0.85 s for a shuffle
+ * cycle, 1.05 s for a block, and 1.8 s for a full jump serve. The point of the
+ * budget is that preparation, contact and recovery are separately legible.
+ */
 export const DURATION: Record<SpriteAction, number> = {
-  idle: 1.9,
-  approach: 0.86,
-  spike: 1.12,
-  block: 1.02,
-  bump: 0.9,
-  set: 0.94,
-  dive: 1.34,
-  serve: 1.62,
-  jumpServe: 1.55,
-  celebrate: 1.7,
+  idle: 1.95,
+  approach: 0.7,
+  spike: 0.98,
+  block: 0.86,
+  bump: 0.72,
+  set: 0.76,
+  dive: 1.24,
+  serve: 1.4,
+  jumpServe: 1.48,
+  celebrate: 1.48,
 };
 
 /** Actions that hold on their last frame rather than looping. */
