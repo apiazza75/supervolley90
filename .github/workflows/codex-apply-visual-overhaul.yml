@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   apply:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -98,10 +99,18 @@ jobs:
           path: visual-overhaul-shots
           if-no-files-found: error
 
-      - name: Commit verified overhaul and retire one-time workflow
+      - name: Commit verified overhaul payload
         run: |
           set -euo pipefail
-          rm -f .github/workflows/codex-apply-visual-overhaul.yml
+
+          # A GitHub Actions token cannot publish modifications under
+          # .github/workflows. Preserve the reconstructed CI file as ordinary
+          # text, restore the current workflow directory for this commit, and
+          # let the authenticated GitHub connector install/clean workflows in
+          # a separate commit after the verified source has landed.
+          cp .github/workflows/ci.yml docs/CI-overhaul.yml.txt
+          git checkout origin/codex/visual-overhaul-2026 -- .github/workflows
+
           git config user.name "Codex Visual Systems"
           git config user.email "noreply@openai.com"
           git add -A
