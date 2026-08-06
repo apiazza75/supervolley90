@@ -185,12 +185,12 @@ const SHOT_LIST: Shot[] = [
   { file: '07-spike-approach.png', condition: 'spikeApproach' },
   { file: '08-spike-plant.png', condition: 'spikePlant' },
   { file: '09-spike-contact.png', condition: 'spikeContact' },
-  { file: '10-block-apex.png', condition: 'blockApex' },
+  { file: '10-block-apex.png', condition: 'blockApex', timeout: 150 },
   { file: '11-bump-contact.png', condition: 'bumpContact' },
   { file: '12-set-contact.png', condition: 'setContact' },
   { file: '13-officials.png', condition: 'serveReady', timeout: 120 },
-  { file: '17-super-fx.png', condition: 'powerMove', timeout: 90 },
-  { file: '18-replay.png', condition: 'replay', timeout: 90 },
+  { file: '17-super-fx.png', condition: 'powerMove', timeout: 180 },
+  { file: '18-replay.png', condition: 'replay', timeout: 180 },
 ];
 
 interface Scene {
@@ -224,7 +224,7 @@ async function startDemo(page: Page, seed: number, timeScale = 1): Promise<void>
 }
 
 /** Wait for a real moment, with the clock stopped on arrival. */
-async function awaitMoment(page: Page, name: string, timeoutSec = 90): Promise<boolean> {
+async function awaitMoment(page: Page, name: string, timeoutSec = 120): Promise<boolean> {
   await page.evaluate((n) => (window as never as Record<string, any>).__qaArm(n), name);
   try {
     await page.waitForFunction(

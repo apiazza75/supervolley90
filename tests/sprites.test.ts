@@ -56,6 +56,27 @@ describe('sprite contact timeline', () => {
     }
   });
 
+  it('draws a body that has no presentation state', () => {
+    // Replay rebuilds bodies from recorded frames: they carry a pose but no
+    // presentation. Reading it unconditionally threw inside the render loop and
+    // took the canvas down with it, so the screen went black the first time a
+    // replay played. The timeline must tolerate the shape replay actually uses.
+    const timeline = new SpriteTimeline();
+    const ghost = {
+      id: 1007,
+      anim: 'run',
+      vel: { x: 3, y: 0, z: 0 },
+      height: 0,
+      airborne: false,
+      diving: false,
+      swing: 0,
+      facing: 1,
+      pos: { x: 0, y: -3, z: 0 },
+    } as unknown as Player;
+    expect(() => timeline.frameFor(ghost, 1 / 60)).not.toThrow();
+    expect(ghost.presentation).toBeUndefined();
+  });
+
   it('distinguishes standing and jump serves', () => {
     expect(spriteActionForContact('serve', false)).toBe('serve');
     expect(spriteActionForContact('serve', true)).toBe('jumpServe');

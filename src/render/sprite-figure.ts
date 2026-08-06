@@ -310,7 +310,13 @@ export function drawSpritePlayer(
   // always going at the same speed regardless of how fast the body moved.
   // Scaling playback by actual ground speed costs nothing and is most of the
   // difference between the three reading as different things.
-  const inLocomotion = p.presentation.action === 'none' && !p.airborne && !p.diving;
+  //
+  // Read defensively: replay draws bodies rebuilt from recorded frames, which
+  // carry a pose but no presentation state. Dereferencing it unconditionally
+  // threw inside the render loop and took the whole canvas down with it — the
+  // game went black the first time a replay played.
+  const action = p.presentation?.action;
+  const inLocomotion = (action === undefined || action === 'none') && !p.airborne && !p.diving;
   const strideScale = inLocomotion
     ? clamp(Math.hypot(p.vel.x, p.vel.y) / LOCOMOTION_REFERENCE_SPEED, 0.42, 1.3)
     : 1;
