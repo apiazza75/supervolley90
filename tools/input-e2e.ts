@@ -32,12 +32,20 @@ async function main(): Promise<void> {
   await page.goto('http://localhost:5176/', { waitUntil: 'networkidle' });
   await page.waitForTimeout(400);
 
-  // Through the menu: confirm each row until the match starts. The menu has a
-  // 250 ms input cooldown, so anything faster than that swallows presses.
-  for (let i = 0; i < 4; i++) {
+  // Through the menu: press until a World actually exists, rather than pressing
+  // a fixed number of times and hoping. The menu's input cooldown is enforced
+  // against frame time, so on a slow headless renderer a fixed 360 ms gap
+  // silently swallows presses and the match never starts — which then fails as
+  // a timeout somewhere further down, blaming the wrong thing.
+  let started = false;
+  for (let i = 0; i < 12 && !started; i++) {
     await page.keyboard.press('Space');
-    await page.waitForTimeout(360);
+    await page.waitForTimeout(420);
+    started = await page.evaluate(() =>
+      Boolean((window as unknown as { __sv90?: { world?: unknown } }).__sv90?.world),
+    );
   }
+  if (!started) throw new Error('the menu never started a match');
 
   await page.waitForFunction(
     () => {
