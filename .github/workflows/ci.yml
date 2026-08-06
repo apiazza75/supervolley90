@@ -107,14 +107,16 @@ jobs:
       - name: Gameplay acceptance metrics
         run: npm run metrics
 
+      # Runs before the visual QA, which copies its checkerboard sheet in as
+      # the white-leak screenshot.
+      - name: Sprite white-leak QC
+        run: npm run sprite:qc:v3
+
       # Screenshots and video of real play, plus the render diagnostics. Fails
       # if a required moment — a genuine block, a jump serve in the air — never
       # occurs, rather than photographing something staged.
       - name: Visual QA
         run: npm run visual:qa:v3
-
-      - name: Sprite white-leak QC
-        run: npm run sprite:qc:v3
 
       - name: Upload visual QA
         if: always()

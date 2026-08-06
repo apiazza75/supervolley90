@@ -41,6 +41,14 @@ const TOSS_ON_THE_MOVE = 0.2;
 const PLANT_DEADLINE = 0.72;
 
 /**
+ * How long the body is planted before it leaves the floor, in seconds.
+ *
+ * The gather between the last step and the take-off. Without it the run cycle
+ * cut straight to mid-air and the pose the sheets draw for it was never shown.
+ */
+const PLANT_LEAD = 0.14;
+
+/**
  * How much room a player insists on having, in metres.
  *
  * Chosen by measurement, not by eye: it is the smallest value at which two
@@ -313,9 +321,12 @@ export class TeamBrain {
             // Plant once the ground is covered. The fallback deadline is set by
             // the jump itself — the body needs its rise time in hand or the
             // contact happens on the way down, off the floor but too low.
-            if (arrived || t > s.serveRunUpAt + PLANT_DEADLINE) {
-              if (p.anim === 'approach_run') p.setAnim('plant');
+            const planting = arrived || t > s.serveRunUpAt + PLANT_DEADLINE;
+            if (planting && p.anim !== 'plant') {
+              // Same as the spike: gather first, then go up.
+              p.setAnim('plant');
               p.cancelApproach();
+            } else if (planting && p.presentation.startedAt >= PLANT_LEAD) {
               p.jump();
             }
           }
@@ -633,10 +644,17 @@ export class TeamBrain {
       p.licenseApproach('attack', Math.min(APPROACH_WINDOW, timeToContact + 0.2));
     }
 
+    // Plant, THEN leave the floor. Setting the plant pose on the same step as
+    // the jump meant `jump()` overwrote it before it was ever drawn, so the
+    // load-up the brief asks for did not exist: the run cycle cut straight to
+    // mid-air. The feet arrive a beat early and the body gathers.
+    if (!p.airborne && p.canAct && inPosition && timeToContact <= rise + PLANT_LEAD) {
+      if (p.anim === 'approach_run' || p.anim === 'run' || p.anim === 'shuffle') {
+        p.setAnim('plant');
+        p.cancelApproach();
+      }
+    }
     if (!p.airborne && p.canAct && inPosition && timeToContact <= rise + 0.04) {
-      // Plant, then leave the floor: the run-up is over and the pose must stop
-      // being a run cycle before the body goes up.
-      if (p.anim === 'approach_run') p.setAnim('plant');
       p.cancelApproach();
       p.jump();
     }

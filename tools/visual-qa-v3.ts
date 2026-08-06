@@ -64,7 +64,9 @@ window.__qaCond = {
   serveReady: (g, w) => w.phase === 'serve' && w.ball.frozen,
   jumpServeToss: (g, w) => {
     const s = w.team(w.servingSide).server;
-    return w.phase === 'serve' && s.plansJumpServe && !w.ball.frozen && w.ball.vel.z > 0.5 && !s.airborne;
+    // The whole flight of the toss, not just its rise: a two-frame window is
+    // not something a screenshot can be expected to land on.
+    return w.phase === 'serve' && s.plansJumpServe && !w.ball.frozen && !s.airborne && w.ball.pos.z > 1.7;
   },
   jumpServeApproach: (g, w) => {
     const s = w.team(w.servingSide).server;
@@ -239,6 +241,15 @@ async function captureScreenshots(browser: Browser): Promise<Record<string, unkn
     const r = await fetch('build-info.json', { cache: 'no-store' });
     return r.ok ? await r.json() : null;
   });
+
+  // The sprite white-leak sheet, produced by tools/sprite-qc-v3.ts. Copied
+  // rather than redrawn so the two checks cannot disagree about what is there.
+  const qcSource = resolve('artifacts/sprite-qc/checker/idle-checker.png');
+  if (existsSync(qcSource)) {
+    writeFileSync(resolve(SHOTS, '15-sprite-white-qc.png'), readFileSync(qcSource));
+  } else {
+    failures.push('15-sprite-white-qc.png: run sprite:qc:v3 first');
+  }
 
   // Shots the brief asks for that describe systems this pass did not rebuild;
   // taken from the live game so they show what is actually there.

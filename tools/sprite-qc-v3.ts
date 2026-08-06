@@ -38,11 +38,11 @@ const PORT = 5184;
 /**
  * Allowed fringe, in pixels, per sheet.
  *
- * A regression guard rather than a target: it is set just above what the
- * committed art currently measures, so the number cannot quietly grow. Lower
- * it when the sheets are re-cut.
+ * The committed sheets measure zero after tools/sanitize-sprites-v3.ts, so
+ * this is a tight regression guard rather than a tolerance: it exists to catch
+ * a sheet being replaced with an unsanitised one, not to permit fringing.
  */
-const BUDGET = Number(process.env.SPRITE_WHITE_BUDGET ?? 400);
+const BUDGET = Number(process.env.SPRITE_WHITE_BUDGET ?? 24);
 
 const executablePath =
   process.env.CHROMIUM_PATH ??
