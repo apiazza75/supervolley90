@@ -22,21 +22,23 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Download verified visual overhaul payload
+      - name: Reassemble and verify visual overhaul payload
         env:
-          PAYLOAD_URL: https://api.onedrive.com/v1.0/shares/u!aHR0cHM6Ly91ZmZpY2lvc2VydmljZS1teS5zaGFyZXBvaW50LmNvbS86dTovZy9wZXJzb25hbC9hbGVzc2FuZHJvX3BpYXp6YV91ZmZpY2lvc2VydmljZV9pdC9JUUNyUHJGUEtjZmpTWXV4X3g3WTVQTlhBVzlWT3JZTDlWczBKM2t6UkZXbGZ2MA/root/content
           PAYLOAD_SHA256: 6f1b20a5b593ad079d85a9ab13b9446abe8b3f5194dec9ca4de6e5521dba2a97
         run: |
           set -euo pipefail
-          curl --fail --location --retry 5 --retry-all-errors \
-            --user-agent 'Mozilla/5.0 (GitHub Actions)' \
-            "$PAYLOAD_URL" -o /tmp/sv90-text-overhaul.tar.gz
+          test "$(find .codex -maxdepth 1 -name 'payload.part*' | wc -l | tr -d ' ')" = "7"
+          cat .codex/payload.part00 .codex/payload.part01 .codex/payload.part02 \
+              .codex/payload.part03 .codex/payload.part04 .codex/payload.part05 \
+              .codex/payload.part06 > /tmp/sv90-text-overhaul.b64
+          base64 --decode /tmp/sv90-text-overhaul.b64 > /tmp/sv90-text-overhaul.tar.gz
           echo "$PAYLOAD_SHA256  /tmp/sv90-text-overhaul.tar.gz" | sha256sum --check --strict
 
-      - name: Apply production code
+      - name: Apply production code and retire superseded arena bitmaps
         run: |
           set -euo pipefail
           tar -xzf /tmp/sv90-text-overhaul.tar.gz -C .
+          rm -f public/arena/arena-back.png public/arena/arena-floor.png public/arena/net.png
 
       - run: npm ci
 
@@ -47,6 +49,7 @@ jobs:
         run: |
           npm run assets:check
           npm run typecheck
+          npm test
           npm run build
 
       - name: Commit complete overhaul
