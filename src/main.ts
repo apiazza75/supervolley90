@@ -5,8 +5,10 @@ import { Audio } from './game/audio';
 import { buildStamp, loadBuildInfo } from './game/build-info';
 import { InputManager } from './game/input';
 import { Menu } from './game/menu';
+import { TEAMS } from './game/teams';
 import { Hud } from './render/hud';
 import { Renderer } from './render/renderer';
+import { renderStats, resetRenderStats } from './render/sprite-figure';
 
 type Screen = 'menu' | 'match' | 'paused';
 
@@ -86,11 +88,27 @@ class Game {
     this.elapsed += dt;
 
     this.input.poll();
-    this.update(dt);
-    this.draw(dt);
+    // The QA harness stops the clock so it can photograph an exact moment —
+    // a real contact, a real block at its apex — that would otherwise be gone
+    // by the time the screenshot is taken. It freezes time and nothing else:
+    // no pose, height or swing is ever written from outside the simulation,
+    // which is what made the previous build's evidence meaningless.
+    this.update(this.qaFreeze ? 0 : dt);
+    this.draw(this.qaFreeze ? 0 : dt);
 
     requestAnimationFrame(this.frame);
   };
+
+  /** Set by tools/visual-qa-v3.ts only. Halts time; changes nothing else. */
+  qaFreeze = false;
+  /**
+   * Simulation steps per real second, as a multiplier. The QA harness runs the
+   * match faster than real time so a rare moment — a jump serve, a Lethal
+   * Maneuver — arrives in seconds rather than minutes. The steps themselves are
+   * unchanged and still fixed-size, so the match that gets photographed is the
+   * same match; only the wall clock is compressed. Videos record at 1.
+   */
+  qaTimeScale = 1;
 
   private update(dt: number): void {
     if (this.input.pausePressed) this.togglePause();
@@ -124,14 +142,15 @@ class Game {
 
         // Everything runs at GAME_SPEED: the exchanges around the net were
         // arriving faster than a player could read them.
-        this.accumulator += dt * GAME_SPEED;
+        this.accumulator += dt * GAME_SPEED * this.qaTimeScale;
         // Edges belong to ONE simulation step. A display frame usually spans
         // two fixed steps, and feeding the same command to both replayed every
         // press: the toss press was still "pressed" on the next step, which is
         // half of why the serve fired itself.
         let command = this.input.command();
         let steps = 0;
-        while (this.accumulator >= FIXED_DT && steps < 8) {
+        const maxSteps = 8 * Math.max(1, Math.ceil(this.qaTimeScale));
+        while (this.accumulator >= FIXED_DT && steps < maxSteps) {
           world.step(command);
           if (command.actionPressed || command.jumpPressed) {
             command = { ...command, actionPressed: false, jumpPressed: false };
@@ -140,7 +159,7 @@ class Game {
           steps++;
         }
         // If we fell too far behind, drop the backlog rather than chase it.
-        if (steps >= 8) this.accumulator = 0;
+        if (steps >= maxSteps) this.accumulator = 0;
 
         const events = world.drainEvents();
         this.renderer.handleEvents(world, events);
@@ -263,6 +282,29 @@ class Game {
     ctx.restore();
   }
 
+  /**
+   * Start an attract-mode match: both sides driven by the AI, fixed seed.
+   *
+   * This is the entry point the visual QA uses. It is an ordinary public
+   * command — choose the teams, the difficulty and the seed, then let the game
+   * play — and it is the whole extent of the harness's influence. Everything
+   * it photographs afterwards is produced by the simulation.
+   */
+  startDemoMatch(seed = 1337, difficulty = 1, homeIndex = 0, awayIndex = 1): void {
+    this.world = new World({
+      home: TEAMS[homeIndex],
+      away: TEAMS[awayIndex],
+      seed,
+      difficulty,
+      humanControlsHome: false,
+    });
+    this.renderer.effects.clear();
+    this.accumulator = 0;
+    this.hitStop = 0;
+    this.screen = 'match';
+    this.menu.reset();
+  }
+
   private startMatch(): void {
     const setup = this.menu.ready;
     if (!setup) return;
@@ -313,3 +355,12 @@ game.start();
 // implies. TypeScript's `private` is compile-time only, so the harness can
 // reach the world through this handle at runtime.
 (window as unknown as Record<string, unknown>).__sv90 = game;
+
+// Render diagnostics for tools/visual-qa-v3.ts. `playerBodyDraws` is the
+// number that matters: the rejected build drew two whole bodies per player
+// and blended them, so the QA asserts this never exceeds one.
+(window as unknown as Record<string, unknown>).__sv90render = {
+  stats: renderStats,
+  reset: resetRenderStats,
+  max: () => renderStats.maxBodyDrawsPerPlayer,
+};

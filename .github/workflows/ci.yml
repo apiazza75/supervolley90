@@ -12,8 +12,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  identity:
+    name: Build identity
+    runs-on: ubuntu-latest
+    outputs:
+      short: ${{ steps.sha.outputs.short }}
+    steps:
+      - id: sha
+        run: echo "short=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
   check:
     name: Types, tests and web build
+    needs: [identity]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +45,29 @@ jobs:
         run: npm test
 
       - name: Web build
-        run: npx vite build
+        run: npm run build
+
+      # A build that cannot be tied to a commit is what made the last delivery
+      # unreviewable. The manifest is generated from the CI environment, so if
+      # it disagrees with the SHA being built, something is stale.
+      - name: Build identity matches the commit
+        run: |
+          set -euo pipefail
+          actual="$(node -p "require('./public/build-info.json').commit")"
+          if [ "$actual" != "${{ github.sha }}" ]; then
+            echo "::error::build-info.json says $actual but this run builds ${{ github.sha }}"
+            exit 1
+          fi
+          echo "build identity: $actual"
+
+      - name: Upload the web build
+        uses: actions/upload-artifact@v4
+        with:
+          name: SuperVolley90-web-${{ needs.identity.outputs.short }}
+          path: |
+            dist/
+            public/build-info.json
+          if-no-files-found: error
 
       # The build is what ships, and it is not the dev server: paths resolve
       # differently and the page and its assets need not share an origin. A
@@ -51,8 +83,66 @@ jobs:
       - name: Headless match simulation
         run: npm run sim -- --matches 2 --seed 1337
 
+  visual-acceptance:
+    name: Visual gameplay acceptance
+    needs: [identity]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx playwright install --with-deps chromium
+
+      - name: Web build
+        run: npm run build
+
+      # The gameplay gate. These thresholds are the brief's, measured from
+      # matches the AI actually plays — not from poses assigned by the harness.
+      - name: Gameplay acceptance metrics
+        run: npm run metrics
+
+      # Screenshots and video of real play, plus the render diagnostics. Fails
+      # if a required moment — a genuine block, a jump serve in the air — never
+      # occurs, rather than photographing something staged.
+      - name: Visual QA
+        run: npm run visual:qa:v3
+
+      - name: Sprite white-leak QC
+        run: npm run sprite:qc:v3
+
+      - name: Upload visual QA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SuperVolley90-visual-qa-${{ needs.identity.outputs.short }}
+          path: |
+            artifacts/visual-qa-v3/videos/
+            artifacts/visual-qa-v3/screenshots/
+            artifacts/visual-qa-v3/metrics.json
+            artifacts/visual-qa-v3/gameplay-metrics.json
+            public/build-info.json
+          if-no-files-found: error
+
+      - name: Upload sprite QC
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SuperVolley90-sprite-qc-${{ needs.identity.outputs.short }}
+          path: artifacts/sprite-qc/
+          if-no-files-found: error
+
   macos-app:
     name: macOS app bundle
+    # The DMG is only built once the game has been shown to look right. A green
+    # type-check was never evidence of that, and shipping on it is how the last
+    # build went out.
+    needs: [identity, check, visual-acceptance]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -170,11 +260,19 @@ jobs:
 
           tar -czf SuperVolley90-macos-app.tar.gz -C macos "Super Volley 90.app"
 
+          # Ship the identity next to the binaries, and checksums for both, so
+          # a download can be matched to this run without trusting the filename.
+          cp "$GITHUB_WORKSPACE/public/build-info.json" build-info.json
+          shasum -a 256 dmg/*.dmg SuperVolley90-macos-app.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - name: Upload the app bundle
         uses: actions/upload-artifact@v4
         with:
-          name: SuperVolley90-macos
+          name: SuperVolley90-macos-${{ needs.identity.outputs.short }}
           path: |
             src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/SuperVolley90-macos-app.tar.gz
+            src-tauri/target/release/bundle/build-info.json
+            src-tauri/target/release/bundle/SHA256SUMS.txt
           if-no-files-found: error

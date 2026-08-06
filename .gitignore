@@ -5,7 +5,14 @@ src-tauri/target/
 *.log
 shots/
 
+# Generated at build time from the CI environment; never committed, so it can
+# never disagree with the commit it claims to describe.
+public/build-info.json
+
+# QA output: screenshots, video and metrics are uploaded as CI artifacts.
+artifacts/
+artifacts-sprite-sanitize.json
+
 # Icon variants are derived from src-tauri/icons/icon.png by `tauri icon`.
 src-tauri/icons/*
 !src-tauri/icons/icon.png
-public/build-info.json

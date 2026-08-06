@@ -1172,9 +1172,21 @@ export class World {
     return { time: pred.time, ready: false };
   }
 
+  /**
+   * The events drained on the most recent frame.
+   *
+   * Kept so an observer can see what just happened without consuming it. The
+   * visual QA needs to know that a real block or a real spike contact occurred
+   * on this exact frame; reading `events` directly would steal them from the
+   * renderer, and the alternative — inferring it by assigning poses — is the
+   * thing that made the previous evidence worthless.
+   */
+  lastEvents: GameEvent[] = [];
+
   /** Drain accumulated events; the presentation layer calls this once a frame. */
   drainEvents(): GameEvent[] {
     const out = this.events;
+    this.lastEvents = out;
     this.events = [];
     return out;
   }

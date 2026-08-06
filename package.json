@@ -30,7 +30,9 @@
     "check:build": "npm run build && tsx tools/build-check.ts",
     "shots:overhaul": "tsx tools/visual-overhaul-shots.ts",
     "build:info": "tsx tools/build-info.ts",
-    "metrics": "tsx tools/gameplay-metrics.ts"
+    "metrics": "tsx tools/gameplay-metrics.ts",
+    "visual:qa:v3": "tsx tools/visual-qa-v3.ts",
+    "sprite:qc:v3": "tsx tools/sprite-qc-v3.ts"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
