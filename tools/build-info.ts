@@ -21,9 +21,16 @@ function git(cmd: string, fallback: string): string {
   }
 }
 
-const commit = process.env.GITHUB_SHA ?? git('rev-parse HEAD', 'unknown');
+// DELIVERY_SHA is set by CI. On a pull_request event GITHUB_SHA is the
+// ephemeral merge commit rather than the commit being delivered, and a build
+// stamped with a SHA that exists nowhere in the branch cannot be traced back
+// to anything — which is the one job this manifest has.
+const commit =
+  process.env.DELIVERY_SHA ?? process.env.GITHUB_SHA ?? git('rev-parse HEAD', 'unknown');
 const branch =
-  process.env.GITHUB_REF_NAME ?? git('rev-parse --abbrev-ref HEAD', 'unknown');
+  process.env.GITHUB_HEAD_REF ||
+  process.env.GITHUB_REF_NAME ||
+  git('rev-parse --abbrev-ref HEAD', 'unknown');
 const repository = process.env.GITHUB_REPOSITORY ?? 'apiazza75/supervolley90';
 const runId = process.env.GITHUB_RUN_ID ?? 'local';
 

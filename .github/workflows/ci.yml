@@ -17,14 +17,25 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       short: ${{ steps.sha.outputs.short }}
+      sha: ${{ steps.sha.outputs.sha }}
     steps:
+      # On a pull_request event `github.sha` is the ephemeral merge commit, not
+      # the commit being delivered — so artifacts were named after a SHA that
+      # exists nowhere in the branch. Since the whole point of naming them is
+      # that a download can be traced back to a commit, use the head SHA.
       - id: sha
-        run: echo "short=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+        run: |
+          full="${{ github.event.pull_request.head.sha || github.sha }}"
+          echo "sha=$full" >> "$GITHUB_OUTPUT"
+          echo "short=$(echo "$full" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+          echo "delivering $full"
 
   check:
     name: Types, tests and web build
     needs: [identity]
     runs-on: ubuntu-latest
+    env:
+      DELIVERY_SHA: ${{ needs.identity.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -54,8 +65,9 @@ jobs:
         run: |
           set -euo pipefail
           actual="$(node -p "require('./public/build-info.json').commit")"
-          if [ "$actual" != "${{ github.sha }}" ]; then
-            echo "::error::build-info.json says $actual but this run builds ${{ github.sha }}"
+          expected="${{ needs.identity.outputs.sha }}"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::build-info.json says $actual but this run builds $expected"
             exit 1
           fi
           echo "build identity: $actual"
@@ -87,6 +99,8 @@ jobs:
     name: Visual gameplay acceptance
     needs: [identity]
     runs-on: ubuntu-latest
+    env:
+      DELIVERY_SHA: ${{ needs.identity.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -146,6 +160,8 @@ jobs:
     # build went out.
     needs: [identity, check, visual-acceptance]
     runs-on: macos-latest
+    env:
+      DELIVERY_SHA: ${{ needs.identity.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
 
