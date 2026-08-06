@@ -1,104 +1,100 @@
-import { Player } from '../core/player';
-import { Rng } from '../core/rng';
 import { COURT_HALF_LENGTH, COURT_HALF_WIDTH, NET_HEIGHT, Side } from '../core/rules';
 import { Camera } from './camera';
-import { OUTLINE, capsule, drawPlayer, drawPlayerShadow, shade } from './players';
-import { drawFrame, type SheetSet, type SpritePalette } from './sprites';
 
 /**
- * The people around the court who are not playing: the two referees and three
- * ball kids.
+ * The people around the court who are not playing: the first referee on the
+ * stand, and the line judges at the corners.
  *
- * They are drawn through the same figure pipeline as the players — same
- * anatomy, same shading, same shadows. An earlier version gave them their own
- * simplified stick-figure renderer, and the result was exactly what you would
- * expect: mannequins standing next to properly drawn athletes, worse than
- * having nobody there at all. There is no reason for a second, poorer way to
- * draw a person.
+ * They are drawn here, by this file, from its own primitives. The previous
+ * version imported `Player`, `drawPlayer`, `drawFrame` and the player sprite
+ * sheets and dressed athletes in referee colours, on the theory that one good
+ * figure pipeline beats two. In practice it produced officials built like
+ * hitters, sharing the players' animation state and palette, indistinguishable
+ * from a seventh player loitering at the net — and it also meant every change
+ * to how players are drawn silently changed the officials.
  *
- * Line judges are gone. From this angle they stand at the far corners of the
- * frame doing nothing that reads, and they cost two more bodies competing with
- * the play for attention.
+ * An official is a different kind of figure with a different job: still,
+ * upright, seen from a fixed angle, carrying a flag or a whistle. That is a
+ * small amount of drawing, and it belongs to them.
+ *
+ * There are deliberately no ball kids. From this camera they were three yellow
+ * figures moving in the corners of the frame, competing with the play for
+ * attention and adding nothing.
  */
 
 /** How long an official holds a signal after a whistle. */
 const SIGNAL_TIME = 2.2;
 
-/** Referee kit, and the ball kids' bib. */
-const REF_KIT: [string, string] = ['#b6122b', '#f2f2f4'];
-const KID_KIT: [string, string] = ['#f2b134', '#2b3b52'];
+/** Referee kit: shirt, trim. */
+const REF_SHIRT = '#1d2a44';
+const REF_TRIM = '#e8b53a';
+/** Line judge kit, deliberately unlike either team's. */
+const JUDGE_SHIRT = '#2f3d34';
+const JUDGE_TRIM = '#d9dee2';
+const FLAG = '#d8332f';
+const SKIN = '#d8a877';
+const OUTLINE = '#101418';
 
-interface Kid {
-  id: number;
-  homeX: number;
-  homeY: number;
+/** What a line judge is signalling. */
+export type JudgeSignal = 'idle' | 'in' | 'out' | 'touch';
+
+interface LineJudge {
+  /** Court position, in metres. */
   x: number;
   y: number;
-  targetX: number;
-  targetY: number;
-  vx: number;
-  vy: number;
-  /** 'wait' at the corner, 'fetch' walking out, 'return' coming back. */
-  state: 'wait' | 'fetch' | 'return';
+  /** Seconds left on the current signal. */
+  hold: number;
+  signal: JudgeSignal;
 }
 
-/**
- * The minimum a figure needs for `drawPlayer`, which only ever reads these.
- * Cast rather than constructed as a real `Player` so officials never end up in
- * the simulation by accident.
- */
-function figure(o: {
-  id: number;
-  x: number;
-  y: number;
-  z: number;
-  vx: number;
-  vy: number;
-  anim: string;
-  facing: number;
-}): Player {
-  return {
-    id: o.id,
-    pos: { x: o.x, y: o.y, z: 0 },
-    vel: { x: o.vx, y: o.vy, z: 0 },
-    height: o.z,
-    vertVel: 0,
-    anim: o.anim,
-    facing: o.facing,
-    swing: 0,
-    airborne: false,
-    rotationSlot: 1,
-  } as unknown as Player;
+/** A limb or torso segment: a tapered, rounded bar between two points. */
+function limb(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  r1: number,
+  r2: number,
+  fill: string,
+  lw: number,
+): void {
+  const a = Math.atan2(y2 - y1, x2 - x1) + Math.PI / 2;
+  const dx1 = Math.cos(a) * r1;
+  const dy1 = Math.sin(a) * r1;
+  const dx2 = Math.cos(a) * r2;
+  const dy2 = Math.sin(a) * r2;
+  ctx.beginPath();
+  ctx.moveTo(x1 + dx1, y1 + dy1);
+  ctx.lineTo(x2 + dx2, y2 + dy2);
+  ctx.arc(x2, y2, r2, a, a + Math.PI, false);
+  ctx.lineTo(x1 - dx1, y1 - dy1);
+  ctx.arc(x1, y1, r1, a + Math.PI, a + Math.PI * 2, false);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.lineWidth = lw;
+  ctx.strokeStyle = OUTLINE;
+  ctx.stroke();
 }
 
 export class Officials {
   private signal = 0;
   private signalSide: Side | null = null;
-  private kids: Kid[] = [];
+  private readonly judges: LineJudge[];
 
-  constructor(seed = 0x0ff1c1a1) {
-    const rng = new Rng(seed);
-    const corners: [number, number][] = [
-      [COURT_HALF_WIDTH + 1.6, COURT_HALF_LENGTH + 1.6],
-      [-COURT_HALF_WIDTH - 1.6, -COURT_HALF_LENGTH - 1.6],
-      [-COURT_HALF_WIDTH - 1.9, COURT_HALF_LENGTH + 2.0],
+  constructor() {
+    // Diagonally opposite corners of the free zone, which is where the two
+    // line judges of a four-official crew stand.
+    this.judges = [
+      { x: COURT_HALF_WIDTH + 1.5, y: -COURT_HALF_LENGTH - 1.4, hold: 0, signal: 'idle' },
+      { x: -COURT_HALF_WIDTH - 1.5, y: COURT_HALF_LENGTH + 1.4, hold: 0, signal: 'idle' },
     ];
-    corners.forEach(([x, y], i) => {
-      this.kids.push({
-        // A private id space, well away from the players', so the animation
-        // smoothing state of a kid never collides with a player's.
-        id: 900 + i + rng.int(0, 3),
-        homeX: x,
-        homeY: y,
-        x,
-        y,
-        targetX: x,
-        targetY: y,
-        vx: 0,
-        vy: 0,
-        state: 'wait',
-      });
-    });
+  }
+
+  /** Ball kids were removed for this release; kept as a fact the QA can read. */
+  get ballKids(): readonly never[] {
+    return [];
   }
 
   /** Authorise the serve: a whistle, arm towards the serving side. */
@@ -113,66 +109,46 @@ export class Officials {
     this.signalSide = side;
   }
 
-  /** The ball is dead and lying somewhere: send the nearest kid for it. */
-  fetchBall(x: number, y: number): void {
-    let best: Kid | null = null;
+  /**
+   * Flag a ball that has landed. The nearer judge raises the signal the call
+   * actually was, which is the only reason to have them in frame at all.
+   */
+  callLine(x: number, y: number, inside: boolean): void {
+    let best = this.judges[0];
     let bestD = Infinity;
-    for (const k of this.kids) {
-      if (k.state !== 'wait') continue;
-      const d = Math.hypot(k.homeX - x, k.homeY - y);
+    for (const j of this.judges) {
+      const d = Math.hypot(j.x - x, j.y - y);
       if (d < bestD) {
         bestD = d;
-        best = k;
+        best = j;
       }
     }
-    if (!best) return;
-    best.state = 'fetch';
-    // Never onto the court.
-    //
-    // A kid sent straight to where the ball stopped walked across the playing
-    // area, which no ball kid has ever done — they wait at the edge and the
-    // ball is passed out to them. So the fetch point is pushed to the nearest
-    // point of the free zone on the kid's own side of the court, and the kid
-    // reaches for it from there.
-    const outsideX =
-      Math.abs(x) > COURT_HALF_WIDTH
-        ? x
-        : Math.sign(best.homeX) * (COURT_HALF_WIDTH + 0.9);
-    best.targetX = Math.max(-COURT_HALF_WIDTH - 2.4, Math.min(COURT_HALF_WIDTH + 2.4, outsideX));
-    best.targetY = Math.max(-COURT_HALF_LENGTH - 2.4, Math.min(COURT_HALF_LENGTH + 2.4, y));
+    best.signal = inside ? 'in' : 'out';
+    best.hold = SIGNAL_TIME;
+  }
+
+  /** A ball deflected off the block on its way out. */
+  callTouch(x: number, y: number): void {
+    let best = this.judges[0];
+    let bestD = Infinity;
+    for (const j of this.judges) {
+      const d = Math.hypot(j.x - x, j.y - y);
+      if (d < bestD) {
+        bestD = d;
+        best = j;
+      }
+    }
+    best.signal = 'touch';
+    best.hold = SIGNAL_TIME;
   }
 
   update(dt: number): void {
     this.signal = Math.max(0, this.signal - dt);
-
-    for (const k of this.kids) {
-      if (k.state === 'wait') {
-        k.vx = 0;
-        k.vy = 0;
-        continue;
+    for (const j of this.judges) {
+      if (j.hold > 0) {
+        j.hold = Math.max(0, j.hold - dt);
+        if (j.hold === 0) j.signal = 'idle';
       }
-      const dx = k.targetX - k.x;
-      const dy = k.targetY - k.y;
-      const d = Math.hypot(dx, dy);
-      if (d < 0.15) {
-        if (k.state === 'fetch') {
-          k.state = 'return';
-          k.targetX = k.homeX;
-          k.targetY = k.homeY;
-        } else {
-          k.state = 'wait';
-          k.x = k.homeX;
-          k.y = k.homeY;
-        }
-        k.vx = 0;
-        k.vy = 0;
-        continue;
-      }
-      const speed = 4.4;
-      k.vx = (dx / d) * speed;
-      k.vy = (dy / d) * speed;
-      k.x += k.vx * dt;
-      k.y += k.vy * dt;
     }
   }
 
@@ -180,355 +156,210 @@ export class Officials {
    * Everyone on the far side of the court, drawn before the players so the
    * play always reads in front of them.
    */
-  drawFar(
-    ctx: CanvasRenderingContext2D,
-    cam: Camera,
-    time: number,
-    dt: number,
-    sheets: SheetSet,
-  ): void {
-    // Stepped just off the net line: from directly side-on, everything at y=0
+  drawFar(ctx: CanvasRenderingContext2D, cam: Camera): void {
+    // Stepped just off the net line: from directly side-on everything at y = 0
     // shares one screen column, so a referee standing exactly on the net line
     // looks like they are standing on the net.
-    const px = COURT_HALF_WIDTH + 0.95;
-    const py = 0.7;
-    this.drawPodium(ctx, cam, px, py);
-    // The far referee faces across the court, which is straight at the camera.
-    this.official(ctx, cam, px, py, NET_HEIGHT - 0.62, true, time, sheets);
-
-    for (const k of this.kids) if (k.x > 0) this.kid(ctx, cam, k, time, dt, sheets);
+    this.referee(ctx, cam, COURT_HALF_WIDTH + 0.95, 0.7);
+    for (const j of this.judges) if (j.y > 0) this.lineJudge(ctx, cam, j);
   }
 
-  /** The near-side referee, drawn after the players so they sit in front. */
-  drawNear(
-    ctx: CanvasRenderingContext2D,
-    cam: Camera,
-    time: number,
-    dt: number,
-    sheets: SheetSet,
-  ): void {
-    // The near referee faces the other way, so we are behind them.
-    this.official(ctx, cam, -COURT_HALF_WIDTH - 0.95, -0.7, 0, false, time, sheets);
-    for (const k of this.kids) if (k.x <= 0) this.kid(ctx, cam, k, time, dt, sheets);
+  /** The near-side figures, drawn after the players so they sit in front. */
+  drawNear(ctx: CanvasRenderingContext2D, cam: Camera): void {
+    for (const j of this.judges) if (j.y <= 0) this.lineJudge(ctx, cam, j);
   }
 
   /**
-   * A referee, drawn face-on or from behind.
+   * The first referee, on the stand beside the post.
    *
-   * Everyone else in this game is seen in profile, and correctly so: players
-   * face along the court, which is across the camera. Referees do not. They
-   * stand at the posts and face ACROSS the court, watching the net — so from
-   * a camera looking along that same axis, the referee on the far post is
-   * facing us and the one on the near post has their back to us. Drawing them
-   * in profile like everybody else was simply the wrong view of the body, and
-   * it is why they read as a seventh player loitering by the net.
+   * Seen face-on: referees stand at the post and watch across the net, which
+   * is straight down the camera axis. They never celebrate — the arm goes up
+   * to award the point and comes down again.
    */
-  private official(
-    ctx: CanvasRenderingContext2D,
-    cam: Camera,
-    x: number,
-    y: number,
-    z: number,
-    facingCamera: boolean,
-    time: number,
-    sheets: SheetSet,
-  ): void {
-    if (this.spriteOfficial(ctx, cam, x, y, z, facingCamera, time, sheets)) return;
-    const p = cam.project(x, y, z);
+  private referee(ctx: CanvasRenderingContext2D, cam: Camera, x: number, y: number): void {
+    const standTop = NET_HEIGHT - 0.62;
+    this.stand(ctx, cam, x, y, standTop);
+
+    const p = cam.project(x, y, standTop);
     const u = 1.9 * p.scale * 42;
     if (u < 6) return;
 
-    // Frontal proportions: this is the view where the shoulders are their full
-    // BREADTH rather than their depth, which is most of what makes it read as
-    // a different view of the same body.
+    const lw = Math.max(0.7, u * 0.018);
     const hipY = p.y - u * 0.47;
     const shoulderY = p.y - u * 0.8;
-    const halfShoulder = u * 0.118;
-    const halfWaist = u * 0.079;
-    const halfHip = u * 0.097;
-    const headW = u * 0.062;
     const headH = u * 0.077;
     const headY = shoulderY - u * 0.028 - headH * 0.92;
-    const outline = Math.max(0.7, u * 0.018);
-    const [shirt, trim] = REF_KIT;
-    const skin = '#d8a877';
     // Arm up towards whichever side has just been awarded the point.
     const raise = this.signal > 0 ? (this.signalSide === 'home' ? -1 : 1) : 0;
 
     ctx.save();
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
-    if (z < 0.1) {
-      ctx.fillStyle = 'rgba(7,16,6,0.34)';
-      ctx.beginPath();
-      ctx.ellipse(p.x, p.y, u * 0.16, u * 0.05, 0, 0, Math.PI * 2);
-      ctx.fill();
+
+    // Legs, seen front-on and therefore apart.
+    for (const s of [-1, 1] as const) {
+      limb(ctx, p.x + s * u * 0.055, hipY, p.x + s * u * 0.062, p.y, u * 0.052, u * 0.036, '#242c3a', lw);
+    }
+    // Torso.
+    limb(ctx, p.x, hipY, p.x, shoulderY, u * 0.095, u * 0.115, REF_SHIRT, lw);
+    // Collar stripe, so the kit reads as a uniform rather than a colour.
+    ctx.fillStyle = REF_TRIM;
+    ctx.fillRect(p.x - u * 0.1, shoulderY - u * 0.01, u * 0.2, u * 0.022);
+
+    // Arms. One is raised when a call is being made; otherwise both rest.
+    for (const s of [-1, 1] as const) {
+      const up = raise !== 0 && s === raise;
+      const sx = p.x + s * u * 0.11;
+      const ex = p.x + s * (up ? u * 0.17 : u * 0.13);
+      const ey = up ? shoulderY - u * 0.3 : hipY - u * 0.02;
+      limb(ctx, sx, shoulderY + u * 0.01, ex, ey, u * 0.05, u * 0.038, REF_SHIRT, lw);
+      limb(ctx, ex, ey, ex + s * u * 0.02, ey + (up ? -u * 0.12 : u * 0.11), u * 0.038, u * 0.031, SKIN, lw);
     }
 
-    // Trousers: two legs straight down, seen front-on and therefore apart.
-    for (const side of [-1, 1] as const) {
-      capsule(
-        ctx,
-        p.x + side * u * 0.045,
-        hipY,
-        p.x + side * u * 0.055,
-        p.y - u * 0.03,
-        u * 0.062,
-        u * 0.05,
-        side < 0 ? shade('#2b3350', 0.05) : '#2b3350',
-        outline,
-      );
-      // Shoe.
-      ctx.beginPath();
-      ctx.ellipse(p.x + side * u * 0.055, p.y - u * 0.012, u * 0.042, u * 0.022, 0, 0, Math.PI * 2);
-      ctx.fillStyle = '#1b1e28';
-      ctx.fill();
-      ctx.lineWidth = outline;
-      ctx.strokeStyle = OUTLINE;
-      ctx.stroke();
-    }
-
-    // Torso: shoulders to hips, seen across their full width.
-    const grad = ctx.createLinearGradient(p.x - halfShoulder, 0, p.x + halfShoulder, 0);
-    grad.addColorStop(0, shade(shirt, 0.14));
-    grad.addColorStop(0.55, shirt);
-    grad.addColorStop(1, shade(shirt, -0.24));
+    // Head, with a cap peak: the quickest way to read "official" at this size.
     ctx.beginPath();
-    ctx.moveTo(p.x - halfShoulder, shoulderY);
-    ctx.quadraticCurveTo(p.x - halfWaist - u * 0.01, (shoulderY + hipY) / 2, p.x - halfWaist, hipY - u * 0.06);
-    ctx.lineTo(p.x - halfHip, hipY + u * 0.02);
-    ctx.lineTo(p.x + halfHip, hipY + u * 0.02);
-    ctx.lineTo(p.x + halfWaist, hipY - u * 0.06);
-    ctx.quadraticCurveTo(p.x + halfWaist + u * 0.01, (shoulderY + hipY) / 2, p.x + halfShoulder, shoulderY);
-    ctx.closePath();
-    ctx.fillStyle = grad;
+    ctx.ellipse(p.x, headY, u * 0.062, headH, 0, 0, Math.PI * 2);
+    ctx.fillStyle = SKIN;
     ctx.fill();
-    ctx.lineWidth = outline;
-    ctx.strokeStyle = OUTLINE;
-    ctx.stroke();
-
-    // Collar, or the number panel on the back.
-    ctx.fillStyle = trim;
-    if (facingCamera) {
-      ctx.beginPath();
-      ctx.moveTo(p.x - halfShoulder * 0.4, shoulderY);
-      ctx.lineTo(p.x, shoulderY + u * 0.06);
-      ctx.lineTo(p.x + halfShoulder * 0.4, shoulderY);
-      ctx.closePath();
-      ctx.fill();
-    } else {
-      ctx.globalAlpha = 0.75;
-      ctx.fillRect(p.x - halfShoulder * 0.42, shoulderY + u * 0.09, halfShoulder * 0.84, u * 0.1);
-      ctx.globalAlpha = 1;
-    }
-
-    // Arms, one down and one possibly raised in a signal.
-    for (const side of [-1, 1] as const) {
-      const up = raise === side;
-      const sx = p.x + side * halfShoulder * 0.92;
-      const ex = up ? sx + side * u * 0.03 : sx + side * u * 0.02;
-      const ey = up ? shoulderY - u * 0.34 : hipY + u * 0.02;
-      capsule(ctx, sx, shoulderY + u * 0.01, ex, ey, u * 0.052, u * 0.04, shirt, outline);
-      // Forearm and hand in skin.
-      const fx = up ? ex + side * u * 0.01 : ex + side * u * 0.01;
-      const fy = up ? ey - u * 0.22 : ey + u * 0.14;
-      capsule(ctx, ex, ey, fx, fy, u * 0.04, u * 0.032, skin, outline);
-    }
-
-    // Head: face-on has features, the rear view is hair and an ear-line only.
-    ctx.beginPath();
-    ctx.ellipse(p.x, headY, headW, headH, 0, 0, Math.PI * 2);
-    ctx.fillStyle = skin;
-    ctx.fill();
-    ctx.lineWidth = outline;
+    ctx.lineWidth = lw;
     ctx.strokeStyle = OUTLINE;
     ctx.stroke();
     ctx.beginPath();
-    ctx.ellipse(p.x, headY - headH * 0.22, headW * 1.02, headH * 0.72, 0, Math.PI, Math.PI * 2);
-    ctx.fillStyle = '#26201c';
+    ctx.ellipse(p.x, headY - headH * 0.42, u * 0.066, headH * 0.46, 0, Math.PI, Math.PI * 2);
+    ctx.fillStyle = REF_SHIRT;
     ctx.fill();
-    if (facingCamera && u > 34) {
-      ctx.fillStyle = '#20202c';
-      for (const side of [-1, 1] as const) {
-        ctx.beginPath();
-        ctx.ellipse(p.x + side * headW * 0.38, headY, headW * 0.1, headH * 0.09, 0, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      // The whistle, which is the whole job.
-      ctx.strokeStyle = 'rgba(230,232,240,0.9)';
-      ctx.lineWidth = Math.max(0.8, u * 0.012);
-      ctx.beginPath();
-      ctx.moveTo(p.x - headW * 0.5, headY + headH * 0.2);
-      ctx.quadraticCurveTo(p.x, headY + headH * 1.5, p.x + headW * 0.5, headY + headH * 0.2);
-      ctx.stroke();
-    } else if (u > 34) {
-      ctx.fillStyle = 'rgba(38,32,28,0.55)';
-      ctx.beginPath();
-      ctx.ellipse(p.x, headY + headH * 0.1, headW * 0.72, headH * 0.5, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    ctx.stroke();
     ctx.restore();
   }
 
-  private spriteOfficial(
+  /** The referee's stand: a platform and a ladder, behind the figure. */
+  private stand(
     ctx: CanvasRenderingContext2D,
     cam: Camera,
     x: number,
     y: number,
-    z: number,
-    facingCamera: boolean,
-    time: number,
-    sheets: SheetSet,
-  ): boolean {
-    const action = this.signal > 0 ? 'celebrate' : 'idle';
-    const sheet = sheets[action];
-    if (!sheet) return false;
-    const anchor = cam.project(x, y, z);
-    const bodyPx = 1.76 * anchor.scale * 42;
-    const progress = this.signal > 0 ? 1 - this.signal / SIGNAL_TIME : 0;
-    const frame =
-      action === 'celebrate'
-        ? Math.min(18, 8 + Math.floor(progress * 10))
-        : Math.floor(time * 5 + (facingCamera ? 0 : 7)) % 24;
-    const palette: SpritePalette = {
-      primary: REF_KIT[0],
-      secondary: '#151a28',
-      skin: facingCamera ? '#d69a6a' : '#b9774b',
-      hair: facingCamera ? '#221916' : '#111622',
-    };
-    ctx.save();
-    ctx.globalAlpha = z > 0.1 ? 0.97 : 1;
-    drawFrame(
-      ctx,
-      sheet,
-      frame,
-      anchor.x,
-      anchor.y,
-      bodyPx,
-      facingCamera ? -1 : 1,
-      palette,
-      0.92,
-    );
-    ctx.restore();
-    return true;
-  }
-
-  private kid(
-    ctx: CanvasRenderingContext2D,
-    cam: Camera,
-    k: Kid,
-    time: number,
-    dt: number,
-    sheets: SheetSet,
+    top: number,
   ): void {
-    const moving = k.state !== 'wait';
-    const f = figure({
-      id: k.id,
-      x: k.x,
-      y: k.y,
-      z: 0,
-      vx: k.vx,
-      vy: k.vy,
-      anim: moving ? 'run' : 'idle',
-      facing: k.vy >= 0 ? 1 : -1,
-    });
-    drawPlayerShadow(ctx, cam, f);
-    const action = moving ? 'approach' : 'idle';
-    const sheet = sheets[action];
-    if (sheet) {
-      const feet = cam.projectFloor(k.x, k.y);
-      const bodyPx = 1.46 * feet.scale * 42;
-      const frame = moving ? Math.floor(time * 18 + k.id) % 24 : Math.floor(time * 6 + k.id) % 24;
-      const palette: SpritePalette = {
-        primary: KID_KIT[0],
-        secondary: KID_KIT[1],
-        skin: ['#efc29d', '#c98b5a', '#8b572f'][Math.abs(k.id + 1) % 3],
-        hair: ['#17131a', '#4a2d1c', '#242834'][Math.abs(k.id) % 3],
-      };
-      drawFrame(ctx, sheet, frame, feet.x, feet.y, bodyPx, k.vy >= 0 ? 1 : -1, palette, 0.88);
-      return;
+    const base = cam.project(x, y, 0);
+    const head = cam.project(x, y, top);
+    const u = 1.9 * base.scale * 42;
+    if (u < 6) return;
+    const w = u * 0.2;
+
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = Math.max(0.7, u * 0.016);
+
+    // Two uprights and the rungs between them.
+    ctx.fillStyle = '#3a4354';
+    ctx.fillRect(head.x - w, head.y, w * 0.18, base.y - head.y);
+    ctx.fillRect(head.x + w * 0.82, head.y, w * 0.18, base.y - head.y);
+    ctx.strokeRect(head.x - w, head.y, w * 0.18, base.y - head.y);
+    ctx.strokeRect(head.x + w * 0.82, head.y, w * 0.18, base.y - head.y);
+    ctx.fillStyle = '#2b3242';
+    for (let i = 1; i <= 3; i++) {
+      const ry = head.y + ((base.y - head.y) * i) / 4;
+      ctx.fillRect(head.x - w, ry, w * 2, u * 0.022);
     }
-    drawPlayer(ctx, cam, f, KID_KIT, { active: false, charge: 0, time, dt });
+    // The platform the referee stands on.
+    ctx.fillStyle = '#4a5568';
+    ctx.fillRect(head.x - w * 1.15, head.y - u * 0.03, w * 2.3, u * 0.05);
+    ctx.strokeRect(head.x - w * 1.15, head.y - u * 0.03, w * 2.3, u * 0.05);
+    ctx.restore();
   }
 
-  /** Angular carbon-and-light referee tower, matched to the 2026 HUD language. */
-  private drawPodium(ctx: CanvasRenderingContext2D, cam: Camera, x: number, y: number): void {
-    const foot = cam.project(x, y, 0);
-    const deck = cam.project(x, y, NET_HEIGHT - 0.62);
-    const u = foot.scale * 42;
-    const w = u * 0.56;
+  /**
+   * A line judge at a corner, seen from behind or three-quarters behind.
+   *
+   * That is the honest view: they stand at the corners of the free zone facing
+   * in towards the court, so the camera is behind them. They hold the flag
+   * down at rest, out for "in", up for "out", and fingertips-to-palm for a
+   * touch. They never celebrate.
+   */
+  private lineJudge(ctx: CanvasRenderingContext2D, cam: Camera, j: LineJudge): void {
+    const p = cam.project(j.x, j.y, 0);
+    const u = 1.55 * p.scale * 42;
+    if (u < 6) return;
+
+    const lw = Math.max(0.7, u * 0.018);
+    const hipY = p.y - u * 0.47;
+    const shoulderY = p.y - u * 0.8;
+    const headH = u * 0.075;
+    const headY = shoulderY - u * 0.026 - headH * 0.92;
+    // Which way the flag arm points, in screen space, towards the court.
+    const inward = j.x > 0 ? -1 : 1;
 
     ctx.save();
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
 
-    // Ground plate and two tapered carbon rails.
-    ctx.fillStyle = 'rgba(4,8,17,0.5)';
+    ctx.fillStyle = 'rgba(7,16,6,0.3)';
     ctx.beginPath();
-    ctx.ellipse(foot.x, foot.y + u * 0.015, w * 0.86, u * 0.095, 0, 0, Math.PI * 2);
+    ctx.ellipse(p.x, p.y, u * 0.15, u * 0.045, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    const leftBottom = foot.x - w * 0.58;
-    const rightBottom = foot.x + w * 0.58;
-    const leftTop = deck.x - w * 0.34;
-    const rightTop = deck.x + w * 0.34;
-    ctx.strokeStyle = '#07111f';
-    ctx.lineWidth = Math.max(7, u * 0.16);
-    ctx.beginPath();
-    ctx.moveTo(leftBottom, foot.y);
-    ctx.lineTo(leftTop, deck.y);
-    ctx.moveTo(rightBottom, foot.y);
-    ctx.lineTo(rightTop, deck.y);
-    ctx.stroke();
-    ctx.strokeStyle = '#2f78b7';
-    ctx.lineWidth = Math.max(3, u * 0.07);
-    ctx.beginPath();
-    ctx.moveTo(leftBottom, foot.y);
-    ctx.lineTo(leftTop, deck.y);
-    ctx.moveTo(rightBottom, foot.y);
-    ctx.lineTo(rightTop, deck.y);
-    ctx.stroke();
-
-    // Cyan rungs and diagonal bracing.
-    ctx.strokeStyle = 'rgba(73,220,255,0.72)';
-    ctx.lineWidth = Math.max(1.2, u * 0.028);
-    for (let i = 1; i < 6; i++) {
-      const t = i / 6;
-      const lx = lerp(leftBottom, leftTop, t);
-      const rx = lerp(rightBottom, rightTop, t);
-      const yy = lerp(foot.y, deck.y, t);
-      ctx.beginPath();
-      ctx.moveTo(lx, yy);
-      ctx.lineTo(rx, yy);
-      ctx.stroke();
+    for (const s of [-1, 1] as const) {
+      limb(ctx, p.x + s * u * 0.05, hipY, p.x + s * u * 0.057, p.y, u * 0.05, u * 0.034, '#1f2a24', lw);
     }
-    ctx.strokeStyle = 'rgba(255,211,92,0.46)';
-    ctx.beginPath();
-    ctx.moveTo(leftBottom, foot.y);
-    ctx.lineTo(rightTop, deck.y);
-    ctx.stroke();
+    limb(ctx, p.x, hipY, p.x, shoulderY, u * 0.09, u * 0.11, JUDGE_SHIRT, lw);
+    // Seen from behind: a yoke across the shoulders instead of a collar.
+    ctx.fillStyle = JUDGE_TRIM;
+    ctx.fillRect(p.x - u * 0.095, shoulderY + u * 0.02, u * 0.19, u * 0.02);
 
-    // Cut-corner platform and safety back.
-    const deckH = u * 0.13;
+    // Resting arm.
+    const restX = p.x - inward * u * 0.12;
+    limb(ctx, p.x - inward * u * 0.105, shoulderY + u * 0.01, restX, hipY - u * 0.02, u * 0.047, u * 0.036, JUDGE_SHIRT, lw);
+
+    // Flag arm, positioned by the call.
+    const sx = p.x + inward * u * 0.105;
+    let ex = sx + inward * u * 0.12;
+    let ey = hipY - u * 0.02;
+    if (j.signal === 'in') {
+      ex = sx + inward * u * 0.26;
+      ey = shoulderY + u * 0.16;
+    } else if (j.signal === 'out') {
+      ex = sx + inward * u * 0.08;
+      ey = shoulderY - u * 0.26;
+    } else if (j.signal === 'touch') {
+      ex = sx + inward * u * 0.05;
+      ey = shoulderY - u * 0.12;
+    }
+    limb(ctx, sx, shoulderY + u * 0.01, ex, ey, u * 0.047, u * 0.036, JUDGE_SHIRT, lw);
+
+    // The flag itself: a short staff and a square of cloth.
+    const fx = ex + inward * u * 0.02;
+    const fy = ey + (j.signal === 'out' ? -u * 0.1 : j.signal === 'in' ? u * 0.02 : u * 0.1);
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = Math.max(0.8, u * 0.02);
     ctx.beginPath();
-    ctx.moveTo(deck.x - w * 0.78, deck.y - deckH * 0.5);
-    ctx.lineTo(deck.x + w * 0.63, deck.y - deckH * 0.5);
-    ctx.lineTo(deck.x + w * 0.78, deck.y);
-    ctx.lineTo(deck.x + w * 0.63, deck.y + deckH * 0.5);
-    ctx.lineTo(deck.x - w * 0.78, deck.y + deckH * 0.5);
+    ctx.moveTo(ex, ey);
+    ctx.lineTo(fx, fy);
+    ctx.stroke();
+    const fw = u * 0.13;
+    ctx.fillStyle = FLAG;
+    ctx.beginPath();
+    ctx.moveTo(fx, fy);
+    ctx.lineTo(fx + inward * fw, fy - fw * 0.28);
+    ctx.lineTo(fx + inward * fw, fy + fw * 0.62);
+    ctx.lineTo(fx, fy + fw * 0.9);
     ctx.closePath();
-    const grad = ctx.createLinearGradient(deck.x - w, 0, deck.x + w, 0);
-    grad.addColorStop(0, '#0b192b');
-    grad.addColorStop(0.55, '#235a8c');
-    grad.addColorStop(1, '#091321');
-    ctx.fillStyle = grad;
     ctx.fill();
-    ctx.strokeStyle = '#49dcff';
-    ctx.lineWidth = Math.max(1.2, u * 0.028);
+    ctx.lineWidth = lw;
     ctx.stroke();
-    ctx.fillStyle = '#ffd35c';
-    ctx.fillRect(deck.x - w * 0.48, deck.y - deckH * 0.14, w * 0.62, deckH * 0.27);
-    ctx.restore();
-  }}
 
-const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+    // Head, from behind: no face, just the back of the skull and the hairline.
+    ctx.beginPath();
+    ctx.ellipse(p.x, headY, u * 0.06, headH, 0, 0, Math.PI * 2);
+    ctx.fillStyle = SKIN;
+    ctx.fill();
+    ctx.lineWidth = lw;
+    ctx.strokeStyle = OUTLINE;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(p.x, headY - headH * 0.18, u * 0.061, headH * 0.78, 0, Math.PI, Math.PI * 2);
+    ctx.fillStyle = '#2b211c';
+    ctx.fill();
+    ctx.restore();
+  }
+}

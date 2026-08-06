@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsx tools/build-info.ts && tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -28,7 +28,9 @@
     "measure:sheet": "tsx tools/measure-sheet.ts",
     "assets:check": "tsx tools/validate-art-assets.ts",
     "check:build": "npm run build && tsx tools/build-check.ts",
-    "shots:overhaul": "tsx tools/visual-overhaul-shots.ts"
+    "shots:overhaul": "tsx tools/visual-overhaul-shots.ts",
+    "build:info": "tsx tools/build-info.ts",
+    "metrics": "tsx tools/gameplay-metrics.ts"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",

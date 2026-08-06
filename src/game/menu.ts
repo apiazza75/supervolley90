@@ -1,4 +1,5 @@
 import { TeamConfig } from '../core/team';
+import { buildStamp } from './build-info';
 import { InputManager } from './input';
 import { TEAMS } from './teams';
 
@@ -136,6 +137,11 @@ export class Menu {
     ctx.font = '800 11px "Arial Narrow", "Inter", system-ui, sans-serif';
     ctx.fillStyle = MUTED;
     ctx.fillText(`${move}  SELECT     //     ${confirm}  CONFIRM`, width / 2, height - 28);
+    // Which build this is. Shown here so a screenshot of the menu is enough to
+    // identify the commit it came from.
+    ctx.font = '700 10px "Arial Narrow", "Inter", system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(150,170,205,0.75)';
+    ctx.fillText(buildStamp(), width / 2, height - 12);
     ctx.restore();
   }
 

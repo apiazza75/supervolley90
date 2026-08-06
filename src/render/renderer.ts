@@ -227,10 +227,17 @@ export class Renderer {
           this.camera.addShake(9);
           this.arena.cheer(0.75);
           this.hitStop = Math.max(this.hitStop, 0.07);
-          // The officials react: a whistle, an arm up for the side that scored,
-          // and a ball kid sent out to collect the dead ball.
+          // The officials react: a whistle and an arm up for the side that
+          // scored, and — where the call is theirs to make — the nearer line
+          // judge flags the ball in or out.
           this.officials.callPoint(ev.side);
-          this.officials.fetchBall(world.ball.pos.x, world.ball.pos.y);
+          if (ev.reason === 'out') {
+            this.officials.callLine(world.ball.pos.x, world.ball.pos.y, false);
+          } else if (ev.reason === 'kill') {
+            this.officials.callLine(world.ball.pos.x, world.ball.pos.y, true);
+          } else if (ev.reason === 'block') {
+            this.officials.callTouch(world.ball.pos.x, world.ball.pos.y);
+          }
           break;
         }
         case 'setWon':
@@ -281,7 +288,7 @@ export class Renderer {
     this.arena.update(dt);
     this.arena.drawBackground(ctx, cam, time);
     this.officials.update(dt);
-    this.officials.drawFar(ctx, cam, time, dt, this.sheets);
+    this.officials.drawFar(ctx, cam);
     this.effects.drawFloor(ctx, cam);
 
     const drawables: { depth: number; draw: () => void }[] = [];
@@ -311,7 +318,7 @@ export class Renderer {
     drawables.sort((a, b) => b.depth - a.depth);
     for (const d of drawables) d.draw();
 
-    this.officials.drawNear(ctx, cam, time, dt, this.sheets);
+    this.officials.drawNear(ctx, cam);
 
     const ballPos = { x: frame.ball.x, y: frame.ball.y, z: frame.ball.z };
     this.drawBall({ pos: ballPos, vel: { x: 0, y: 0, z: 0 }, roll: frame.ball.roll } as Ball);
@@ -431,7 +438,7 @@ export class Renderer {
     }
     this.lastPhase = world.phase;
     this.officials.update(dt);
-    this.officials.drawFar(ctx, cam, state.time, dt, this.sheets);
+    this.officials.drawFar(ctx, cam);
 
     this.effects.drawFloor(ctx, cam);
     this.drawLandingMarker(world);
@@ -509,7 +516,7 @@ export class Renderer {
     for (const d of drawables) d.draw();
 
     // Near-side officials sit in front of the play, as they do from this angle.
-    this.officials.drawNear(ctx, cam, state.time, dt, this.sheets);
+    this.officials.drawNear(ctx, cam);
 
     this.effects.draw(ctx, cam);
     this.drawVignette(ctx, cam);

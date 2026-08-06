@@ -2,6 +2,7 @@ import { FIXED_DT, GAME_SPEED } from './core/rules';
 import { Replay } from './game/replay';
 import { World } from './core/world';
 import { Audio } from './game/audio';
+import { buildStamp, loadBuildInfo } from './game/build-info';
 import { InputManager } from './game/input';
 import { Menu } from './game/menu';
 import { Hud } from './render/hud';
@@ -256,6 +257,9 @@ class Game {
     ctx.font = '900 12px "Arial Narrow", "Inter", system-ui, sans-serif';
     ctx.fillStyle = '#49dcff';
     ctx.fillText('ESC  //  RESUME PLAY', w / 2, h / 2 + 35);
+    ctx.font = '700 11px "Arial Narrow", "Inter", system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(190,205,230,0.8)';
+    ctx.fillText(buildStamp(), w / 2, h / 2 + 62);
     ctx.restore();
   }
 
@@ -292,6 +296,10 @@ class Game {
     }
   }
 }
+
+// Load the build manifest before the first frame, so the identity is on screen
+// from the menu onwards rather than appearing a moment later.
+void loadBuildInfo();
 
 const canvas = document.getElementById('game');
 if (!(canvas instanceof HTMLCanvasElement)) {
