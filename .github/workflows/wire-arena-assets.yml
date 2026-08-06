@@ -1,0 +1,146 @@
+name: Wire illustrated arena assets
+
+on:
+  push:
+    branches:
+      - claude/volley-2d-macos-game-cl9ary
+    paths:
+      - .github/workflows/wire-arena-assets.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/volley-2d-macos-game-cl9ary
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Patch arena renderer
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('src/render/arena.ts')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = [
+              (
+                  "import { Camera } from './camera';",
+                  "import { Camera } from './camera';\nimport { ArenaAssets } from './arena-assets';",
+              ),
+              (
+                  "export class Arena {\n  private crowd: Spectator[] = [];",
+                  "export class Arena {\n  private readonly assets = new ArenaAssets();\n  private crowd: Spectator[] = [];",
+              ),
+              (
+                  """    // Flat fills, deliberately: gradients read as a lit 3D scene, and this
+    // game is meant to read as a drawn 2D one.
+    ctx.fillStyle = '#10182b';
+    ctx.fillRect(0, 0, w, h);
+
+    this.drawCrowd(ctx, cam, time);
+    this.drawRoof(ctx, cam);
+    this.drawShafts(ctx, cam, time);""",
+                  """    // Use the illustrated stand when it is available. Until it finishes
+    // loading, the complete procedural arena remains the fallback.
+    if (!this.assets.drawBackground(ctx, w, h)) {
+      ctx.fillStyle = '#10182b';
+      ctx.fillRect(0, 0, w, h);
+      this.drawCrowd(ctx, cam, time);
+      this.drawRoof(ctx, cam);
+    }
+
+    this.drawShafts(ctx, cam, time);""",
+              ),
+              (
+                  """    fillQuad(
+      ctx,
+      cam,
+      [
+        [-COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
+        [COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
+        [COURT_HALF_WIDTH, 0],
+        [-COURT_HALF_WIDTH, 0],
+      ],
+      COURT_NEAR,
+    );
+    fillQuad(
+      ctx,
+      cam,
+      [
+        [-COURT_HALF_WIDTH, 0],
+        [COURT_HALF_WIDTH, 0],
+        [COURT_HALF_WIDTH, COURT_HALF_LENGTH],
+        [-COURT_HALF_WIDTH, COURT_HALF_LENGTH],
+      ],
+      COURT_NEAR,
+    );
+
+    this.drawGrain(ctx, cam, outX, outY);""",
+                  """    const nearCourt: [number, number][] = [
+      [-COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
+      [COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
+      [COURT_HALF_WIDTH, 0],
+      [-COURT_HALF_WIDTH, 0],
+    ];
+    const farCourt: [number, number][] = [
+      [-COURT_HALF_WIDTH, 0],
+      [COURT_HALF_WIDTH, 0],
+      [COURT_HALF_WIDTH, COURT_HALF_LENGTH],
+      [-COURT_HALF_WIDTH, COURT_HALF_LENGTH],
+    ];
+    const texturedNear = this.assets.fillFloor(
+      ctx,
+      nearCourt.map(([x, y]) => cam.projectFloor(x, y)),
+    );
+    const texturedFar = this.assets.fillFloor(
+      ctx,
+      farCourt.map(([x, y]) => cam.projectFloor(x, y)),
+    );
+    if (!texturedNear) fillQuad(ctx, cam, nearCourt, COURT_NEAR);
+    if (!texturedFar) fillQuad(ctx, cam, farCourt, COURT_NEAR);
+
+    if (!this.assets.hasFloor) this.drawGrain(ctx, cam, outX, outY);""",
+              ),
+              (
+                  "  drawNet(ctx: CanvasRenderingContext2D, cam: Camera): void {\n    const W = COURT_HALF_WIDTH;",
+                  "  drawNet(ctx: CanvasRenderingContext2D, cam: Camera): void {\n    if (this.assets.drawNet(ctx, cam)) return;\n    const W = COURT_HALF_WIDTH;",
+              ),
+          ]
+
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f'expected arena.ts fragment not found: {old[:80]!r}')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Validate complete implementation
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run assets:check
+          npm run typecheck
+          npm test
+          npx vite build
+          npm run sim -- --matches 2 --seed 1337
+
+      - name: Commit arena integration
+        run: |
+          set -euo pipefail
+          git config user.name "Codex Arena Engineering"
+          git config user.email "noreply@openai.com"
+          git add src/render/arena.ts
+          git rm .github/workflows/wire-arena-assets.yml
+          git commit -m "Render illustrated arena with procedural fallback"
+          git push origin HEAD:claude/volley-2d-macos-game-cl9ary
