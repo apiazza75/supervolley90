@@ -83,6 +83,12 @@ export const DURATION: Record<SpriteAction, number> = {
   celebrate: 1.48,
 };
 
+/**
+ * Ground speed, in m/s, at which the locomotion cycle plays at its authored
+ * rate. Roughly a committed attack approach; anything slower plays slower.
+ */
+const LOCOMOTION_REFERENCE_SPEED = 5.2;
+
 /** Actions that hold on their last frame rather than looping. */
 const ONESHOT = new Set<SpriteAction>([
   'spike',
@@ -298,7 +304,17 @@ export function drawSpritePlayer(
   style: SpriteRenderStyle = {},
   actionHint?: SpriteAction,
 ): boolean {
-  const head = timeline.frameFor(p, dt, actionHint);
+  // There is one authored locomotion cycle, and it has to serve a shuffle, a
+  // run and an attack approach alike. Playing it at a fixed rate is what made
+  // a player adjusting their feet look like one sprinting: the legs were
+  // always going at the same speed regardless of how fast the body moved.
+  // Scaling playback by actual ground speed costs nothing and is most of the
+  // difference between the three reading as different things.
+  const inLocomotion = p.presentation.action === 'none' && !p.airborne && !p.diving;
+  const strideScale = inLocomotion
+    ? clamp(Math.hypot(p.vel.x, p.vel.y) / LOCOMOTION_REFERENCE_SPEED, 0.42, 1.3)
+    : 1;
+  const head = timeline.frameFor(p, dt * strideScale, actionHint);
   const sheet = sheets[head.action];
   if (!sheet) return false;
 
