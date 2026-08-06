@@ -144,7 +144,7 @@ function actionFor(p: Player): SpriteAction {
   if (p.anim === 'set') return 'set';
   if (p.anim === 'bump') return 'bump';
   if (p.anim === 'run' || p.anim === 'approach_run' || p.anim === 'shuffle') return 'approach';
-  if (p.anim === 'ready' || p.anim === 'idle') return 'idle';
+
   if (p.anim === 'bump_ready' || p.anim === 'bump_contact') return 'bump';
   if (p.anim === 'set_ready' || p.anim === 'set_contact') return 'set';
   if (p.anim === 'air_contact_spike') return 'spike';
