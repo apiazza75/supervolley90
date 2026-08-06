@@ -26,13 +26,19 @@ type Job = 'idle' | 'receive' | 'set' | 'attack' | 'block' | 'cover' | 'serve';
  * the value that decides how much of a match is spent watching people sprint:
  * the previous build had no window at all, so every player ran all the time.
  */
-const APPROACH_WINDOW = 1.05;
+const APPROACH_WINDOW = 1.25;
 
 /**
  * How far behind the baseline a jump server starts their run-up, in metres.
  * Sized so the physical approach lands inside the 1.2–2.6 m a real one covers.
  */
-const JUMP_SERVE_RUNUP = 1.9;
+const JUMP_SERVE_RUNUP = 2.35;
+
+/** How long the jump server is already moving before the ball leaves the hands. */
+const TOSS_ON_THE_MOVE = 0.2;
+
+/** Latest the jump server may plant, measured from the start of the run-up. */
+const PLANT_DEADLINE = 0.72;
 
 /**
  * How much room a player insists on having, in metres.
@@ -60,6 +66,8 @@ interface Brainstate {
   serveHold: number;
   /** Whether this serve is a jump serve. */
   powerServe: boolean;
+  /** Phase time at which the jump-serve run-up began; 0 until it does. */
+  serveRunUpAt: number;
   /** Request a Lethal Maneuver on this step. */
   armSpecial: boolean;
   /** Committed to moving towards the goal (hysteresis against goal jitter). */
@@ -75,6 +83,7 @@ const newState = (): Brainstate => ({
   aim: { x: 0, depth: 0.4 },
   serveHold: 0.6,
   powerServe: false,
+  serveRunUpAt: 0,
   armSpecial: false,
   enRoute: false,
 });
@@ -199,6 +208,13 @@ export class TeamBrain {
         s.job = 'idle';
         s.wantsAction = false;
         s.holdAction = false;
+        // Between rallies the serve plan is torn up, so the next one is chosen
+        // afresh. Holding it meant a server who kept the ball kept whatever
+        // they rolled the first time: over a match only a handful of distinct
+        // decisions were ever made.
+        s.serveHold = 0;
+        s.serveRunUpAt = 0;
+        p.plansJumpServe = false;
         // Someone celebrating stays where they are: jogging back to a
         // formation spot cancels the celebration the moment it starts.
         s.goal = p.cheerTime > 0 ? copy(p.pos) : copy(p.home);
@@ -251,6 +267,7 @@ export class TeamBrain {
           };
         }
 
+        p.plansJumpServe = s.powerServe;
         const t = this.world.phaseTimer;
         const ball = this.world.ball;
         // The run-up is a real journey across the floor: back off behind the
@@ -262,21 +279,41 @@ export class TeamBrain {
         const runUpStart = baseline - serveDir * JUMP_SERVE_RUNUP;
         const plantSpot = baseline - serveDir * 0.35;
 
-        if (ball.frozen) {
+        if (ball.frozen && s.powerServe) {
+          // A jump server walks back, then starts the run-up and tosses ON THE
+          // MOVE — that first step is part of the approach, not a preamble to
+          // it. Tossing from a standstill and only then setting off left barely
+          // half a metre of run-up before the ball had to be struck.
+          const atStart = Math.abs(p.pos.y - runUpStart) < 0.3;
+          if (!atStart && s.serveRunUpAt <= 0) {
+            s.goal = v3(p.pos.x, runUpStart, 0);
+            s.wantsAction = false;
+          } else {
+            if (s.serveRunUpAt <= 0 && t > s.serveHold) s.serveRunUpAt = t;
+            if (s.serveRunUpAt > 0) {
+              s.goal = v3(p.pos.x, plantSpot, 0);
+              if (!p.airborne) p.licenseApproach('serve', 0.9);
+            } else {
+              s.goal = v3(p.pos.x, runUpStart, 0);
+            }
+            // The ball leaves the hands once the body is already travelling.
+            s.wantsAction = s.serveRunUpAt > 0 && t > s.serveRunUpAt + TOSS_ON_THE_MOVE;
+          }
+        } else if (ball.frozen) {
           // Ball still in hand: a press now is the toss.
-          s.goal = s.powerServe ? v3(p.pos.x, runUpStart, 0) : copy(p.pos);
-          const settled = !s.powerServe || Math.abs(p.pos.y - runUpStart) < 0.5;
-          s.wantsAction = t > s.serveHold && settled;
+          s.goal = copy(p.pos);
+          s.wantsAction = t > s.serveHold;
         } else if (s.powerServe) {
-          // Toss is up: run the approach, plant, and leave the floor.
+          // Toss is up: finish the approach, plant, and leave the floor.
           s.goal = v3(p.pos.x, plantSpot, 0);
           const arrived =
             serveDir > 0 ? p.pos.y >= plantSpot - 0.28 : p.pos.y <= plantSpot + 0.28;
           if (!p.airborne && p.canAct) {
-            if (t > s.serveHold + 0.12) p.licenseApproach('serve', 0.7);
-            // Plant once the ground is covered, or when the toss runs out of
-            // time — a serve that never leaves the floor is a fault.
-            if (t > s.serveHold + 0.3 && (arrived || t > s.serveHold + 0.8)) {
+            p.licenseApproach('serve', 0.9);
+            // Plant once the ground is covered. The fallback deadline is set by
+            // the jump itself — the body needs its rise time in hand or the
+            // contact happens on the way down, off the floor but too low.
+            if (arrived || t > s.serveRunUpAt + PLANT_DEADLINE) {
               if (p.anim === 'approach_run') p.setAnim('plant');
               p.cancelApproach();
               p.jump();
@@ -292,6 +329,7 @@ export class TeamBrain {
       } else {
         s.job = 'idle';
         s.serveHold = 0;
+        s.serveRunUpAt = 0;
         // The receiving team takes up a reception formation; the serving team
         // spreads into its base defensive shape ready for the return.
         s.goal = serving
@@ -385,7 +423,7 @@ export class TeamBrain {
       } else if (isAttacker) {
         // Approach run: wait behind the planned contact point.
         s.job = 'attack';
-        s.goal = v3(this.plannedAttack.x, this.plannedAttack.y - dir * 1.3, 0);
+        s.goal = v3(this.plannedAttack.x, this.plannedAttack.y - dir * 1.9, 0);
       } else {
         s.job = 'cover';
         // Cover is planned around where the attack is GOING, decided once per

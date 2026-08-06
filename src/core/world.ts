@@ -33,6 +33,7 @@ import {
   Side,
   SERVE_APPROACH,
   TOSS_FORWARD,
+  TOSS_FORWARD_JUMP,
   TOSS_SPEED,
   UNDERARM_HOLD,
   attackDir,
@@ -568,12 +569,18 @@ export class World {
         this.ball.frozen = false;
         // Stand still to throw. Tossing while walking sent the ball wherever
         // the server happened to be running, and it could never be met.
-        server.vel.x = 0;
-        server.vel.y = 0;
-        // Straight up, with only a hint of drift into the court. A toss thrown
-        // well ahead of the server cannot be reached without stepping over the
-        // line, which is a fault — and made the serve unhittable.
-        this.ball.vel = v3(0, attackDir(this.servingSide) * TOSS_FORWARD, TOSS_SPEED);
+        // A standing server keeps the toss over their head: thrown well ahead
+        // it cannot be reached without stepping over the line, which is a
+        // fault. A jump server does the opposite — the ball goes out in front
+        // and the run-up chases it down — so their momentum is kept, not
+        // cancelled.
+        const jumping = server.plansJumpServe;
+        if (!jumping) {
+          server.vel.x = 0;
+          server.vel.y = 0;
+        }
+        const forward = jumping ? TOSS_FORWARD_JUMP : TOSS_FORWARD;
+        this.ball.vel = v3(0, attackDir(this.servingSide) * forward, TOSS_SPEED);
         this.ball.spin = v3();
         this.serveStage = 'toss';
         this.tossedAt = this.phaseTimer;

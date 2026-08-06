@@ -147,6 +147,17 @@ const ANIM_PRESENTATION: Record<PlayerAnim, { action: VolleyballAction; phase: A
   cheer: { action: 'celebrate', phase: 'contact' },
 };
 
+/**
+ * The longest a single approach may run, in seconds.
+ *
+ * The brief's readability budget for a whole attack approach plus spike is
+ * 1.35–1.65 s, so a run-up that outlives this is no longer a run-up.
+ */
+const MAX_APPROACH_TIME = 1.45;
+
+/** How long out of the approach before it counts as a new run-up, in seconds. */
+const APPROACH_RESET_GAP = 0.3;
+
 export const defaultStats = (): PlayerStats => ({
   speed: 0.6,
   jump: 0.6,
@@ -193,8 +204,25 @@ export class Player {
    * It expires on its own so a cancelled attack cannot leave a body sprinting.
    */
   approachLicence = 0;
+  /**
+   * Set by the AI when this server intends a jump serve, so the world can throw
+   * the toss out in front of them instead of straight up.
+   */
+  plansJumpServe = false;
   /** Distance travelled on the floor since the current approach was licensed. */
   approachDistance = 0;
+  /** How long the current approach has been running, for the hard cap below. */
+  approachAge = 0;
+  /**
+   * Ground covered by the run-up that produced the jump currently in progress.
+   *
+   * Captured at take-off and held: the contact it belongs to happens several
+   * tenths of a second later, in the air, by which time the live odometer has
+   * already been reset for the next approach.
+   */
+  lastApproachDistance = 0;
+  /** How long this body has been out of the approach cycle, for the reset. */
+  private approachIdle = 0;
 
   /** Counts down while the player cannot start a new action. */
   lockout = 0;
@@ -266,6 +294,8 @@ export class Player {
 
   jump(): boolean {
     if (!this.canAct || this.airborne) return false;
+    // The run-up ends here; remember how far it actually travelled.
+    this.lastApproachDistance = this.approachDistance;
     this.vertVel = this.jumpVelocity;
     this.height = 0.001;
     this.setAnim('jump_rise');
@@ -350,8 +380,12 @@ export class Player {
    * ordinary locomotion whether or not the attack came off.
    */
   licenseApproach(job: PresentationJob, duration = 1.1): void {
+    // Only a *new* run-up resets the odometer. The AI renews the licence every
+    // step while the window is open, so zeroing it unconditionally meant the
+    // measured approach distance was always the last frame's worth of travel.
+    // A spent approach cannot be renewed until the body has stopped running it.
+    if (this.approachAge > MAX_APPROACH_TIME) return;
     this.approachLicence = Math.max(this.approachLicence, duration);
-    this.approachDistance = 0;
     this.presentation.sourceJob = job;
   }
 
@@ -428,7 +462,23 @@ export class Player {
     if (this.swing > 0) this.swing -= dt;
     if (this.approachLicence > 0) {
       this.approachLicence = Math.max(0, this.approachLicence - dt);
+      this.approachAge += dt;
+      this.approachIdle = 0;
       this.approachDistance += Math.hypot(this.vel.x, this.vel.y) * dt;
+      // A hard ceiling on the run-up. The AI renews the licence every step
+      // while its window is open, so without this a hitter whose set never
+      // arrives keeps sprinting indefinitely — the original bug, arrived at by
+      // a different road.
+      if (this.approachAge > MAX_APPROACH_TIME) this.approachLicence = 0;
+    } else {
+      // The odometer survives a brief gap in the licence so one run-up is
+      // measured as one run-up, but a body that has genuinely stopped
+      // approaching starts fresh — and only then may it be licensed again.
+      this.approachIdle += dt;
+      if (this.approachIdle > APPROACH_RESET_GAP) {
+        this.approachAge = 0;
+        this.approachDistance = 0;
+      }
     }
 
     if (this.cheerTime > 0) {
@@ -495,14 +545,23 @@ export class Player {
           this.setAnim('ready');
         }
       }
-    } else if (this.diving) {
-      this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * 0.55 * dt);
-      this.vel.y = approach(this.vel.y, 0, PLAYER_FRICTION * 0.55 * dt);
-    } else if (this.sliding > 0) {
-      // Skidding along the floor: friction, but far less than standing on it.
-      this.sliding = Math.max(0, this.sliding - dt);
-      this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * 0.9 * dt);
-      this.vel.y = approach(this.vel.y, 0, PLAYER_FRICTION * 0.9 * dt);
+    } else {
+      // Airborne, diving or knocked down: the feet are not driving the body, so
+      // it is not travelling under its own power. Leaving the last locomotion
+      // latched here kept a jumping hitter reading as "approaching" for the
+      // whole flight, which is neither true nor harmless — it is what the
+      // concurrency and duration limits are measured against.
+      this.presentation.locomotion = 'stand';
+
+      if (this.diving) {
+        this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * 0.55 * dt);
+        this.vel.y = approach(this.vel.y, 0, PLAYER_FRICTION * 0.55 * dt);
+      } else if (this.sliding > 0) {
+        // Skidding along the floor: friction, but far less than standing on it.
+        this.sliding = Math.max(0, this.sliding - dt);
+        this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * 0.9 * dt);
+        this.vel.y = approach(this.vel.y, 0, PLAYER_FRICTION * 0.9 * dt);
+      }
     }
 
     this.pos.x += this.vel.x * dt;

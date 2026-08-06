@@ -28,7 +28,7 @@ describe('sprite contact timeline', () => {
       const p = player();
       const timeline = new SpriteTimeline();
       timeline.cue(p.id, kind, airborne);
-      expect(timeline.frameFor(p, 0)).toMatchObject({ action, frame, nextFrame: frame, mix: 0 });
+      expect(timeline.frameFor(p, 0)).toMatchObject({ action, frame });
     },
   );
 
@@ -38,7 +38,22 @@ describe('sprite contact timeline', () => {
     p.vel.y = 4;
     expect(timeline.frameFor(p, 0.2).action).toBe('approach');
     timeline.cue(p.id, 'set', false);
-    expect(timeline.frameFor(p, 0)).toMatchObject({ action: 'set', frame: 11, nextFrame: 11, mix: 0 });
+    expect(timeline.frameFor(p, 0)).toMatchObject({ action: 'set', frame: 11 });
+  });
+
+  it('never asks for a blend between two whole bodies', () => {
+    // The rejected build cross-faded `frame` and `nextFrame` at complementary
+    // alpha, which is a double exposure. A playhead now names exactly one
+    // authored drawing, so there is nothing for the renderer to blend.
+    const p = player();
+    const timeline = new SpriteTimeline();
+    for (let i = 0; i < 120; i++) {
+      const head = timeline.frameFor(p, 1 / 60);
+      expect(Object.keys(head).sort()).toEqual(['action', 'frame', 'frameFloat']);
+      expect(Number.isInteger(head.frame)).toBe(true);
+      expect(head.frame).toBeGreaterThanOrEqual(0);
+      expect(head.frame).toBeLessThanOrEqual(23);
+    }
   });
 
   it('distinguishes standing and jump serves', () => {

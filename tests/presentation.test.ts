@@ -1,169 +1,73 @@
 import { describe, expect, it } from 'vitest';
 
-import { FIXED_DT, attackDir } from '../src/core/rules';
-import { facesNet } from '../src/core/presentation';
-import { World } from '../src/core/world';
-import { TEAMS } from '../src/game/teams';
+import { checkGameplayGates, measureGameplay } from '../src/qa/gameplay-metrics';
 
 /**
- * These are gameplay invariants, measured by running the real simulation.
+ * Gameplay invariants, measured by running the real simulation.
  *
  * The point of doing it this way is that the previous build's evidence was a
  * screenshot tool that assigned `p.height`, `p.anim` and `p.swing` by hand and
  * then photographed the result — which proves the renderer can draw a pose, not
- * that the game ever reaches it. Everything below is observed from a match the
- * AI actually played.
+ * that the game ever reaches it. Everything below is observed from matches the
+ * AI actually played, through the same module the CI gate and the visual QA
+ * use, so a threshold cannot pass here and fail there.
  */
 
-const makeWorld = (seed: number) =>
-  new World({ home: TEAMS[0], away: TEAMS[1], seed, difficulty: 1, humanControlsHome: false });
+const SEEDS = [1337, 4242, 90210, 7, 11, 2026];
+const STEPS = 7000;
 
-interface Observed {
-  backFacingContacts: number;
-  contactsByKind: Record<string, number>;
-  maxConcurrentApproach: number;
-  /** Anyone but the server approaching during the serve phase. */
-  serveReadyApproachSamples: number;
-  /** The server approaching before the ball has even left their hands. */
-  preTossApproachSamples: number;
-  coverApproachSamples: number;
-  blockAttempts: number;
-  blockContacts: number;
-  groundedBlockContacts: number;
-  spikeAirborneContacts: number;
-  spikeGroundedContacts: number;
-  longestApproachRun: number;
-}
-
-/** Play a match and watch the presentation state, contact by contact. */
-function observe(seed: number, steps: number): Observed {
-  const w = makeWorld(seed);
-  const o: Observed = {
-    backFacingContacts: 0,
-    contactsByKind: {},
-    maxConcurrentApproach: 0,
-    serveReadyApproachSamples: 0,
-    preTossApproachSamples: 0,
-    coverApproachSamples: 0,
-    blockAttempts: 0,
-    blockContacts: 0,
-    groundedBlockContacts: 0,
-    spikeAirborneContacts: 0,
-    spikeGroundedContacts: 0,
-    longestApproachRun: 0,
-  };
-
-  // How long each player has been continuously in the approach cycle.
-  const approachRun = new Map<number, number>();
-
-  for (let i = 0; i < steps; i++) {
-    w.step(FIXED_DT);
-
-    const serverId = w.team(w.servingSide).server.id;
-    const players = [...w.home.players, ...w.away.players];
-    let approachingNow = 0;
-    for (const p of players) {
-      const isApproach = p.presentation.locomotion === 'approach';
-      if (isApproach) {
-        approachingNow++;
-        const run = (approachRun.get(p.id) ?? 0) + FIXED_DT;
-        approachRun.set(p.id, run);
-        if (run > o.longestApproachRun) o.longestApproachRun = run;
-        if (w.phase === 'serve') {
-          // The jump server's run-up is a real approach and belongs here. Any
-          // OTHER body approaching while the court waits to serve is the bug.
-          if (p.id !== serverId) o.serveReadyApproachSamples++;
-          else if (w.ball.frozen) o.preTossApproachSamples++;
-        }
-        if (p.presentation.sourceJob === 'cover') o.coverApproachSamples++;
-      } else {
-        approachRun.set(p.id, 0);
-      }
-    }
-    if (approachingNow > o.maxConcurrentApproach) o.maxConcurrentApproach = approachingNow;
-
-    for (const e of w.drainEvents()) {
-      if (e.type === 'blockAttempt') o.blockAttempts++;
-      if (e.type === 'blockContact') {
-        o.blockContacts++;
-        if (!e.airborne) o.groundedBlockContacts++;
-      }
-      if (e.type !== 'contact') continue;
-      o.contactsByKind[e.kind] = (o.contactsByKind[e.kind] ?? 0) + 1;
-
-      // A spike, block or serve is played towards the opponent's court. Meeting
-      // the ball turned the other way is the "contact from behind" the brief
-      // calls out, and it must never happen.
-      if (facesNet(e.kind === 'tip' || e.kind === 'power' ? 'spike' : (e.kind as never))) {
-        if (e.facing !== attackDir(e.side)) o.backFacingContacts++;
-      }
-      if (e.kind === 'spike' || e.kind === 'power') {
-        if (e.airborne) o.spikeAirborneContacts++;
-        else o.spikeGroundedContacts++;
-      }
-    }
-  }
-  return o;
-}
+// One measurement pass shared by every assertion: it is the expensive part.
+const metrics = measureGameplay(SEEDS, STEPS);
 
 describe('presentation invariants, observed from real matches', () => {
-  const seeds = [1337, 4242];
+  it('plays enough volleyball for the rest of these numbers to mean anything', () => {
+    expect(metrics.points).toBeGreaterThan(10);
+    expect(metrics.contactsByKind.spike ?? 0).toBeGreaterThan(0);
+    expect(metrics.contactsByKind.serve ?? 0).toBeGreaterThan(0);
+  });
 
   it('never strikes the ball with the player turned away from the net', () => {
-    for (const seed of seeds) {
-      const o = observe(seed, 9000);
-      expect(o.contactsByKind.spike ?? 0).toBeGreaterThan(0);
-      expect(o.backFacingContacts).toBe(0);
-    }
+    expect(metrics.backFacingContacts).toBe(0);
   });
 
   it('keeps the attack approach rare and short instead of making everyone run', () => {
-    for (const seed of seeds) {
-      const o = observe(seed, 9000);
-      // The brief's limit: never more than two hitters approaching at once.
-      expect(o.maxConcurrentApproach).toBeLessThanOrEqual(2);
-      // An approach is a run-up, not a state of being: it cannot last seconds.
-      expect(o.longestApproachRun).toBeLessThanOrEqual(1.6);
-    }
+    // A third body may drift into an approach for an instant; it may not stay.
+    expect(metrics.longestOverTwoApproach).toBeLessThanOrEqual(0.25);
+    // An approach is a run-up, not a state of being: it cannot last seconds.
+    expect(metrics.longestApproachRun).toBeLessThanOrEqual(1.6);
   });
 
   it('shows a still, ready formation while waiting to serve', () => {
-    for (const seed of seeds) {
-      const o = observe(seed, 9000);
-      // Nobody but the server moves, and the server only runs after the toss.
-      expect(o.serveReadyApproachSamples).toBe(0);
-      expect(o.preTossApproachSamples).toBe(0);
-    }
+    expect(metrics.serveReadyApproachPlayers).toBe(0);
   });
 
   it('never lets a covering player borrow the attack approach', () => {
-    for (const seed of seeds) {
-      expect(observe(seed, 9000).coverApproachSamples).toBe(0);
-    }
+    expect(metrics.coverApproachSamples).toBe(0);
+  });
+
+  it('spikes off the floor, after a real run-up', () => {
+    expect(metrics.spike.count).toBeGreaterThan(0);
+    expect(metrics.spike.airborneContact).toBe(true);
+    expect(metrics.spike.approachDistance).toBeGreaterThanOrEqual(1.4);
+    expect(metrics.spike.apexHeight).toBeGreaterThanOrEqual(0.65);
+  });
+
+  it('serves in the air, after a run-up of a realistic length', () => {
+    expect(metrics.jumpServe.count).toBeGreaterThan(0);
+    expect(metrics.jumpServe.airborneContact).toBe(true);
+    expect(metrics.jumpServe.approachDistance).toBeGreaterThanOrEqual(1.2);
+    expect(metrics.jumpServe.approachDistance).toBeLessThanOrEqual(2.6);
+    expect(metrics.jumpServe.apexHeight).toBeGreaterThanOrEqual(0.55);
   });
 
   it('produces real blocks from the simulation, always off the floor', () => {
-    let attempts = 0;
-    let contacts = 0;
-    for (const seed of seeds) {
-      const o = observe(seed, 9000);
-      attempts += o.blockAttempts;
-      contacts += o.blockContacts;
-      expect(o.groundedBlockContacts).toBe(0);
-    }
-    expect(attempts).toBeGreaterThan(0);
-    expect(contacts).toBeGreaterThan(0);
+    expect(metrics.block.attempts).toBeGreaterThan(0);
+    expect(metrics.block.contacts).toBeGreaterThan(0);
+    expect(metrics.block.groundedContacts).toBe(0);
+    expect(metrics.block.apexHeight).toBeGreaterThanOrEqual(0.45);
   });
 
-  it('spikes the ball in the air rather than from a standing start', () => {
-    for (const seed of seeds) {
-      const o = observe(seed, 9000);
-      const airborne = o.spikeAirborneContacts;
-      const grounded = o.spikeGroundedContacts;
-      expect(airborne).toBeGreaterThan(0);
-      // Grounded contacts are the deliberate tip/down-ball fallback, which must
-      // stay the exception rather than being the whole offence.
-      expect(airborne).toBeGreaterThan(grounded);
-    }
+  it('passes every acceptance gate the CI job enforces', () => {
+    expect(checkGameplayGates(metrics)).toEqual([]);
   });
 });

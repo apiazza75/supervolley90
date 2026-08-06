@@ -70,6 +70,16 @@ export const TOSS_SPEED = 7.1;
 export const TOSS_FORWARD = 0.35;
 
 /**
+ * Forward component of a JUMP serve toss, m/s.
+ *
+ * A jump server throws the ball out in front and then runs it down; that is
+ * what the run-up is for. Tossing it straight up, as a standing server does,
+ * leaves the ball behind the approach and the strike can never be made — which
+ * is exactly what happened when the physical run-up was first added.
+ */
+export const TOSS_FORWARD_JUMP = 2.45;
+
+/**
  * SECONDS of holding, after which the serve becomes an underarm serve whose
  * power is how long it was held; anything shorter tosses the ball for the
  * overhand or jump serve.
