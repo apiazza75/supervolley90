@@ -29,7 +29,7 @@ jobs:
 
       - name: Download and validate arena archive
         env:
-          ARENA_URL: "https://sdmntprukwest.oaiusercontent.com/files/00000000-1a24-8243-91f7-4f697590adac/raw?se=2026-08-06T00:55:14Z&sp=r&sv=2026-02-06&sr=b&scid=3eb5142c-c650-51ed-a9ce-7bf52f18c0d6&skoid=5bfb38a5-43fb-4c63-80a1-6ae1e97e2e16&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-05T21:00:55Z&ske=2026-08-06T21:00:55Z&sks=b&skv=2026-02-06&sig=PQ/5FVTWRsOHdP4W6KFrZu%2BSKIbS7P3yHAouAUk3di4%3D"
+          ARENA_URL: "https://sdmntpritalynorth.oaiusercontent.com/files/00000000-4ce4-8246-9aab-c3f066b881e9/raw?se=2026-08-06T01:00:39Z&sp=r&sv=2026-02-06&sr=b&scid=97e6e178-7c02-58d7-ac8c-12cd7eeec22f&skoid=5bfb38a5-43fb-4c63-80a1-6ae1e97e2e16&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-05T21:06:15Z&ske=2026-08-06T21:06:15Z&sks=b&skv=2026-02-06&sig=xD8N03UvQK7JD00JhSqxv11rMBBMGMI40nN2bT3N8eY%3D"
         run: |
           set -euo pipefail
           curl -fL --retry 4 --retry-all-errors "$ARENA_URL" -o /tmp/supervolley-arena.zip
@@ -285,56 +285,66 @@ jobs:
           assert old in text
           text = text.replace(old, new, 1)
 
-          old = """    // Flat fills, deliberately: gradients read as a lit 3D scene, and this
-    // game is meant to read as a drawn 2D one.
-    ctx.fillStyle = '#10182b';
-    ctx.fillRect(0, 0, w, h);
-
-    this.drawCrowd(ctx, cam, time);
-    this.drawRoof(ctx, cam);
-    this.drawShafts(ctx, cam, time);
-    this.drawBarrier(ctx, cam);
-    this.drawFloor(ctx, cam);
-    this.drawRibbon(ctx, cam, time);"""
-          new = """    const illustrated = this.artwork.drawBackdrop(ctx, w, h);
-    if (!illustrated) {
-      // Flat procedural fallback: always available when an asset is absent.
-      ctx.fillStyle = '#10182b';
-      ctx.fillRect(0, 0, w, h);
-      this.drawCrowd(ctx, cam, time);
-      this.drawRoof(ctx, cam);
-    }
-
-    // Dynamic light still belongs to the game and sits over either backdrop.
-    this.drawShafts(ctx, cam, time);
-    if (!illustrated) this.drawBarrier(ctx, cam);
-    this.drawFloor(ctx, cam);
-    if (!illustrated) this.drawRibbon(ctx, cam, time);"""
+          old = "\n".join([
+              "    // Flat fills, deliberately: gradients read as a lit 3D scene, and this",
+              "    // game is meant to read as a drawn 2D one.",
+              "    ctx.fillStyle = '#10182b';",
+              "    ctx.fillRect(0, 0, w, h);",
+              "",
+              "    this.drawCrowd(ctx, cam, time);",
+              "    this.drawRoof(ctx, cam);",
+              "    this.drawShafts(ctx, cam, time);",
+              "    this.drawBarrier(ctx, cam);",
+              "    this.drawFloor(ctx, cam);",
+              "    this.drawRibbon(ctx, cam, time);",
+          ])
+          new = "\n".join([
+              "    const illustrated = this.artwork.drawBackdrop(ctx, w, h);",
+              "    if (!illustrated) {",
+              "      // Flat procedural fallback: always available when an asset is absent.",
+              "      ctx.fillStyle = '#10182b';",
+              "      ctx.fillRect(0, 0, w, h);",
+              "      this.drawCrowd(ctx, cam, time);",
+              "      this.drawRoof(ctx, cam);",
+              "    }",
+              "",
+              "    // Dynamic light still belongs to the game and sits over either backdrop.",
+              "    this.drawShafts(ctx, cam, time);",
+              "    if (!illustrated) this.drawBarrier(ctx, cam);",
+              "    this.drawFloor(ctx, cam);",
+              "    if (!illustrated) this.drawRibbon(ctx, cam, time);",
+          ])
           assert old in text
           text = text.replace(old, new, 1)
 
           old = "    this.drawGrain(ctx, cam, outX, outY);\n    this.drawLightPools(ctx, cam, outX, outY);"
-          new = """    if (!this.artwork.drawCourtFloor(ctx, cam, COURT_HALF_WIDTH, COURT_HALF_LENGTH)) {
-      this.drawGrain(ctx, cam, outX, outY);
-    }
-    this.drawLightPools(ctx, cam, outX, outY);"""
+          new = "\n".join([
+              "    if (!this.artwork.drawCourtFloor(ctx, cam, COURT_HALF_WIDTH, COURT_HALF_LENGTH)) {",
+              "      this.drawGrain(ctx, cam, outX, outY);",
+              "    }",
+              "    this.drawLightPools(ctx, cam, outX, outY);",
+          ])
           assert old in text
           text = text.replace(old, new, 1)
 
-          old = """    const footFar = cam.project(W, 0, 0).y;
-    const footNear = cam.project(-W, 0, 0).y;
-
-    ctx.save();"""
-          new = """    const footFar = cam.project(W, 0, 0).y;
-    const footNear = cam.project(-W, 0, 0).y;
-    const antennaTop = Math.min(
-      cam.project(W, 0, ANTENNA_HEIGHT).y,
-      cam.project(-W, 0, ANTENNA_HEIGHT).y,
-    );
-
-    if (this.artwork.drawNet(ctx, cx, antennaTop, footNear, u)) return;
-
-    ctx.save();"""
+          old = "\n".join([
+              "    const footFar = cam.project(W, 0, 0).y;",
+              "    const footNear = cam.project(-W, 0, 0).y;",
+              "",
+              "    ctx.save();",
+          ])
+          new = "\n".join([
+              "    const footFar = cam.project(W, 0, 0).y;",
+              "    const footNear = cam.project(-W, 0, 0).y;",
+              "    const antennaTop = Math.min(",
+              "      cam.project(W, 0, ANTENNA_HEIGHT).y,",
+              "      cam.project(-W, 0, ANTENNA_HEIGHT).y,",
+              "    );",
+              "",
+              "    if (this.artwork.drawNet(ctx, cx, antennaTop, footNear, u)) return;",
+              "",
+              "    ctx.save();",
+          ])
           assert old in text
           text = text.replace(old, new, 1)
 
