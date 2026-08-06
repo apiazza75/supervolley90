@@ -14,71 +14,104 @@ import { resolve } from 'node:path';
 
 const OUT = resolve(process.argv[2] ?? 'shots');
 
+type Harness = {
+  world?: {
+    phase?: string;
+    serveTossInFlight?: boolean;
+    serveStrikeReady?: boolean;
+  };
+};
+
 async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });
 
   const server = await createServer({ server: { port: 5174, strictPort: true } });
   await server.listen();
-  const url = `http://localhost:5174/`;
+  const url = 'http://localhost:5174/';
 
   const browser = await chromium.launch({
-    // PLAYWRIGHT_BROWSERS_PATH points at the preinstalled bundle; `chromium`
-    // there is a symlink to the versioned directory, so resolve it explicitly.
     executablePath: process.env.CHROMIUM_PATH,
     args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader'],
   });
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 
   const errors: string[] = [];
-  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-  page.on('console', (m) => {
-    if (m.type() === 'error') errors.push(`console: ${m.text()}`);
+  page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(`console: ${message.text()}`);
   });
 
   await page.goto(url, { waitUntil: 'networkidle' });
   await page.waitForTimeout(700);
   await page.screenshot({ path: `${OUT}/01-menu.png` });
 
-  // Confirm the match starts: the menu's confirm button walks down the rows.
-  for (let i = 0; i < 4; i++) {
+  // Move through the four menu rows and prove that a World was actually made.
+  for (let i = 0; i < 8; i++) {
+    const started = await page.evaluate(
+      () => Boolean((window as unknown as { __sv90?: Harness }).__sv90?.world),
+    );
+    if (started) break;
     await page.keyboard.press('Space');
-    await page.waitForTimeout(320);
+    await page.waitForTimeout(250);
   }
-  await page.waitForTimeout(1200);
-  await page.screenshot({ path: `${OUT}/02-serve.png` });
+  await page.waitForFunction(
+    () => Boolean((window as unknown as { __sv90?: Harness }).__sv90?.world),
+    undefined,
+    { timeout: 5000 },
+  );
+  await page.waitForTimeout(900);
 
-  // Serve: one tap tosses the ball, a second tap hits it at the top.
+  // The current serve is a two-stage action. Load power by holding the button,
+  // release to toss, then strike only when the simulation says the authored
+  // contact window is ready. Fixed sleeps previously missed that window and
+  // produced six pictures of a ball still in the server's hand.
+  await page.keyboard.down('Space');
+  await page.waitForTimeout(460);
+  await page.keyboard.up('Space');
+  await page.waitForFunction(
+    () => Boolean((window as unknown as { __sv90?: Harness }).__sv90?.world?.serveTossInFlight),
+    undefined,
+    { timeout: 5000 },
+  );
+  await page.waitForFunction(
+    () => Boolean((window as unknown as { __sv90?: Harness }).__sv90?.world?.serveStrikeReady),
+    undefined,
+    { timeout: 5000 },
+  );
+  await page.screenshot({ path: `${OUT}/02-serve.png` });
   await page.keyboard.press('Space');
-  await page.waitForTimeout(780);
-  await page.keyboard.press('Space');
+  await page.waitForFunction(
+    () => (window as unknown as { __sv90?: Harness }).__sv90?.world?.phase === 'rally',
+    undefined,
+    { timeout: 5000 },
+  );
 
   for (const [name, wait] of [
-    ['03-rally', 1400],
-    ['04-rally', 1600],
-    ['05-rally', 1800],
+    ['03-rally', 450],
+    ['04-rally', 850],
+    ['05-rally', 1250],
   ] as const) {
     await page.waitForTimeout(wait);
     await page.screenshot({ path: `${OUT}/${name}.png` });
   }
 
-  // Let the AI play both sides for a while and grab a late-match frame.
-  await page.waitForTimeout(6000);
+  await page.waitForTimeout(5000);
   await page.screenshot({ path: `${OUT}/06-late.png` });
 
-  // Report what the game thinks its state is, straight from the page.
   const stats = await page.evaluate(() => {
-    const c = document.getElementById('game') as HTMLCanvasElement | null;
+    const canvas = document.getElementById('game') as HTMLCanvasElement | null;
+    const world = (window as unknown as { __sv90?: Harness }).__sv90?.world;
     return {
-      canvas: c ? `${c.width}x${c.height}` : 'missing',
-      // Sample some pixels to prove the frame is not blank.
+      canvas: canvas ? `${canvas.width}x${canvas.height}` : 'missing',
+      phase: world?.phase ?? 'missing',
       nonBlank: (() => {
-        if (!c) return false;
-        const ctx = c.getContext('2d');
-        if (!ctx) return false;
-        const d = ctx.getImageData(0, 0, c.width, c.height).data;
+        if (!canvas) return false;
+        const context = canvas.getContext('2d');
+        if (!context) return false;
+        const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
         const seen = new Set<string>();
-        for (let i = 0; i < d.length; i += 4 * 977) {
-          seen.add(`${d[i]},${d[i + 1]},${d[i + 2]}`);
+        for (let i = 0; i < data.length; i += 4 * 977) {
+          seen.add(`${data[i]},${data[i + 1]},${data[i + 2]}`);
           if (seen.size > 40) return true;
         }
         return seen.size > 40;
@@ -87,12 +120,13 @@ async function main(): Promise<void> {
   });
 
   console.log('canvas:', stats.canvas);
+  console.log('final phase:', stats.phase);
   console.log('frame has varied content:', stats.nonBlank);
   console.log(errors.length ? `ERRORS:\n  ${errors.join('\n  ')}` : 'no page errors');
 
   await browser.close();
   await server.close();
-  if (errors.length) process.exitCode = 1;
+  if (!stats.nonBlank || errors.length) process.exitCode = 1;
 }
 
-main();
+void main();
