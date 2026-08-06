@@ -1,0 +1,36 @@
+name: Final visual verification
+
+on:
+  push:
+    branches:
+      - claude/volley-2d-macos-game-cl9ary
+    paths:
+      - .github/workflows/final-visual-check.yml
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/volley-2d-macos-game-cl9ary
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Capture real game frames
+        run: npm run shots -- final-shots
+
+      - name: Upload visual evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: SuperVolley90-final-screenshots
+          path: final-shots/*.png
+          if-no-files-found: error
