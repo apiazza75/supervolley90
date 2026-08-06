@@ -1,0 +1,65 @@
+name: Apply complete visual overhaul
+
+on:
+  push:
+    branches:
+      - codex/visual-overhaul-2026
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Download verified visual overhaul payload
+        env:
+          PAYLOAD_URL: https://api.onedrive.com/v1.0/shares/u!aHR0cHM6Ly91ZmZpY2lvc2VydmljZS1teS5zaGFyZXBvaW50LmNvbS86dTovZy9wZXJzb25hbC9hbGVzc2FuZHJvX3BpYXp6YV91ZmZpY2lvc2VydmljZV9pdC9JUUNyUHJGUEtjZmpTWXV4X3g3WTVQTlhBVzlWT3JZTDlWczBKM2t6UkZXbGZ2MA/root/content
+          PAYLOAD_SHA256: 6f1b20a5b593ad079d85a9ab13b9446abe8b3f5194dec9ca4de6e5521dba2a97
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 5 --retry-all-errors \
+            --user-agent 'Mozilla/5.0 (GitHub Actions)' \
+            "$PAYLOAD_URL" -o /tmp/sv90-text-overhaul.tar.gz
+          echo "$PAYLOAD_SHA256  /tmp/sv90-text-overhaul.tar.gz" | sha256sum --check --strict
+
+      - name: Apply production code
+        run: |
+          set -euo pipefail
+          tar -xzf /tmp/sv90-text-overhaul.tar.gz -C .
+
+      - run: npm ci
+
+      - name: Normalise production sprite palette masks
+        run: npx tsx tools/normalise-sprite-masks.ts
+
+      - name: Validate generated assets and code
+        run: |
+          npm run assets:check
+          npm run typecheck
+          npm run build
+
+      - name: Commit complete overhaul
+        run: |
+          set -euo pipefail
+          rm -rf .codex
+          rm -f .github/workflows/codex-apply-visual-overhaul.yml
+          git config user.name "Codex Visual Systems"
+          git config user.email "noreply@openai.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "Rebuild Super Volley 90 visual system"
+          git push origin HEAD:codex/visual-overhaul-2026
