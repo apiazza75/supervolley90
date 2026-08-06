@@ -237,7 +237,7 @@ export class Team {
     s.height = 0;
     s.vertVel = 0;
     s.charge = 0;
-    s.setAnim('serve');
+    s.setAnim('serve_toss');
     return s;
   }
 

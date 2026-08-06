@@ -18,6 +18,15 @@ export type PlayerRole = 'setter' | 'outside' | 'opposite' | 'middle' | 'libero'
 export type PlayerAnim =
   | 'idle'
   | 'run'
+  | 'ready'
+  | 'shuffle'
+  | 'approach_run'
+  | 'plant'
+  | 'jump_rise'
+  | 'air_contact_spike'
+  | 'air_contact_block'
+  | 'air_contact_jump_serve'
+  | 'follow_through'
   | 'dive'
   | 'jump'
   | 'spike'
@@ -28,7 +37,13 @@ export type PlayerAnim =
   | 'land'
   | 'cheer'
   | 'down'
-  | 'getUp';
+  | 'getUp'
+  | 'bump_ready'
+  | 'bump_contact'
+  | 'set_ready'
+  | 'set_contact'
+  | 'serve_toss'
+  | 'serve_contact';
 
 /** Per-player attributes, 0..1. The AI and the strike solver both read these. */
 export interface PlayerStats {
@@ -39,8 +54,47 @@ export interface PlayerStats {
   reaction: number;
 }
 
-/** Poses that depict a single action and must relax back to idle afterwards. */
-const TRANSIENT_ANIMS: readonly PlayerAnim[] = ['spike', 'bump', 'set', 'block', 'land', 'serve'];
+/** Poses that depict a single action and must relax into a ready posture. */
+const TRANSIENT_ANIMS: readonly PlayerAnim[] = [
+  'spike',
+  'block',
+  'set',
+  'bump',
+  'serve',
+  'run',
+  'land',
+  'jump_rise',
+  'air_contact_spike',
+  'air_contact_block',
+  'air_contact_jump_serve',
+  'follow_through',
+  'bump_ready',
+  'bump_contact',
+  'set_ready',
+  'set_contact',
+  'serve_toss',
+  'serve_contact',
+  'down',
+  'getUp',
+];
+
+/** Minimum hold time for one-shot / readable action states. */
+const TRANSIENT_HOLD: Partial<Record<PlayerAnim, number>> = {
+  jump_rise: 0.17,
+  serve_toss: 0.22,
+  serve_contact: 0.14,
+  air_contact_spike: 0.12,
+  air_contact_block: 0.14,
+  air_contact_jump_serve: 0.14,
+  follow_through: 0.16,
+  bump_ready: 0.11,
+  bump_contact: 0.16,
+  set_ready: 0.1,
+  set_contact: 0.16,
+  land: 0.15,
+  down: 0.38,
+  getUp: 0.24,
+};
 
 export const defaultStats = (): PlayerStats => ({
   speed: 0.6,
@@ -84,6 +138,8 @@ export class Player {
   sliding = 0;
   /** Seconds left of pushing back up onto the feet after a sprawl. */
   gettingUp = 0;
+  /** Minimum time an explicit action pose remains readable before fading. */
+  animHold = 0;
   /** Non-zero right after a successful hit, used for the arm-swing pose. */
   swing = 0;
   /** Stamina-free arcade "charge" built up while the action button is held. */
@@ -142,7 +198,7 @@ export class Player {
     if (!this.canAct || this.airborne) return false;
     this.vertVel = this.jumpVelocity;
     this.height = 0.001;
-    this.setAnim('jump');
+    this.setAnim('jump_rise');
     return true;
   }
 
@@ -182,7 +238,19 @@ export class Player {
     if (this.anim !== a) {
       this.anim = a;
       this.animTime = 0;
+      this.animHold = TRANSIENT_HOLD[a] ?? 0;
     }
+  }
+
+  private canSettle(): boolean {
+    if (!this.canAct) return false;
+    if (this.downTime > 0 || this.gettingUp > 0 || this.diving || this.airborne) return false;
+    if (this.animHold > 0) return false;
+    return true;
+  }
+
+  private shouldGoIdle(): boolean {
+    return this.canSettle() && this.animTime > 0.26 && TRANSIENT_ANIMS.includes(this.anim);
   }
 
   /**
@@ -191,6 +259,7 @@ export class Player {
    */
   step(dt: number, moveX: number, moveY: number): void {
     this.animTime += dt;
+    if (this.animHold > 0) this.animHold = Math.max(0, this.animHold - dt);
     if (this.lockout > 0) this.lockout -= dt;
     if (this.swing > 0) this.swing -= dt;
 
@@ -219,21 +288,10 @@ export class Player {
       }
     }
 
-    // A finished action must not linger: a player who bumped and then stood
-    // still used to hold the bump pose indefinitely, which froze the court
-    // into a waxwork between touches. The serve pose is held only while the
-    // button is, so a charging server is unaffected.
-    if (
-      !this.airborne &&
-      !this.diving &&
-      this.downTime <= 0 &&
-      this.swing <= 0 &&
-      !this.heldAction &&
-      this.gettingUp <= 0 &&
-      this.animTime > 0.45 &&
-      TRANSIENT_ANIMS.includes(this.anim)
-    ) {
-      this.setAnim('idle');
+    // A finished action must not linger and must not force the body into a
+    // constant run cycle between touches.
+    if (this.shouldGoIdle() && this.swing <= 0 && !this.heldAction) {
+      this.setAnim('ready');
     }
 
     const grounded = !this.airborne;
@@ -247,24 +305,29 @@ export class Player {
         const target = this.runSpeed;
         this.vel.x = approach(this.vel.x, nx * target, PLAYER_ACCEL * dt);
         this.vel.y = approach(this.vel.y, ny * target, PLAYER_ACCEL * dt);
-        // Facing mirrors the figure along the screen's horizontal axis, which
-        // is the court's length — so it follows movement along the court, not
-        // across it. Using the cross-court axis here was one of the things
-        // that made movement look wrong after the camera changed.
-        if (Math.abs(ny) > 0.2) this.facing = Math.sign(ny);
-        if (
-          this.anim !== 'run' &&
-          this.swing <= 0 &&
-          this.cheerTime <= 0 &&
-          !this.heldAction &&
-          (this.anim === 'idle' || TRANSIENT_ANIMS.includes(this.anim))
-        ) {
-          this.setAnim('run');
+      // Facing mirrors the figure along the court's dominant axis.
+      if (Math.abs(ny) > 0.2) this.facing = Math.sign(ny);
+      if (
+        this.anim !== 'approach_run' &&
+        this.swing <= 0 &&
+        this.cheerTime <= 0 &&
+        !this.heldAction &&
+        this.anim !== 'land' &&
+        this.anim !== 'getUp' &&
+        this.anim !== 'dive'
+      ) {
+          this.setAnim('approach_run');
         }
       } else {
         this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * dt);
         this.vel.y = approach(this.vel.y, 0, PLAYER_FRICTION * dt);
-        if (this.anim === 'run' && this.cheerTime <= 0) this.setAnim('idle');
+        if (
+          this.canSettle() &&
+          (this.anim === 'approach_run' || this.anim === 'shuffle' || this.anim === 'run') &&
+          this.cheerTime <= 0
+        ) {
+          this.setAnim('ready');
+        }
       }
     } else if (this.diving) {
       this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * 0.55 * dt);
@@ -285,12 +348,13 @@ export class Player {
       this.vertVel += GRAVITY * 1.15 * dt;
       this.height += this.vertVel * dt;
       if (this.height <= 0) {
-        this.height = 0;
-        this.vertVel = 0;
-        this.specialArmed = false;
-        if (this.diving) {
-          // Landing from a dive is a SLIDE, not a stop. Killing the run the
-          // instant the body touched the floor made the most spectacular thing
+      this.height = 0;
+      this.vertVel = 0;
+      this.specialArmed = false;
+      if (this.anim === 'jump_rise' && this.swing > 0) this.setAnim('follow_through');
+      if (this.diving) {
+        // Landing from a dive is a SLIDE, not a stop. Killing the run the
+        // instant the body touched the floor made the most spectacular thing
           // in the sport end in a thud; carrying the momentum and bleeding it
           // off against the floor is what makes it read as a dive at all.
           this.diving = false;

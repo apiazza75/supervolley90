@@ -517,7 +517,7 @@ export class World {
         server.pos.y + attackDir(this.servingSide) * 0.3,
         1.3 + server.height,
       );
-      server.setAnim('serve');
+      server.setAnim('serve_toss');
 
       // Two serves, one button, told apart by how long it is held:
       //   tap  -> toss the ball up and go for the overhand or jump serve
@@ -558,7 +558,7 @@ export class World {
         this.ball.spin = v3();
         this.serveStage = 'toss';
         this.tossedAt = this.phaseTimer;
-        server.setAnim('set');
+        server.setAnim('serve_contact');
       }
       return;
     }
@@ -615,7 +615,7 @@ export class World {
     server.charge = 0;
     server.releasedCharge = 0;
     server.swing = 0.3;
-    server.setAnim('spike');
+    server.setAnim(server.airborne ? 'air_contact_jump_serve' : 'serve_contact');
     this.registerTouch(server, 'serve', res.speed);
     this.serveInFlightFlag = true;
     this.aimTarget = res.target;

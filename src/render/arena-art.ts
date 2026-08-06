@@ -42,40 +42,117 @@ export function netDestinationRect(
   return { x: centreX - width / 2, y: top, width, height: Math.max(1, bottom - top) };
 }
 
+type ArenaLayer = 'backdrop' | 'floor' | 'net';
+
+interface LayerHandle {
+  img: HTMLImageElement;
+  loaded: boolean;
+}
+
 /**
- * The 2026 arena is rendered as three live procedural layers rather than the
- * earlier low-detail PNG backdrop: hall/crowd, court surface and projected net.
- * Keeping this adapter means old callers stay stable while stale raster files
- * can remain in public/ without ever determining the final look.
+ * Loads and draws the illustrated arena layers.
+ *
+ * If any layer is unavailable the procedural draw path in `arena.ts` remains active.
  */
 export class ArenaArtwork {
-  constructor(_base = 'arena') {}
+  private readonly base: string;
+  private readonly layers: Record<ArenaLayer, LayerHandle>;
 
-  /** Three complete live layers are always available. */
-  get loadedCount(): number {
-    return 3;
+  constructor(base = 'arena') {
+    this.base = base.replace(/\/$/, '');
+    this.layers = {
+      backdrop: { img: this.load(`${this.base}/arena-back.png`), loaded: false },
+      floor: { img: this.load(`${this.base}/arena-floor.png`), loaded: false },
+      net: { img: this.load(`${this.base}/net.png`), loaded: false },
+    };
   }
 
-  drawBackdrop(_ctx: CanvasRenderingContext2D, _width: number, _height: number): boolean {
-    return false;
+  private load(src: string): HTMLImageElement {
+    const img = new Image();
+    img.onload = () => {
+      for (const key of Object.keys(this.layers) as Array<ArenaLayer>) {
+        if (this.layers[key].img === img) this.layers[key].loaded = true;
+      }
+    };
+    img.src = `/${src}`;
+    return img;
+  }
+
+  private getLayer(name: ArenaLayer): HTMLImageElement | null {
+    const layer = this.layers[name];
+    if (!layer.loaded || !layer.img.complete) return null;
+    return layer.img;
+  }
+
+  /** Number of arena layers currently available for rendering. */
+  get loadedCount(): number {
+    return (Object.keys(this.layers) as ArenaLayer[]).filter((name) => this.layers[name].loaded).length;
+  }
+
+  drawBackdrop(ctx: CanvasRenderingContext2D, width: number, height: number): boolean {
+    const img = this.getLayer('backdrop');
+    if (!img) return false;
+
+    const crop = coverSourceRect(img.naturalWidth, img.naturalHeight, width, height);
+    ctx.save();
+    ctx.drawImage(img, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);
+    ctx.restore();
+    return true;
   }
 
   drawCourtFloor(
-    _ctx: CanvasRenderingContext2D,
-    _cam: Camera,
-    _halfWidth: number,
-    _halfLength: number,
+    ctx: CanvasRenderingContext2D,
+    cam: Camera,
+    halfWidth: number,
+    halfLength: number,
   ): boolean {
-    return false;
+    const img = this.getLayer('floor');
+    if (!img) return false;
+
+    const points = [
+      cam.projectFloor(-halfWidth, -halfLength),
+      cam.projectFloor(halfWidth, -halfLength),
+      cam.projectFloor(halfWidth, halfLength),
+      cam.projectFloor(-halfWidth, halfLength),
+    ];
+    const minX = Math.min(...points.map((p) => p.x));
+    const maxX = Math.max(...points.map((p) => p.x));
+    const minY = Math.min(...points.map((p) => p.y));
+    const maxY = Math.max(...points.map((p) => p.y));
+    const width = Math.max(1, maxX - minX);
+    const height = Math.max(1, maxY - minY);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    ctx.lineTo(points[1].x, points[1].y);
+    ctx.lineTo(points[2].x, points[2].y);
+    ctx.lineTo(points[3].x, points[3].y);
+    ctx.closePath();
+    ctx.clip();
+    ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, minX, minY, width, height);
+    ctx.restore();
+
+    return true;
   }
 
   drawNet(
-    _ctx: CanvasRenderingContext2D,
-    _centreX: number,
-    _top: number,
-    _bottom: number,
-    _worldUnitPixels: number,
+    ctx: CanvasRenderingContext2D,
+    centreX: number,
+    top: number,
+    bottom: number,
+    worldUnitPixels: number,
   ): boolean {
-    return false;
+    const img = this.getLayer('net');
+    if (!img) return false;
+
+    const width = Math.max(8, worldUnitPixels * 0.78);
+    const height = Math.max(1, Math.abs(bottom - top));
+    const x = centreX - width / 2;
+    const y = Math.min(top, bottom);
+    ctx.save();
+    ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, x, y, width, height);
+    ctx.restore();
+    return true;
   }
 }

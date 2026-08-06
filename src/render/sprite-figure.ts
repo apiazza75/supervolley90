@@ -1,6 +1,6 @@
 import { clamp } from '../core/math3';
 import type { ContactKind } from '../core/contact';
-import type { Player } from '../core/player';
+import type { Player, PlayerAnim } from '../core/player';
 import type { Camera } from './camera';
 import {
   type SpriteAction,
@@ -100,6 +100,42 @@ export function spriteActionForContact(
   }
 }
 
+function actionFromPlayerAnim(anim: PlayerAnim): SpriteAction {
+  switch (anim) {
+    case 'run':
+    case 'shuffle':
+    case 'approach_run':
+      return 'approach';
+    case 'jump_rise':
+    case 'air_contact_spike':
+    case 'follow_through':
+    case 'plant':
+    case 'spike':
+      return 'spike';
+    case 'air_contact_block':
+      return 'block';
+    case 'air_contact_jump_serve':
+      return 'jumpServe';
+    case 'bump_ready':
+    case 'bump_contact':
+    case 'bump':
+      return 'bump';
+    case 'set_ready':
+    case 'set_contact':
+    case 'set':
+      return 'set';
+    case 'serve_toss':
+    case 'serve_contact':
+    case 'serve':
+      return 'serve';
+    case 'ready':
+      return 'idle';
+    default:
+      return 'idle';
+  }
+}
+
+
 function actionFor(p: Player): SpriteAction {
   if (p.diving || p.anim === 'down' || p.anim === 'getUp') return 'dive';
   if (p.anim === 'cheer') return 'celebrate';
@@ -107,8 +143,21 @@ function actionFor(p: Player): SpriteAction {
   if (p.anim === 'serve') return 'serve';
   if (p.anim === 'set') return 'set';
   if (p.anim === 'bump') return 'bump';
+  if (p.anim === 'run' || p.anim === 'approach_run' || p.anim === 'shuffle') return 'approach';
+  if (p.anim === 'ready' || p.anim === 'idle') return 'idle';
+  if (p.anim === 'bump_ready' || p.anim === 'bump_contact') return 'bump';
+  if (p.anim === 'set_ready' || p.anim === 'set_contact') return 'set';
+  if (p.anim === 'air_contact_spike') return 'spike';
+  if (p.anim === 'air_contact_block') return 'block';
+  if (p.anim === 'air_contact_jump_serve') return 'jumpServe';
+  if (p.anim === 'serve_toss') return 'serve';
+  if (p.anim === 'serve_contact') return p.airborne ? 'jumpServe' : 'serve';
+  if (p.anim === 'jump_rise' || p.anim === 'follow_through' || p.anim === 'plant' || p.anim === 'jump') return 'spike';
   if (p.anim === 'spike' || (p.airborne && p.swing > 0)) return 'spike';
   if (p.airborne) return 'spike';
+
+  const mapped = actionFromPlayerAnim(p.anim);
+  if (mapped !== 'idle') return mapped;
   if (Math.hypot(p.vel.x, p.vel.y) > 0.9) return 'approach';
   return 'idle';
 }

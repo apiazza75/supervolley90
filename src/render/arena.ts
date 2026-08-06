@@ -520,6 +520,12 @@ export class Arena {
     const nearBottom = cam.project(-W, 0, bottomZ);
     const u = cam.projectFloor(0, 0).scale * 42;
 
+    const netX = (farTop.x + nearTop.x) / 2;
+    const netTop = Math.min(farTop.y, nearTop.y);
+    const netBottom = Math.max(farBottom.y, nearBottom.y);
+    const drawnNet = this.artwork.drawNet(ctx, netX, netTop, netBottom, u);
+    if (drawnNet) return;
+
     const lerpPoint = (
       a: { x: number; y: number },
       b: { x: number; y: number },

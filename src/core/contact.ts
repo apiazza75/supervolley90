@@ -278,7 +278,7 @@ export function performBump(ctx: StrikeContext): StrikeResult {
   const vel = solveArc(from, target, flight);
   ball.strike(vel, v3(ctx.rng.spread(0.4), 0, 0));
   player.swing = 0.22;
-  player.setAnim(player.diving ? 'dive' : 'bump');
+  player.setAnim(player.diving ? 'dive' : 'bump_contact');
   return { kind: player.diving ? 'save' : 'bump', target, speed: Math.hypot(vel.x, vel.y, vel.z) };
 }
 
@@ -299,7 +299,7 @@ export function performSet(ctx: StrikeContext): StrikeResult {
   const vel = solveArc(from, target, 1.15);
   ball.strike(vel, v3());
   player.swing = 0.2;
-  player.setAnim('set');
+  player.setAnim('set_contact');
   return { kind: 'set', target, speed: Math.hypot(vel.x, vel.y, vel.z) };
 }
 
@@ -332,7 +332,7 @@ export function performPowerMove(ctx: StrikeContext): StrikeResult & { move: Pow
     // Backspin fights gravity on the way over, then the ball falls off a cliff.
     ball.strike(vel, v3(2.6 * dir, 0, 0));
     player.swing = 0.34;
-    player.setAnim('spike');
+    player.setAnim(player.airborne ? 'air_contact_spike' : 'spike');
     return { kind: 'power', target, speed: 18, move };
   }
 
@@ -364,7 +364,7 @@ export function performPowerMove(ctx: StrikeContext): StrikeResult & { move: Pow
     }
     ball.strike(vel, spin);
     player.swing = 0.34;
-    player.setAnim('spike');
+    player.setAnim(player.airborne ? 'air_contact_spike' : 'spike');
     return { kind: 'power', target, speed: 30 * strength, move };
   }
 
@@ -382,7 +382,7 @@ export function performPowerMove(ctx: StrikeContext): StrikeResult & { move: Pow
   }
   ball.strike(vel, v3(-9 * dir, 0, 0));
   player.swing = 0.36;
-  player.setAnim('spike');
+  player.setAnim(player.airborne ? 'air_contact_spike' : 'spike');
   return { kind: 'power', target, speed: 38 * strength, move };
 }
 
@@ -422,7 +422,7 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
     const vel = solveArcOverNet(from, target, 0.22, 0.85, 1.7);
     ball.strike(vel, v3());
     player.swing = 0.26;
-    player.setAnim('spike');
+    player.setAnim(player.airborne ? 'air_contact_spike' : 'spike');
     return { kind: 'tip', target, speed: Math.hypot(vel.x, vel.y, vel.z) };
   }
 
@@ -453,7 +453,7 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
   const spin = v3(-5.5 * dir, 0, -aim.x * 3.4 * dir);
   ball.strike(vel, spin);
   player.swing = 0.3;
-  player.setAnim('spike');
+  player.setAnim(player.airborne ? 'air_contact_spike' : 'spike');
   return { kind: 'spike', target, speed: power };
 }
 
@@ -477,7 +477,7 @@ export function performBlock(ctx: StrikeContext): StrikeResult {
     );
     const vel = driveOverNet(contactPoint(player, ball), target, incoming * 0.7 + 6, 0.25);
     ball.strike(vel, v3(-2 * dir, 0, 0));
-    player.setAnim('block');
+    player.setAnim(player.airborne ? 'air_contact_block' : 'block');
     return { kind: 'block', target, speed: incoming };
   }
 
@@ -488,7 +488,7 @@ export function performBlock(ctx: StrikeContext): StrikeResult {
     Math.abs(ball.vel.z) * 0.35 + 3.4,
   );
   ball.strike(vel, v3());
-  player.setAnim('block');
+  player.setAnim(player.airborne ? 'air_contact_block' : 'block');
   return { kind: 'block', target: v3(ball.pos.x, ball.pos.y, 0), speed: incoming };
 }
 
