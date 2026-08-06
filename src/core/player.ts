@@ -11,7 +11,19 @@ import {
   COURT_HALF_LENGTH,
   OUT_MARGIN_X,
   OUT_MARGIN_Y,
+  attackDir,
 } from './rules';
+import {
+  type ActionPhase,
+  type Locomotion,
+  type PresentationJob,
+  type PresentationState,
+  type VolleyballAction,
+  FACING_LOCKED_PHASES,
+  RUN_SPEED_THRESHOLD,
+  SHUFFLE_SPEED,
+  initialPresentation,
+} from './presentation';
 
 export type PlayerRole = 'setter' | 'outside' | 'opposite' | 'middle' | 'libero';
 
@@ -96,6 +108,45 @@ const TRANSIENT_HOLD: Partial<Record<PlayerAnim, number>> = {
   getUp: 0.24,
 };
 
+/**
+ * How each authored pose maps onto the (action, phase) axes.
+ *
+ * The flat enum stays as the call-site vocabulary — forty sites in the strike
+ * solver, the world and the AI already speak it — but it is no longer the
+ * authoritative state. Every `setAnim` now also lands the player on an explicit
+ * action and phase, which is what the renderer and the invariant tests read.
+ */
+const ANIM_PRESENTATION: Record<PlayerAnim, { action: VolleyballAction; phase: ActionPhase }> = {
+  idle: { action: 'none', phase: 'recover' },
+  ready: { action: 'none', phase: 'recover' },
+  run: { action: 'none', phase: 'recover' },
+  shuffle: { action: 'none', phase: 'recover' },
+  approach_run: { action: 'none', phase: 'recover' },
+  land: { action: 'none', phase: 'land' },
+  plant: { action: 'spike', phase: 'plant' },
+  jump_rise: { action: 'spike', phase: 'rise' },
+  jump: { action: 'spike', phase: 'rise' },
+  spike: { action: 'spike', phase: 'contact' },
+  air_contact_spike: { action: 'spike', phase: 'contact' },
+  follow_through: { action: 'spike', phase: 'follow' },
+  block: { action: 'block', phase: 'rise' },
+  air_contact_block: { action: 'block', phase: 'contact' },
+  bump_ready: { action: 'bump', phase: 'prepare' },
+  bump: { action: 'bump', phase: 'contact' },
+  bump_contact: { action: 'bump', phase: 'contact' },
+  set_ready: { action: 'set', phase: 'prepare' },
+  set: { action: 'set', phase: 'contact' },
+  set_contact: { action: 'set', phase: 'contact' },
+  serve_toss: { action: 'serve', phase: 'prepare' },
+  serve: { action: 'serve', phase: 'contact' },
+  serve_contact: { action: 'serve', phase: 'contact' },
+  air_contact_jump_serve: { action: 'jumpServe', phase: 'contact' },
+  dive: { action: 'dive', phase: 'contact' },
+  down: { action: 'dive', phase: 'land' },
+  getUp: { action: 'dive', phase: 'recover' },
+  cheer: { action: 'celebrate', phase: 'contact' },
+};
+
 export const defaultStats = (): PlayerStats => ({
   speed: 0.6,
   jump: 0.6,
@@ -126,6 +177,25 @@ export class Player {
   facing = 1; // -1 or +1 along x, for sprite mirroring
   anim: PlayerAnim = 'idle';
   animTime = 0;
+
+  /**
+   * The authoritative animation state, on three independent axes.
+   * `anim` remains the call-site vocabulary; this is what gets rendered.
+   */
+  presentation: PresentationState = initialPresentation();
+
+  /**
+   * Seconds of remaining licence to play the attack-approach cycle.
+   *
+   * An approach is a commitment to hit, not a way of getting somewhere. Nothing
+   * in the movement code may set it: only `licenseApproach`, called by the AI or
+   * the input layer at the moment the player commits to a spike or jump serve.
+   * It expires on its own so a cancelled attack cannot leave a body sprinting.
+   */
+  approachLicence = 0;
+  /** Distance travelled on the floor since the current approach was licensed. */
+  approachDistance = 0;
+
   /** Counts down while the player cannot start a new action. */
   lockout = 0;
   /** Counts down while the player is sprawled after a dive or a knockdown. */
@@ -240,6 +310,99 @@ export class Player {
       this.animTime = 0;
       this.animHold = TRANSIENT_HOLD[a] ?? 0;
     }
+    this.syncPresentation(a);
+  }
+
+  /**
+   * Keep the action/phase axes in step with the pose, and pin the facing while
+   * the feet are committed.
+   *
+   * The court is viewed side-on with the net at y = 0, so "towards the ball"
+   * and "towards the net" are the same direction for every skill a player can
+   * be executing: `attackDir(side)`. Locking there during the committed phases
+   * is what stops a player who was backpedalling from meeting the ball with
+   * their back to the net.
+   */
+  private syncPresentation(a: PlayerAnim): void {
+    const mapped = ANIM_PRESENTATION[a] ?? { action: 'none' as const, phase: 'recover' as const };
+    const pr = this.presentation;
+    if (pr.action !== mapped.action) {
+      pr.startedAt = 0;
+      pr.contactAt = undefined;
+    }
+    pr.action = mapped.action;
+    pr.phase = mapped.phase;
+    if (mapped.phase === 'contact' && pr.contactAt === undefined) pr.contactAt = pr.startedAt;
+
+    if (mapped.action !== 'none' && mapped.action !== 'celebrate' && FACING_LOCKED_PHASES.has(mapped.phase)) {
+      pr.lockedFacing = attackDir(this.side) as -1 | 1;
+      this.facing = pr.lockedFacing;
+    } else {
+      pr.lockedFacing = undefined;
+    }
+  }
+
+  /**
+   * Commit this player to an attack approach for a bounded window.
+   *
+   * This is the only way `approach` locomotion can be reached. `duration` is
+   * the window in which the run-up must happen; past it the body drops back to
+   * ordinary locomotion whether or not the attack came off.
+   */
+  licenseApproach(job: PresentationJob, duration = 1.1): void {
+    this.approachLicence = Math.max(this.approachLicence, duration);
+    this.approachDistance = 0;
+    this.presentation.sourceJob = job;
+  }
+
+  /** Drop an attack approach that is no longer wanted. */
+  cancelApproach(): void {
+    this.approachLicence = 0;
+  }
+
+  /** True while this body is entitled to play the attack-approach cycle. */
+  get approaching(): boolean {
+    return this.approachLicence > 0;
+  }
+
+  /**
+   * Derive the locomotion axis from how fast the body is actually moving.
+   *
+   * This is the rule the old code got wrong. Locomotion is an *observation* of
+   * the body, not an instruction: a player crossing the court at speed runs, a
+   * player adjusting their feet shuffles, and neither of them may borrow the
+   * attack approach. Only a licence granted by the AI unlocks `approach`.
+   */
+  private updateLocomotion(): void {
+    const speed = Math.hypot(this.vel.x, this.vel.y);
+    const pr = this.presentation;
+
+    let loco: Locomotion;
+    if (!this.airborne && this.approaching && speed > SHUFFLE_SPEED) loco = 'approach';
+    else if (speed < 0.12) loco = 'ready';
+    else if (speed < SHUFFLE_SPEED) loco = 'shuffle';
+    else if (speed >= RUN_SPEED_THRESHOLD) loco = 'run';
+    else loco = 'shuffle';
+    pr.locomotion = loco;
+
+    // A skill in progress owns the body; locomotion must not repaint the pose
+    // underneath it, or the run cycle eats the contact.
+    if (pr.action !== 'none' && FACING_LOCKED_PHASES.has(pr.phase)) return;
+    if (
+      this.swing > 0 ||
+      this.cheerTime > 0 ||
+      this.heldAction ||
+      this.anim === 'land' ||
+      this.anim === 'getUp' ||
+      this.anim === 'dive'
+    ) {
+      return;
+    }
+
+    const wanted: PlayerAnim =
+      loco === 'approach' ? 'approach_run' : loco === 'run' ? 'run' : loco === 'shuffle' ? 'shuffle' : 'ready';
+    if (wanted === 'ready') return; // handled by the settle path, which respects holds
+    if (this.anim !== wanted) this.setAnim(wanted);
   }
 
   private canSettle(): boolean {
@@ -259,9 +422,14 @@ export class Player {
    */
   step(dt: number, moveX: number, moveY: number): void {
     this.animTime += dt;
+    this.presentation.startedAt += dt;
     if (this.animHold > 0) this.animHold = Math.max(0, this.animHold - dt);
     if (this.lockout > 0) this.lockout -= dt;
     if (this.swing > 0) this.swing -= dt;
+    if (this.approachLicence > 0) {
+      this.approachLicence = Math.max(0, this.approachLicence - dt);
+      this.approachDistance += Math.hypot(this.vel.x, this.vel.y) * dt;
+    }
 
     if (this.cheerTime > 0) {
       this.cheerTime -= dt;
@@ -302,25 +470,23 @@ export class Player {
       if (mag > 0.05) {
         const nx = moveX / Math.max(1, mag);
         const ny = moveY / Math.max(1, mag);
-        const target = this.runSpeed;
+        // An approach is a run-up to hit the ball; it is also the only time a
+        // player is entitled to sprint. Everything else — covering, shading
+        // across, resetting into formation — tops out below it.
+        const target = this.approaching ? this.runSpeed : this.runSpeed * 0.9;
         this.vel.x = approach(this.vel.x, nx * target, PLAYER_ACCEL * dt);
         this.vel.y = approach(this.vel.y, ny * target, PLAYER_ACCEL * dt);
-      // Facing mirrors the figure along the court's dominant axis.
-      if (Math.abs(ny) > 0.2) this.facing = Math.sign(ny);
-      if (
-        this.anim !== 'approach_run' &&
-        this.swing <= 0 &&
-        this.cheerTime <= 0 &&
-        !this.heldAction &&
-        this.anim !== 'land' &&
-        this.anim !== 'getUp' &&
-        this.anim !== 'dive'
-      ) {
-          this.setAnim('approach_run');
+        // Facing mirrors the figure along the court's dominant axis, but never
+        // while the feet are committed to a skill: that is what let a
+        // backpedalling player arrive at the ball facing away from the net.
+        if (this.presentation.lockedFacing === undefined && Math.abs(ny) > 0.2) {
+          this.facing = Math.sign(ny);
         }
+        this.updateLocomotion();
       } else {
         this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * dt);
         this.vel.y = approach(this.vel.y, 0, PLAYER_FRICTION * dt);
+        this.updateLocomotion();
         if (
           this.canSettle() &&
           (this.anim === 'approach_run' || this.anim === 'shuffle' || this.anim === 'run') &&

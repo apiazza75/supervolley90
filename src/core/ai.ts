@@ -4,6 +4,7 @@ import { Vec3, clamp, copy, distXY, v3 } from './math3';
 import { Player } from './player';
 import { Rng } from './rng';
 import {
+  COURT_HALF_LENGTH,
   COURT_HALF_WIDTH,
   FIXED_DT,
   GRAVITY,
@@ -17,6 +18,21 @@ import { Team } from './team';
 import type { Command, World } from './world';
 
 type Job = 'idle' | 'receive' | 'set' | 'attack' | 'block' | 'cover' | 'serve';
+
+/**
+ * How long before contact a hitter is allowed to be running their approach.
+ *
+ * This is the whole budget for the run-up, and it is deliberately short. It is
+ * the value that decides how much of a match is spent watching people sprint:
+ * the previous build had no window at all, so every player ran all the time.
+ */
+const APPROACH_WINDOW = 1.05;
+
+/**
+ * How far behind the baseline a jump server starts their run-up, in metres.
+ * Sized so the physical approach lands inside the 1.2–2.6 m a real one covers.
+ */
+const JUMP_SERVE_RUNUP = 1.9;
 
 /**
  * How much room a player insists on having, in metres.
@@ -224,11 +240,11 @@ export class TeamBrain {
       s.holdAction = false;
       if (serving && p.id === server.id) {
         s.job = 'serve';
-        s.goal = copy(p.pos);
         // Plan the serve once: toss time, target, and whether to go up for it.
         if (s.serveHold <= 0) {
-          s.serveHold = this.rng.range(0.5, 1.2);
           s.powerServe = this.rng.chance(0.18 + this.difficulty * 0.12);
+          // A jump serve needs time to walk back and settle before the toss.
+          s.serveHold = s.powerServe ? this.rng.range(0.9, 1.35) : this.rng.range(0.5, 1.2);
           s.aim = {
             x: this.rng.range(-0.8, 0.8),
             depth: this.rng.chance(0.25) ? this.rng.range(-0.5, 0) : this.rng.range(0.4, 0.95),
@@ -237,14 +253,40 @@ export class TeamBrain {
 
         const t = this.world.phaseTimer;
         const ball = this.world.ball;
+        // The run-up is a real journey across the floor: back off behind the
+        // baseline before the toss, then cover that ground and plant. The old
+        // code kept the server's goal pinned to where they already stood and
+        // simply made them jump, so the sheet mimed a run nobody ran.
+        const serveDir = attackDir(this.team.side);
+        const baseline = -serveDir * COURT_HALF_LENGTH;
+        const runUpStart = baseline - serveDir * JUMP_SERVE_RUNUP;
+        const plantSpot = baseline - serveDir * 0.35;
+
         if (ball.frozen) {
           // Ball still in hand: a press now is the toss.
-          s.wantsAction = t > s.serveHold;
-        } else {
-          // Ball in the air. Go up for a jump serve if that was the plan, and
-          // swing once the ball has stopped rising and dropped into reach.
-          if (s.powerServe && !p.airborne && p.canAct && t > s.serveHold + 0.34) p.jump();
+          s.goal = s.powerServe ? v3(p.pos.x, runUpStart, 0) : copy(p.pos);
+          const settled = !s.powerServe || Math.abs(p.pos.y - runUpStart) < 0.5;
+          s.wantsAction = t > s.serveHold && settled;
+        } else if (s.powerServe) {
+          // Toss is up: run the approach, plant, and leave the floor.
+          s.goal = v3(p.pos.x, plantSpot, 0);
+          const arrived =
+            serveDir > 0 ? p.pos.y >= plantSpot - 0.28 : p.pos.y <= plantSpot + 0.28;
+          if (!p.airborne && p.canAct) {
+            if (t > s.serveHold + 0.12) p.licenseApproach('serve', 0.7);
+            // Plant once the ground is covered, or when the toss runs out of
+            // time — a serve that never leaves the floor is a fault.
+            if (t > s.serveHold + 0.3 && (arrived || t > s.serveHold + 0.8)) {
+              if (p.anim === 'approach_run') p.setAnim('plant');
+              p.cancelApproach();
+              p.jump();
+            }
+          }
           const reachTop = p.height + PLAYER_REACH + (p.airborne ? 0.3 : 0.1);
+          s.wantsAction = ball.vel.z < 1.0 && ball.pos.z <= reachTop && ball.pos.z > 1.6;
+        } else {
+          s.goal = copy(p.pos);
+          const reachTop = p.height + PLAYER_REACH + 0.1;
           s.wantsAction = ball.vel.z < 1.0 && ball.pos.z <= reachTop && ball.pos.z > 1.6;
         }
       } else {
@@ -544,7 +586,20 @@ export class TeamBrain {
     // Jump when the ball will arrive as we peak, and only if we are close
     // enough that the swing will actually connect.
     const inPosition = gap < 1.4 || gap < p.runSpeed * timeToContact * 0.6;
+
+    // Licence the run-up, and only the run-up. The window opens when the set is
+    // close enough that the hitter commits, and only if there is ground left to
+    // cover — a hitter already standing under the ball plants, they do not
+    // sprint on the spot. Everything outside this window is ordinary movement.
+    if (!p.airborne && timeToContact < APPROACH_WINDOW && gap > 0.55) {
+      p.licenseApproach('attack', Math.min(APPROACH_WINDOW, timeToContact + 0.2));
+    }
+
     if (!p.airborne && p.canAct && inPosition && timeToContact <= rise + 0.04) {
+      // Plant, then leave the floor: the run-up is over and the pose must stop
+      // being a run cycle before the body goes up.
+      if (p.anim === 'approach_run') p.setAnim('plant');
+      p.cancelApproach();
       p.jump();
     }
 
@@ -642,6 +697,7 @@ export class TeamBrain {
       if (this.stateOf(p).reactionDelay <= 0 && p.jump()) {
         // Read as a block from the first frame of the jump.
         p.setAnim('block');
+        this.world.reportBlockAttempt(p);
         this.stateOf(p).reactionDelay = this.latency(p);
       }
     }

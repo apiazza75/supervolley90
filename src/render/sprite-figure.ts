@@ -10,15 +10,45 @@ import {
   frameArtLiftPixels,
 } from './sprites';
 
-/** A smoothly sampled point inside one 24-frame action. */
+/** A sampled point inside one 24-frame action. */
 export interface Playhead {
   action: SpriteAction;
-  /** Current authored frame, zero-based. */
+  /** The single authored frame to draw, zero-based. */
   frame: number;
-  /** Following frame, or the same frame at the end of a one-shot. */
-  nextFrame: number;
-  /** Eased blend from frame to nextFrame. */
-  mix: number;
+  /** Continuous position in the sheet, for diagnostics and easing. */
+  frameFloat: number;
+}
+
+/**
+ * Per-display-frame render diagnostics.
+ *
+ * `playerBodyDraws` is the number that matters: the old renderer drew two full
+ * bodies per player and blended them with complementary alpha, which is a
+ * double exposure, not interpolation. With several players close together that
+ * is four, six or more overlapping silhouettes — the ghosting in the rejected
+ * screenshot. The visual QA asserts this never exceeds one.
+ */
+export const renderStats = {
+  playerBodyDraws: new Map<number, number>(),
+  /** Highest body-draw count seen for any single player, since the last reset. */
+  maxBodyDrawsPerPlayer: 0,
+};
+
+/** Called once per display frame, before any player is drawn. */
+export function beginRenderFrame(): void {
+  renderStats.playerBodyDraws.clear();
+}
+
+function countBodyDraw(playerId: number): void {
+  const n = (renderStats.playerBodyDraws.get(playerId) ?? 0) + 1;
+  renderStats.playerBodyDraws.set(playerId, n);
+  if (n > renderStats.maxBodyDrawsPerPlayer) renderStats.maxBodyDrawsPerPlayer = n;
+}
+
+/** Reset the high-water mark; the QA harness calls this between scenarios. */
+export function resetRenderStats(): void {
+  renderStats.playerBodyDraws.clear();
+  renderStats.maxBodyDrawsPerPlayer = 0;
 }
 
 export interface SpriteRenderStyle {
@@ -162,20 +192,23 @@ function actionFor(p: Player): SpriteAction {
   return 'idle';
 }
 
-const smoothstep = (v: number): number => v * v * (3 - 2 * v);
-
+/**
+ * Pick the one authored frame to draw.
+ *
+ * Nearest-frame rather than floor: rounding centres each drawing on its own
+ * slice of time, which halves the worst-case timing error against the
+ * simulation and costs nothing. There is deliberately no blend — a sprite sheet
+ * of hand-authored poses has no meaningful in-between, and pretending otherwise
+ * by cross-fading two whole bodies is what produced the ghosting.
+ */
 function sampleAt(action: SpriteAction, t: number): Playhead {
   const span = DURATION[action];
   const u = ONESHOT.has(action) ? clamp(t / span, 0, 0.999999) : ((t / span) % 1 + 1) % 1;
-  const raw = u * 24;
-  const frame = Math.min(23, Math.floor(raw));
-  const nextFrame = ONESHOT.has(action) ? Math.min(23, frame + 1) : (frame + 1) % 24;
-  const fraction = raw - frame;
-  // Hold the authored drawing for the first third, then dissolve into the next.
-  // This removes the hard 15–24 fps step without turning every body into two
-  // equally visible ghosts for the whole interval.
-  const mix = nextFrame === frame ? 0 : smoothstep(clamp((fraction - 0.32) / 0.68, 0, 1));
-  return { action, frame, nextFrame, mix };
+  const frameFloat = u * 24;
+  const frame = ONESHOT.has(action)
+    ? Math.min(23, Math.round(frameFloat))
+    : Math.round(frameFloat) % 24;
+  return { action, frame, frameFloat };
 }
 
 /** Stateful sprite clock, independent from rendering and therefore testable. */
@@ -212,7 +245,7 @@ export class SpriteTimeline {
     if (h.exactFrame !== undefined) {
       const frame = h.exactFrame;
       delete h.exactFrame;
-      return { action: h.action, frame, nextFrame: frame, mix: 0 };
+      return { action: h.action, frame, frameFloat: frame };
     }
 
     if (h.forced) {
@@ -269,10 +302,8 @@ export function drawSpritePlayer(
   // Authored sheets already lift the feet inside their 512 px cell. The old
   // renderer responded by ignoring the simulation's height entirely for jump
   // actions, which made a real block or spike appear planted on the floor.
-  // Add only the physical lift not already present in the two blended frames.
-  const authoredLift =
-    frameArtLiftPixels(sheet, head.frame, bodyPx) * (1 - head.mix) +
-    frameArtLiftPixels(sheet, head.nextFrame, bodyPx) * head.mix;
+  // Add only the physical lift not already present in the drawn frame.
+  const authoredLift = frameArtLiftPixels(sheet, head.frame, bodyPx);
   const worldUnitPx = Math.max(1, floor.scale * 42);
   const lift = Math.max(0, p.height - authoredLift / worldUnitPx);
   const anchor = cam.project(p.pos.x, p.pos.y, lift);
@@ -282,45 +313,21 @@ export function drawSpritePlayer(
   const baseAlpha = depthAlpha * (style.alpha ?? 1);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  if (head.mix <= 0.001 || head.nextFrame === head.frame) {
-    ctx.globalAlpha = baseAlpha;
-    drawFrame(
-      ctx,
-      sheet,
-      head.frame,
-      anchor.x,
-      anchor.y,
-      bodyPx,
-      p.facing >= 0 ? 1 : -1,
-      style.palette,
-      widthScale,
-    );
-  } else {
-    ctx.globalAlpha = baseAlpha * (1 - head.mix);
-    drawFrame(
-      ctx,
-      sheet,
-      head.frame,
-      anchor.x,
-      anchor.y,
-      bodyPx,
-      p.facing >= 0 ? 1 : -1,
-      style.palette,
-      widthScale,
-    );
-    ctx.globalAlpha = baseAlpha * head.mix;
-    drawFrame(
-      ctx,
-      sheet,
-      head.nextFrame,
-      anchor.x,
-      anchor.y,
-      bodyPx,
-      p.facing >= 0 ? 1 : -1,
-      style.palette,
-      widthScale,
-    );
-  }
+  // Exactly one body, always. Position, height and scale are what interpolate
+  // between frames; the silhouette itself never does.
+  ctx.globalAlpha = baseAlpha;
+  drawFrame(
+    ctx,
+    sheet,
+    head.frame,
+    anchor.x,
+    anchor.y,
+    bodyPx,
+    p.facing >= 0 ? 1 : -1,
+    style.palette,
+    widthScale,
+  );
+  countBodyDraw(p.id);
   ctx.restore();
   return true;
 }

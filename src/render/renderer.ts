@@ -9,7 +9,12 @@ import { Camera } from './camera';
 import { Effects } from './fx';
 import { Officials } from './officials';
 import { drawActiveRing, drawPlayer, drawPlayerShadow, shade } from './players';
-import { cueSpriteContact, drawSpritePlayer, type SpriteRenderStyle } from './sprite-figure';
+import {
+  beginRenderFrame,
+  cueSpriteContact,
+  drawSpritePlayer,
+  type SpriteRenderStyle,
+} from './sprite-figure';
 import { type SheetSet, loadSheets } from './sprites';
 import { INTRO as REPLAY_INTRO, type ReplayFrame } from '../game/replay';
 
@@ -270,6 +275,7 @@ export class Renderer {
     const ctx = this.ctx;
     const cam = this.camera;
 
+    beginRenderFrame();
     cam.follow(frame.ball, dt);
     ctx.clearRect(0, 0, cam.viewWidth, cam.viewHeight);
     this.arena.update(dt);
@@ -403,6 +409,9 @@ export class Renderer {
   draw(world: World, state: RenderState, dt: number): number {
     const ctx = this.ctx;
     const cam = this.camera;
+
+    // One display frame begins here; the body-draw counter is per frame.
+    beginRenderFrame();
 
     if (this.hitStop > 0) this.hitStop = Math.max(0, this.hitStop - dt);
     if (this.flash > 0) this.flash = Math.max(0, this.flash - dt * 2.4);

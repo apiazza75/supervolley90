@@ -67,7 +67,23 @@ export const idleCommand = (): Command => ({
 });
 
 export type GameEvent =
-  | { type: 'contact'; kind: ContactKind; side: Side; playerId: number; speed: number; at: Vec3 }
+  | {
+      type: 'contact';
+      kind: ContactKind;
+      side: Side;
+      playerId: number;
+      speed: number;
+      at: Vec3;
+      /** Which way the body was turned as it struck. Audited by the QA gate. */
+      facing: number;
+      /** Whether the strike was made off the floor, and from what height. */
+      airborne: boolean;
+      height: number;
+    }
+  /** A blocker committed to a block and left the floor. */
+  | { type: 'blockAttempt'; side: Side; playerId: number; height: number }
+  /** A block actually intercepted the ball over the net. */
+  | { type: 'blockContact'; side: Side; playerId: number; height: number; airborne: boolean }
   | { type: 'powerMove'; side: Side; playerId: number; name: string; at: Vec3 }
   | { type: 'powerReady'; side: Side }
   | { type: 'bounce'; at: Vec3; speed: number }
@@ -347,6 +363,7 @@ export class World {
         p.jump();
         if (blocking) {
           p.setAnim('block');
+          this.reportBlockAttempt(p);
           // The player called the block, so the nearest front-row team-mate
           // goes up WITH them — a double block is coordinated by one call, and
           // this is that call.
@@ -358,6 +375,7 @@ export class World {
           if (mate && Math.abs(mate.pos.x - p.pos.x) < 2.6 && Math.abs(mate.pos.y) < 2.6) {
             mate.jump();
             mate.setAnim('block');
+            this.reportBlockAttempt(mate);
           }
         }
       }
@@ -372,6 +390,7 @@ export class World {
           // both arms straight up — not as a spike wind-up.
           if (this.possession !== p.side && Math.abs(p.pos.y) < 2.2) {
             p.setAnim('block');
+            this.reportBlockAttempt(p);
           }
         }
       }
@@ -870,6 +889,24 @@ export class World {
     }
   }
 
+  /**
+   * Record that a player committed to a block and left the floor.
+   *
+   * Kept separate from `blockContact` on purpose: the previous build had no way
+   * to tell "the defence read the set and put a block up" from "the ball
+   * happened to touch someone's hands", so the visual QA faked a block by
+   * assigning the pose and the height directly. With both events the harness
+   * can wait for a real one.
+   */
+  reportBlockAttempt(p: Player): void {
+    this.events.push({
+      type: 'blockAttempt',
+      side: p.side,
+      playerId: p.id,
+      height: p.height,
+    });
+  }
+
   private registerTouch(p: Player, kind: ContactKind, speed: number): void {
     p.actionBuffer = 0;
     this.events.push({
@@ -879,7 +916,20 @@ export class World {
       playerId: p.id,
       speed,
       at: copy(this.ball.pos),
+      facing: p.facing,
+      airborne: p.airborne,
+      height: p.height,
     });
+
+    if (kind === 'block') {
+      this.events.push({
+        type: 'blockContact',
+        side: p.side,
+        playerId: p.id,
+        height: p.height,
+        airborne: p.airborne,
+      });
+    }
 
     if (kind === 'block') {
       // Blocks are not counted, and the blocking team gains possession only if
