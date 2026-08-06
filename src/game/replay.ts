@@ -1,3 +1,4 @@
+import type { PlayerRole } from '../core/player';
 import { Side } from '../core/rules';
 import { World } from '../core/world';
 
@@ -13,6 +14,7 @@ export interface ReplayFrame {
   players: {
     id: number;
     side: Side;
+    role: PlayerRole;
     pos: { x: number; y: number; z: number };
     vel: { x: number; y: number; z: number };
     height: number;
@@ -79,6 +81,7 @@ export class Replay {
       players: world.allPlayers().map((p) => ({
         id: p.id,
         side: p.side,
+        role: p.role,
         pos: { x: p.pos.x, y: p.pos.y, z: 0 },
         vel: { x: p.vel.x, y: p.vel.y, z: 0 },
         height: p.height,

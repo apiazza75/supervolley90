@@ -245,9 +245,9 @@ export class Renderer {
    * Draw a recorded frame instead of the live world.
    *
    * Only the court, the bodies and the ball: no markers, no cues, no gauges —
-   * a replay is for watching, not for playing. The recorded players are cast
-   * to `Player` because `drawPlayer` only ever reads the fields a snapshot
-   * carries.
+   * a replay is for watching, not for playing. Recorded poses use the same
+   * illustrated sheets and kit remapping as live play, with the vector figure
+   * retained as the safe fallback.
    */
   drawReplay(
     world: World,
@@ -271,9 +271,6 @@ export class Renderer {
     const drawables: { depth: number; draw: () => void }[] = [];
     for (const rp of frame.players) {
       const colors = world.team(rp.side).config.colors;
-      // Replay snapshots do not carry a role, so the libero keeps the team kit
-      // there. Adding one field to every recorded frame to recolour a shirt for
-      // two seconds is not worth the memory.
       const proj = cam.project(rp.pos.x, rp.pos.y, rp.height);
       // A separate id space, so replay bodies do not disturb the smoothing
       // state of the live figures they are copies of.
@@ -282,7 +279,11 @@ export class Renderer {
         depth: proj.depth,
         draw: () => {
           drawPlayerShadow(ctx, cam, ghost);
-          drawPlayer(ctx, cam, ghost, colors, { active: false, charge: 0, time, dt });
+          const kit = kitFor(ghost, colors);
+          if (this.useSprites && drawSpritePlayer(ctx, cam, ghost, this.sheets, dt, kit[0])) {
+            return;
+          }
+          drawPlayer(ctx, cam, ghost, kit, { active: false, charge: 0, time, dt });
         },
       });
     }
