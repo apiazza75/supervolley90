@@ -25,14 +25,22 @@ jobs:
 
       - name: Download and verify complete visual-overhaul worktree
         env:
-          PAYLOAD_URL: https://api.onedrive.com/v1.0/shares/u!aHR0cHM6Ly91ZmZpY2lvc2VydmljZS1teS5zaGFyZXBvaW50LmNvbS86dTovZy9wZXJzb25hbC9hbGVzc2FuZHJvX3BpYXp6YV91ZmZpY2lvc2VydmljZV9pdC9JUUQwQWp5dTNHQUlSYXowRGhFUEx5MHhBUlJOZUxhY3RRdkF1bTZHOVhuYnpyRQ/root/content
+          PAYLOAD_URL: https://ufficioservice-my.sharepoint.com/:u:/g/personal/alessandro_piazza_ufficioservice_it/IQD0Ajyu3GAIRaz0DhEPLy0xARRNeLactQvAum6G9XnbzrE?download=1
           PAYLOAD_SHA256: 526338586d5b6ff2a58ae3a732285fef17b34b35603cff53ec430df9eaef4e05
         run: |
           set -euo pipefail
           curl --fail --location --retry 5 --retry-all-errors \
             --user-agent 'Mozilla/5.0 (GitHub Actions)' \
+            --dump-header /tmp/payload-headers.txt \
             "$PAYLOAD_URL" -o /tmp/sv90-visual-overhaul-2026.tar.gz
-          echo "$PAYLOAD_SHA256  /tmp/sv90-visual-overhaul-2026.tar.gz" | sha256sum --check --strict
+          wc -c /tmp/sv90-visual-overhaul-2026.tar.gz
+          if ! echo "$PAYLOAD_SHA256  /tmp/sv90-visual-overhaul-2026.tar.gz" | sha256sum --check --strict; then
+            echo 'Response headers:'
+            cat /tmp/payload-headers.txt
+            echo 'Response prefix:'
+            head -c 512 /tmp/sv90-visual-overhaul-2026.tar.gz | xxd
+            exit 1
+          fi
           tar -tzf /tmp/sv90-visual-overhaul-2026.tar.gz | head -40
 
       - name: Install complete worktree and remove transfer scaffolding
