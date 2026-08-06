@@ -1,4 +1,4 @@
-name: Apply complete visual overhaul
+name: Apply verified visual overhaul
 
 on:
   push:
@@ -12,6 +12,7 @@ permissions:
 jobs:
   apply:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,40 +23,53 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Reassemble and verify visual overhaul payload
+      - name: Download and verify complete visual-overhaul worktree
         env:
-          PAYLOAD_SHA256: 6f1b20a5b593ad079d85a9ab13b9446abe8b3f5194dec9ca4de6e5521dba2a97
+          PAYLOAD_URL: https://api.onedrive.com/v1.0/shares/u!aHR0cHM6Ly91ZmZpY2lvc2VydmljZS1teS5zaGFyZXBvaW50LmNvbS86dTovZy9wZXJzb25hbC9hbGVzc2FuZHJvX3BpYXp6YV91ZmZpY2lvc2VydmljZV9pdC9JUUQwQWp5dTNHQUlSYXowRGhFUEx5MHhBUlJOZUxhY3RRdkF1bTZHOVhuYnpyRQ/root/content
+          PAYLOAD_SHA256: 526338586d5b6ff2a58ae3a732285fef17b34b35603cff53ec430df9eaef4e05
         run: |
           set -euo pipefail
-          test "$(find .codex -maxdepth 1 -name 'payload.part*' | wc -l | tr -d ' ')" = "7"
-          cat .codex/payload.part00 .codex/payload.part01 .codex/payload.part02 \
-              .codex/payload.part03 .codex/payload.part04 .codex/payload.part05 \
-              .codex/payload.part06 > /tmp/sv90-text-overhaul.b64
-          base64 --decode /tmp/sv90-text-overhaul.b64 > /tmp/sv90-text-overhaul.tar.gz
-          echo "$PAYLOAD_SHA256  /tmp/sv90-text-overhaul.tar.gz" | sha256sum --check --strict
+          curl --fail --location --retry 5 --retry-all-errors \
+            --user-agent 'Mozilla/5.0 (GitHub Actions)' \
+            "$PAYLOAD_URL" -o /tmp/sv90-visual-overhaul-2026.tar.gz
+          echo "$PAYLOAD_SHA256  /tmp/sv90-visual-overhaul-2026.tar.gz" | sha256sum --check --strict
+          tar -tzf /tmp/sv90-visual-overhaul-2026.tar.gz | head -40
 
-      - name: Apply production code and retire superseded arena bitmaps
+      - name: Install complete worktree and remove transfer scaffolding
         run: |
           set -euo pipefail
-          tar -xzf /tmp/sv90-text-overhaul.tar.gz -C .
-          rm -f public/arena/arena-back.png public/arena/arena-floor.png public/arena/net.png
+          tar -xzf /tmp/sv90-visual-overhaul-2026.tar.gz -C .
+          rm -rf .codex
+          rm -f .github/workflows/codex-export-worktree.yml
 
       - run: npm ci
 
-      - name: Normalise production sprite palette masks
-        run: npx tsx tools/normalise-sprite-masks.ts
+      - name: Install pixel-level QA dependencies
+        run: python3 -m pip install --quiet pillow numpy scipy
 
-      - name: Validate generated assets and code
+      - name: Validate assets, code, simulation and production bundle
         run: |
           npm run assets:check
+          npm run assets:quality
           npm run typecheck
           npm test
           npm run build
 
-      - name: Commit complete overhaul
+      - name: Capture visual-overhaul evidence
+        run: |
+          npx playwright install --with-deps chromium
+          npm run shots:overhaul -- visual-overhaul-shots
+
+      - name: Upload visual-overhaul evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: SuperVolley90-visual-overhaul-evidence
+          path: visual-overhaul-shots
+          if-no-files-found: error
+
+      - name: Commit verified overhaul and retire this one-time workflow
         run: |
           set -euo pipefail
-          rm -rf .codex
           rm -f .github/workflows/codex-apply-visual-overhaul.yml
           git config user.name "Codex Visual Systems"
           git config user.email "noreply@openai.com"
