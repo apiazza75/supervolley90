@@ -28,7 +28,7 @@ describe('sprite contact timeline', () => {
       const p = player();
       const timeline = new SpriteTimeline();
       timeline.cue(p.id, kind, airborne);
-      expect(timeline.frameFor(p, 0)).toEqual({ action, frame });
+      expect(timeline.frameFor(p, 0)).toMatchObject({ action, frame, nextFrame: frame, mix: 0 });
     },
   );
 
@@ -38,7 +38,7 @@ describe('sprite contact timeline', () => {
     p.vel.y = 4;
     expect(timeline.frameFor(p, 0.2).action).toBe('approach');
     timeline.cue(p.id, 'set', false);
-    expect(timeline.frameFor(p, 0)).toEqual({ action: 'set', frame: 11 });
+    expect(timeline.frameFor(p, 0)).toMatchObject({ action: 'set', frame: 11, nextFrame: 11, mix: 0 });
   });
 
   it('distinguishes standing and jump serves', () => {

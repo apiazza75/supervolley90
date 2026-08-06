@@ -9,7 +9,7 @@ import { Camera } from './camera';
 import { Effects } from './fx';
 import { Officials } from './officials';
 import { drawActiveRing, drawPlayer, drawPlayerShadow, shade } from './players';
-import { cueSpriteContact, drawSpritePlayer } from './sprite-figure';
+import { cueSpriteContact, drawSpritePlayer, type SpriteRenderStyle } from './sprite-figure';
 import { type SheetSet, loadSheets } from './sprites';
 import { INTRO as REPLAY_INTRO, type ReplayFrame } from '../game/replay';
 
@@ -112,6 +112,16 @@ export class Renderer {
   /** How many drawn actions are available, for the diagnostics overlay. */
   get spriteCount(): number {
     return Object.keys(this.sheets).length;
+  }
+
+  get maskedSpriteCount(): number {
+    return Object.values(this.sheets).filter(
+      (sheet) => Boolean(sheet?.maskCanvas && sheet.hairMaskCanvas),
+    ).length;
+  }
+
+  get arenaAssetCount(): number {
+    return this.arena.artAssetCount;
   }
 
   resize(width: number, height: number): void {
@@ -265,7 +275,7 @@ export class Renderer {
     this.arena.update(dt);
     this.arena.drawBackground(ctx, cam, time);
     this.officials.update(dt);
-    this.officials.drawFar(ctx, cam, time, dt);
+    this.officials.drawFar(ctx, cam, time, dt, this.sheets);
     this.effects.drawFloor(ctx, cam);
 
     const drawables: { depth: number; draw: () => void }[] = [];
@@ -280,7 +290,10 @@ export class Renderer {
         draw: () => {
           drawPlayerShadow(ctx, cam, ghost);
           const kit = kitFor(ghost, colors);
-          if (this.useSprites && drawSpritePlayer(ctx, cam, ghost, this.sheets, dt, kit[0])) {
+          if (
+            this.useSprites &&
+            drawSpritePlayer(ctx, cam, ghost, this.sheets, dt, spriteStyleFor(ghost, colors))
+          ) {
             return;
           }
           drawPlayer(ctx, cam, ghost, kit, { active: false, charge: 0, time, dt });
@@ -292,7 +305,7 @@ export class Renderer {
     drawables.sort((a, b) => b.depth - a.depth);
     for (const d of drawables) d.draw();
 
-    this.officials.drawNear(ctx, cam, time, dt);
+    this.officials.drawNear(ctx, cam, time, dt, this.sheets);
 
     const ballPos = { x: frame.ball.x, y: frame.ball.y, z: frame.ball.z };
     this.drawBall({ pos: ballPos, vel: { x: 0, y: 0, z: 0 }, roll: frame.ball.roll } as Ball);
@@ -306,58 +319,77 @@ export class Renderer {
     const bar = h * 0.09 * grow;
     ctx.save();
 
-    // Bars wipe in from the edges.
-    ctx.fillStyle = 'rgba(4,6,14,0.9)';
+    // Letterbox bars use the same technical rails as the live HUD.
+    const topGrad = ctx.createLinearGradient(0, 0, 0, bar);
+    topGrad.addColorStop(0, 'rgba(2,5,13,0.98)');
+    topGrad.addColorStop(1, 'rgba(8,15,29,0.92)');
+    ctx.fillStyle = topGrad;
     ctx.fillRect(0, 0, w, bar);
     ctx.fillRect(0, h - bar, w, bar);
-    ctx.strokeStyle = 'rgba(255,90,77,0.8)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(0, bar);
-    ctx.lineTo(w, bar);
-    ctx.moveTo(0, h - bar);
-    ctx.lineTo(w, h - bar);
-    ctx.stroke();
+    ctx.fillStyle = '#49dcff';
+    ctx.fillRect(0, Math.max(0, bar - 3), w * 0.52, 3);
+    ctx.fillStyle = '#ff5f5a';
+    ctx.fillRect(w * 0.52, Math.max(0, bar - 3), w * 0.48, 3);
+    ctx.fillStyle = '#ffd35c';
+    ctx.fillRect(0, h - bar, w, 2);
 
-    // The opening card: a full-width slab that slams in and slides away.
+    // Opening card: a centred cut-corner broadcast plate, not a full-width slab.
     if (age < REPLAY_INTRO + 0.35) {
       const k = clamp((REPLAY_INTRO + 0.35 - age) / 0.35, 0, 1);
-      const slabH = h * 0.2;
-      const y = h / 2 - slabH / 2;
+      const cardW = Math.min(720, w * 0.68);
+      const cardH = 132;
+      const x = w / 2 - cardW / 2;
+      const y = h / 2 - cardH / 2;
       ctx.globalAlpha = k;
-      ctx.fillStyle = 'rgba(8,10,22,0.88)';
-      ctx.fillRect(0, y, w, slabH);
-      ctx.fillStyle = '#ff5a4d';
-      ctx.fillRect(0, y, w, 5);
-      ctx.fillRect(0, y + slabH - 5, w, 5);
+      cutPanel(ctx, x, y, cardW, cardH, 24);
+      const card = ctx.createLinearGradient(x, y, x + cardW, y + cardH);
+      card.addColorStop(0, 'rgba(12,27,49,0.97)');
+      card.addColorStop(0.5, 'rgba(4,9,21,0.98)');
+      card.addColorStop(1, 'rgba(31,16,29,0.97)');
+      ctx.fillStyle = card;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(73,220,255,0.78)';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      ctx.fillStyle = '#ffd35c';
+      ctx.fillRect(x + 50, y, cardW - 100, 4);
+      ctx.save();
+      ctx.translate(w / 2, h / 2 - 9);
+      ctx.transform(1, 0, -0.12, 1, 0, 0);
       ctx.textAlign = 'center';
-      const pop = 1 + (1 - clamp(age / 0.2, 0, 1)) * 0.5;
-      ctx.font = `900 ${Math.round(58 * pop)}px "Arial Black", system-ui, sans-serif`;
+      const pop = 1 + (1 - clamp(age / 0.2, 0, 1)) * 0.36;
+      ctx.font = `950 ${Math.round(50 * pop)}px "Arial Black", "Inter", system-ui, sans-serif`;
       ctx.lineWidth = 8;
       ctx.lineJoin = 'round';
-      ctx.strokeStyle = 'rgba(6,8,18,0.95)';
-      ctx.strokeText('INSTANT REPLAY', w / 2, h / 2 + 6);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText('INSTANT REPLAY', w / 2, h / 2 + 6);
-      ctx.font = '800 22px system-ui, sans-serif';
-      ctx.fillStyle = '#ffd166';
-      ctx.fillText(label, w / 2, h / 2 + 44);
+      ctx.strokeStyle = 'rgba(3,7,17,0.98)';
+      ctx.strokeText('INSTANT REPLAY', 0, 0);
+      ctx.fillStyle = '#f4f7ff';
+      ctx.fillText('INSTANT REPLAY', 0, 0);
+      ctx.restore();
+      ctx.font = '900 15px "Arial Narrow", "Inter", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffd35c';
+      ctx.fillText(label, w / 2, h / 2 + 39);
       ctx.globalAlpha = 1;
     }
 
     if (bar > 18) {
+      ctx.textBaseline = 'middle';
       ctx.textAlign = 'left';
-      ctx.fillStyle = '#ff5a4d';
-      ctx.beginPath();
-      ctx.arc(38, bar / 2, 9 + Math.sin(time * 9) * 2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.font = '900 26px "Arial Black", system-ui, sans-serif';
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(`REPLAY — ${label}`, 62, bar / 2 + 9);
+      const indicator = 6 + Math.sin(time * 9) * 1.5;
+      ctx.save();
+      ctx.translate(30, bar / 2);
+      ctx.rotate(Math.PI / 4);
+      ctx.fillStyle = '#ff5f5a';
+      ctx.fillRect(-indicator, -indicator, indicator * 2, indicator * 2);
+      ctx.restore();
+      ctx.font = '950 19px "Arial Black", "Inter", system-ui, sans-serif';
+      ctx.fillStyle = '#f4f7ff';
+      ctx.fillText(`REPLAY  //  ${label}`, 52, bar / 2);
       ctx.textAlign = 'right';
-      ctx.font = '800 17px system-ui, sans-serif';
-      ctx.fillStyle = `rgba(255,255,255,${0.55 + 0.35 * Math.sin(time * 5)})`;
-      ctx.fillText('ANY KEY TO SKIP', w - 30, bar / 2 + 6);
+      ctx.font = '900 11px "Arial Narrow", "Inter", system-ui, sans-serif';
+      ctx.fillStyle = `rgba(220,235,252,${0.55 + 0.35 * Math.sin(time * 5)})`;
+      ctx.fillText('ANY KEY  //  SKIP', w - 28, bar / 2);
     }
     ctx.restore();
   }
@@ -390,7 +422,7 @@ export class Renderer {
     }
     this.lastPhase = world.phase;
     this.officials.update(dt);
-    this.officials.drawFar(ctx, cam, state.time, dt);
+    this.officials.drawFar(ctx, cam, state.time, dt, this.sheets);
 
     this.effects.drawFloor(ctx, cam);
     this.drawLandingMarker(world);
@@ -411,6 +443,7 @@ export class Renderer {
           draw: () => {
             if (p.id === active) drawActiveRing(ctx, cam, p, '#7ef0ff', state.time);
             const kit = kitFor(p, team.config.colors);
+            const spriteStyle = spriteStyleFor(p, team.config.colors);
             const serverHint =
               world.phase === 'serve' && p.id === world.team(world.servingSide).server.id
                 ? p.airborne
@@ -437,7 +470,7 @@ export class Renderer {
                 p,
                 this.sheets,
                 dt,
-                kit[0],
+                spriteStyle,
                 serverHint ?? bufferedHint,
               )
             )
@@ -467,7 +500,7 @@ export class Renderer {
     for (const d of drawables) d.draw();
 
     // Near-side officials sit in front of the play, as they do from this angle.
-    this.officials.drawNear(ctx, cam, state.time, dt);
+    this.officials.drawNear(ctx, cam, state.time, dt, this.sheets);
 
     this.effects.draw(ctx, cam);
     this.drawVignette(ctx, cam);
@@ -571,24 +604,36 @@ export class Renderer {
       }
     }
 
-    // Outer ring: where the ball will land.
-    ctx.globalAlpha = 0.85;
+    // Faceted target brackets: the landing mechanic keeps its clear floor
+    // footprint, but now shares the angular broadcast language of the HUD.
+    ctx.globalAlpha = 0.9;
     ctx.strokeStyle = color;
     ctx.lineWidth = Math.max(2.5, 4 * s.scale);
-    ctx.beginPath();
-    ctx.ellipse(s.x, s.y, rx, rx * 0.32, 0, 0, Math.PI * 2);
+    facetedEllipse(ctx, s.x, s.y, rx, rx * 0.32, 12, Math.PI / 12);
     ctx.stroke();
 
-    // Countdown ring: its radius IS the time to impact, closing continuously
-    // through the whole flight and meeting the landing ellipse exactly as the
-    // ball arrives. That collapse is the "move now" signal.
     const tti = Math.min(pred.time, 2.2);
     const cr = rx * (1 + tti * 1.5);
-    ctx.globalAlpha = 0.5 + 0.45 * urgency;
+    ctx.globalAlpha = 0.45 + 0.5 * urgency;
     ctx.lineWidth = Math.max(2, 3 * s.scale);
-    ctx.beginPath();
-    ctx.ellipse(s.x, s.y, cr, cr * 0.32, 0, 0, Math.PI * 2);
+    facetedEllipse(ctx, s.x, s.y, cr, cr * 0.32, 12, -Math.PI / 12);
     ctx.stroke();
+
+    // Four short corner brackets remain legible over any floor texture.
+    ctx.globalAlpha = 0.85;
+    ctx.lineWidth = Math.max(2, 3.2 * s.scale);
+    for (const side of [-1, 1] as const) {
+      ctx.beginPath();
+      ctx.moveTo(s.x + side * rx * 0.72, s.y - rx * 0.23);
+      ctx.lineTo(s.x + side * rx, s.y - rx * 0.23);
+      ctx.lineTo(s.x + side * rx, s.y - rx * 0.08);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(s.x + side * rx * 0.72, s.y + rx * 0.23);
+      ctx.lineTo(s.x + side * rx, s.y + rx * 0.23);
+      ctx.lineTo(s.x + side * rx, s.y + rx * 0.08);
+      ctx.stroke();
+    }
 
     // The arrow, bouncing over the spot — the marker the arcade original used.
     const bob = Math.sin(this.markerTime * 9) * 4 * s.scale;
@@ -807,21 +852,24 @@ export class Renderer {
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = Math.max(3, 5 * s.scale);
       ctx.globalAlpha = 0.95;
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, r * 1.5 * pulse, 0, Math.PI * 2);
+      facetedEllipse(ctx, s.x, s.y, r * 1.5 * pulse, r * 1.5 * pulse, 10, time * 0.8);
       ctx.stroke();
 
       const p = world.humanTeam ? world.team(world.humanTeam.side).active : null;
       if (p) {
         const head = cam.project(p.pos.x, p.pos.y, p.height + 2.5);
-        ctx.font = '900 22px "Arial Black", system-ui, sans-serif';
+        ctx.save();
+        ctx.translate(head.x, head.y);
+        ctx.transform(1, 0, -0.12, 1, 0, 0);
+        ctx.font = '950 22px "Arial Black", "Inter", system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.lineWidth = 6;
         ctx.lineJoin = 'round';
-        ctx.strokeStyle = 'rgba(6,8,18,0.9)';
-        ctx.strokeText('PRESS!', head.x, head.y);
-        ctx.fillStyle = '#fff27a';
-        ctx.fillText('PRESS!', head.x, head.y);
+        ctx.strokeStyle = 'rgba(6,8,18,0.94)';
+        ctx.strokeText('PRESS!', 0, 0);
+        ctx.fillStyle = '#ffd35c';
+        ctx.fillText('PRESS!', 0, 0);
+        ctx.restore();
       }
     } else if (cue.time < 1.1) {
       // Closing in: the ring's radius IS the time left.
@@ -829,8 +877,8 @@ export class Renderer {
       ctx.strokeStyle = '#7ef0ff';
       ctx.globalAlpha = 0.35 + 0.5 * (1 - k);
       ctx.lineWidth = Math.max(2, 3.5 * s.scale);
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, r * (1.5 + k * 5), 0, Math.PI * 2);
+      const cueR = r * (1.5 + k * 5);
+      facetedEllipse(ctx, s.x, s.y, cueR, cueR, 10, -time * 0.45);
       ctx.stroke();
     }
     ctx.restore();
@@ -846,15 +894,18 @@ export class Renderer {
       const server = world.team(team.side).server;
       const s = cam.project(server.pos.x, server.pos.y, server.height + 2.4);
       ctx.save();
-      ctx.font = '900 24px "Arial Black", system-ui, sans-serif';
+      const label = world.serveStrikeReady ? 'HIT!' : 'LOCKING';
+      const panelW = world.serveStrikeReady ? 88 : 118;
+      cutPanel(ctx, s.x - panelW / 2, s.y - 27, panelW, 34, 8);
+      ctx.fillStyle = 'rgba(4,9,20,0.88)';
+      ctx.fill();
+      ctx.strokeStyle = world.serveStrikeReady ? '#ffd35c' : 'rgba(73,220,255,0.58)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.font = '950 16px "Arial Black", "Inter", system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.lineWidth = 6;
-      ctx.lineJoin = 'round';
-      ctx.strokeStyle = 'rgba(6,8,18,0.9)';
-      const label = world.serveStrikeReady ? 'HIT!' : '...';
-      ctx.strokeText(label, s.x, s.y);
-      ctx.fillStyle = world.serveStrikeReady ? '#ffe27a' : 'rgba(230,238,255,0.8)';
-      ctx.fillText(label, s.x, s.y);
+      ctx.fillStyle = world.serveStrikeReady ? '#ffd35c' : 'rgba(220,235,252,0.76)';
+      ctx.fillText(label, s.x, s.y - 5);
       ctx.restore();
     }
 
@@ -876,14 +927,16 @@ export class Renderer {
         const s = cam.project(p.pos.x, p.pos.y, p.height + 2.35);
         const bounce = Math.sin(time * 14) * 4;
         ctx.save();
-        ctx.font = '900 26px "Arial Black", system-ui, sans-serif';
+        ctx.translate(s.x, s.y + bounce);
+        ctx.transform(1, 0, -0.13, 1, 0, 0);
+        ctx.font = '950 26px "Arial Black", "Inter", system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.lineWidth = 7;
         ctx.lineJoin = 'round';
-        ctx.strokeStyle = 'rgba(6,8,18,0.9)';
-        ctx.strokeText(`${jumpLabel}!`, s.x, s.y + bounce);
-        ctx.fillStyle = '#ffe27a';
-        ctx.fillText(`${jumpLabel}!`, s.x, s.y + bounce);
+        ctx.strokeStyle = 'rgba(6,8,18,0.94)';
+        ctx.strokeText(`${jumpLabel}!`, 0, 0);
+        ctx.fillStyle = '#ffd35c';
+        ctx.fillText(`${jumpLabel}!`, 0, 0);
         ctx.restore();
       }
     }
@@ -894,21 +947,66 @@ export class Renderer {
       const y = cam.viewHeight - 148;
       ctx.save();
       ctx.globalAlpha = Math.min(1, this.promptTimer);
-      ctx.font = '800 19px system-ui, sans-serif';
+      ctx.font = '900 15px "Arial Narrow", "Inter", system-ui, sans-serif';
       ctx.textAlign = 'center';
-      const w = ctx.measureText(text).width + 44;
-      ctx.fillStyle = 'rgba(8,11,24,0.86)';
-      ctx.fillRect(x - w / 2, y - 27, w, 40);
-      ctx.strokeStyle = `rgba(255,226,122,${0.45 + 0.55 * Math.abs(Math.sin(time * 6))})`;
+      const w = ctx.measureText(text).width + 64;
+      cutPanel(ctx, x - w / 2, y - 29, w, 42, 11);
+      const grad = ctx.createLinearGradient(x - w / 2, 0, x + w / 2, 0);
+      grad.addColorStop(0, 'rgba(12,26,48,0.92)');
+      grad.addColorStop(0.5, 'rgba(22,35,56,0.96)');
+      grad.addColorStop(1, 'rgba(12,26,48,0.92)');
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.strokeStyle = `rgba(255,211,92,${0.5 + 0.5 * Math.abs(Math.sin(time * 6))})`;
       ctx.lineWidth = 2;
-      ctx.strokeRect(x - w / 2, y - 27, w, 40);
-      ctx.fillStyle = '#ffe27a';
-      ctx.fillText(text, x, y);
+      ctx.stroke();
+      ctx.fillStyle = '#ffd35c';
+      ctx.fillText(text, x, y - 7);
       ctx.restore();
     }
   }
 
 
+}
+
+function facetedEllipse(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  rx: number,
+  ry: number,
+  segments: number,
+  phase = 0,
+): void {
+  ctx.beginPath();
+  for (let i = 0; i <= segments; i++) {
+    const a = phase + (i / segments) * Math.PI * 2;
+    const x = cx + Math.cos(a) * rx;
+    const y = cy + Math.sin(a) * ry;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+}
+
+function cutPanel(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  cut: number,
+): void {
+  ctx.beginPath();
+  ctx.moveTo(x + cut, y);
+  ctx.lineTo(x + w - cut, y);
+  ctx.lineTo(x + w, y + cut);
+  ctx.lineTo(x + w, y + h - cut);
+  ctx.lineTo(x + w - cut, y + h);
+  ctx.lineTo(x + cut, y + h);
+  ctx.lineTo(x, y + h - cut);
+  ctx.lineTo(x, y + cut);
+  ctx.closePath();
 }
 
 /** Shouts for a full-power swing, in the spirit of the era's arcade games. */
@@ -924,6 +1022,42 @@ export class Renderer {
 function kitFor(p: Player, colors: [string, string]): [string, string] {
   if (p.role !== 'libero') return colors;
   return [shade(colors[1], 0.62), colors[0]];
+}
+
+const SKIN_PALETTE = ['#f0c29b', '#e4b184', '#c98b5a', '#a96d42', '#8b572f', '#6d4128'];
+const HAIR_PALETTE = ['#1b1514', '#3a2418', '#0d1118', '#5a321d', '#28212a', '#7a5934'];
+
+/** Stable visual variation without changing collision or gameplay geometry. */
+function spriteStyleFor(p: Player, colors: [string, string]): SpriteRenderStyle {
+  const kit = kitFor(p, colors);
+  const roleHeight: Record<Player['role'], number> = {
+    setter: 0.98,
+    outside: 1,
+    opposite: 1.035,
+    middle: 1.065,
+    libero: 0.93,
+  };
+  const roleWidth: Record<Player['role'], number> = {
+    setter: 0.97,
+    outside: 1,
+    opposite: 1.035,
+    middle: 1.02,
+    libero: 0.94,
+  };
+  const jitter = (((p.id * 37) % 7) - 3) * 0.008;
+  return {
+    palette: {
+      primary: kit[0],
+      secondary: kit[1],
+      // Skin and hair use explicit material masks, never the uniform hue.
+      // A stable id palette gives twelve readable individuals without changing
+      // collision or animation geometry.
+      skin: SKIN_PALETTE[Math.abs(p.id * 5 + (p.side === 'home' ? 1 : 3)) % SKIN_PALETTE.length],
+      hair: HAIR_PALETTE[Math.abs(p.id * 3 + 2) % HAIR_PALETTE.length],
+    },
+    heightScale: roleHeight[p.role] + jitter,
+    widthScale: roleWidth[p.role] - jitter * 0.5,
+  };
 }
 
 const SPIKE_CALLS = ['KILLER SPIKE', 'THUNDER HIT', 'ROLLING SMASH', 'BLAZE SPIKE'];

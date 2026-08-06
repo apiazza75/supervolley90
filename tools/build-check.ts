@@ -42,24 +42,38 @@ async function main(): Promise<void> {
     await page.waitForTimeout(300);
   }
 
-  const count = await page
+  type AssetCounts = { sprites: number; masks: number; arena: number };
+  const rawAssets = await page
     .waitForFunction(
       () => {
-        const n = (window as unknown as { __sv90?: { renderer?: { spriteCount: number } } })
-          .__sv90?.renderer?.spriteCount;
-        return n && n >= 10 ? n : false;
+        const renderer = (window as unknown as {
+          __sv90?: { renderer?: { spriteCount: number; maskedSpriteCount: number; arenaAssetCount: number } };
+        }).__sv90?.renderer;
+        if (!renderer) return false;
+        return renderer.spriteCount >= 10 && renderer.maskedSpriteCount >= 10 && renderer.arenaAssetCount >= 3
+          ? { sprites: renderer.spriteCount, masks: renderer.maskedSpriteCount, arena: renderer.arenaAssetCount }
+          : false;
       },
       undefined,
       { timeout: 30000 },
     )
     .then((h) => h.jsonValue())
-    .catch(() => 0);
+    .catch(() => false);
+
+  const assets: AssetCounts =
+    rawAssets && typeof rawAssets === 'object'
+      ? (rawAssets as AssetCounts)
+      : { sprites: 0, masks: 0, arena: 0 };
 
   const failures: string[] = [];
-  if (count !== 10) failures.push(`expected 10 sprite sheets in the built bundle, got ${count}`);
+  if (assets.sprites !== 10) failures.push(`expected 10 sprite sheets in the built bundle, got ${assets.sprites}`);
+  if (assets.masks !== 10) failures.push(`expected 10 material masks in the built bundle, got ${assets.masks}`);
+  if (assets.arena !== 3) failures.push(`expected 3 arena assets in the built bundle, got ${assets.arena}`);
   for (const p of problems) failures.push(p);
 
-  console.log(`sprite sheets loaded from the build: ${count}/10`);
+  console.log(`sprite sheets loaded from the build: ${assets.sprites}/10`);
+  console.log(`material masks loaded from the build: ${assets.masks}/10`);
+  console.log(`arena assets loaded from the build: ${assets.arena}/3`);
   for (const f of failures) console.log(`FAIL  ${f}`);
   if (!failures.length) console.log('build check passed');
 

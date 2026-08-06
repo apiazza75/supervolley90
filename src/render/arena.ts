@@ -10,8 +10,8 @@ import { ArenaArtwork } from './arena-art';
 import { Camera } from './camera';
 
 const LINE = 'rgba(255,255,255,0.94)';
-const COURT_NEAR = '#c9713a';
-const SURROUND = '#2f6a5a';
+const COURT_NEAR = '#b85d3a';
+const SURROUND = '#173844';
 
 interface Spectator {
   /** Seat position: x is the depth into the stand, y runs along it. */
@@ -62,6 +62,10 @@ export class Arena {
   private excitement = 0;
   /** Optional illustrated layers; procedural drawing remains the fallback. */
   private readonly artwork = new ArenaArtwork();
+
+  get artAssetCount(): number {
+    return this.artwork.loadedCount;
+  }
 
   constructor(seed = 4242) {
     const rng = new Rng(seed);
@@ -372,6 +376,19 @@ export class Arena {
     }
     this.drawLightPools(ctx, cam, outX, outY);
     this.drawLines(ctx, cam);
+    // A restrained cyan edge joins the floor to the same visual language as
+    // the scoreboard and arena ribbons. It sits outside the regulation line.
+    ctx.save();
+    ctx.strokeStyle = 'rgba(73,220,255,0.24)';
+    ctx.lineWidth = Math.max(1, cam.projectFloor(0, 0).scale * 1.6);
+    strokePath(ctx, cam, [
+      [-COURT_HALF_WIDTH - 0.24, -COURT_HALF_LENGTH - 0.24],
+      [COURT_HALF_WIDTH + 0.24, -COURT_HALF_LENGTH - 0.24],
+      [COURT_HALF_WIDTH + 0.24, COURT_HALF_LENGTH + 0.24],
+      [-COURT_HALF_WIDTH - 0.24, COURT_HALF_LENGTH + 0.24],
+      [-COURT_HALF_WIDTH - 0.24, -COURT_HALF_LENGTH - 0.24],
+    ]);
+    ctx.restore();
   }
 
   /**
@@ -487,98 +504,138 @@ export class Arena {
   }
 
   /**
-   * The net.
+   * Regulation-height net drawn as a projected plane.
    *
-   * Seen from directly side-on it has no width at all: every point of it shares
-   * one screen column, so it is drawn as a narrow vertical post running from the
-   * top of the far antenna down to the near sideline. That is precisely how the
-   * arcade original renders it, and trying to give it visible area was what made
-   * the earlier version look like an angled 3D scene.
+   * The previous side-on column ran from the tape all the way to the floor and
+   * made the net look like a fence. The camera now has a restrained 2.5D shear,
+   * so the four real corners can be projected directly: one-metre mesh, bright
+   * top tape, separate posts and antennas, all in the same geometry as the court.
    */
   drawNet(ctx: CanvasRenderingContext2D, cam: Camera): void {
     const W = COURT_HALF_WIDTH;
-    const cx = cam.projectFloor(0, 0).x;
+    const bottomZ = NET_HEIGHT - 1.0;
+    const farTop = cam.project(W, 0, NET_HEIGHT);
+    const nearTop = cam.project(-W, 0, NET_HEIGHT);
+    const farBottom = cam.project(W, 0, bottomZ);
+    const nearBottom = cam.project(-W, 0, bottomZ);
     const u = cam.projectFloor(0, 0).scale * 42;
-    const half = Math.max(2.5, u * 0.055);
 
-    // Screen extents: far side is highest, near side lowest.
-    const tapeFar = cam.project(W, 0, NET_HEIGHT).y;
-    const tapeNear = cam.project(-W, 0, NET_HEIGHT).y;
-    const footFar = cam.project(W, 0, 0).y;
-    const footNear = cam.project(-W, 0, 0).y;
-    const antennaTop = Math.min(
-      cam.project(W, 0, ANTENNA_HEIGHT).y,
-      cam.project(-W, 0, ANTENNA_HEIGHT).y,
-    );
-
-    if (this.artwork.drawNet(ctx, cx, antennaTop, footNear, u)) return;
+    const lerpPoint = (
+      a: { x: number; y: number },
+      b: { x: number; y: number },
+      t: number,
+    ): { x: number; y: number } => ({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) });
 
     ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
 
-    // Posts, standing just outside each sideline.
-    for (const [x, y] of [
-      [W + 0.55, cam.project(W + 0.55, 0, 0).y],
-      [-W - 0.55, cam.project(-W - 0.55, 0, 0).y],
-    ] as [number, number][]) {
-      const top = cam.project(x, 0, NET_HEIGHT + 0.35).y;
-      ctx.strokeStyle = '#9aa3b8';
-      ctx.lineWidth = half * 1.5;
-      ctx.lineCap = 'round';
+    // A very soft shadow behind the mesh separates it from bodies without
+    // turning it into an opaque wall.
+    ctx.beginPath();
+    ctx.moveTo(farTop.x, farTop.y);
+    ctx.lineTo(nearTop.x, nearTop.y);
+    ctx.lineTo(nearBottom.x, nearBottom.y);
+    ctx.lineTo(farBottom.x, farBottom.y);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(8,14,26,0.16)';
+    ctx.fill();
+
+    // Mesh: vertical cords across court width and horizontal cords down the
+    // one-metre band. Both sets are interpolated inside the projected quad.
+    ctx.strokeStyle = 'rgba(218,231,248,0.58)';
+    ctx.lineWidth = Math.max(0.75, u * 0.018);
+    const columns = 18;
+    for (let i = 0; i <= columns; i++) {
+      const t = i / columns;
+      const top = lerpPoint(farTop, nearTop, t);
+      const bottom = lerpPoint(farBottom, nearBottom, t);
       ctx.beginPath();
-      ctx.moveTo(cx, y);
-      ctx.lineTo(cx, top);
+      ctx.moveTo(top.x, top.y);
+      ctx.lineTo(bottom.x, bottom.y);
+      ctx.stroke();
+    }
+    const rows = 9;
+    for (let i = 1; i <= rows; i++) {
+      const t = i / rows;
+      const far = lerpPoint(farTop, farBottom, t);
+      const near = lerpPoint(nearTop, nearBottom, t);
+      ctx.beginPath();
+      ctx.moveTo(far.x, far.y);
+      ctx.lineTo(near.x, near.y);
       ctx.stroke();
     }
 
-    // The net itself: a pale vertical band from the far tape to the near floor.
-    const grad = ctx.createLinearGradient(cx - half, 0, cx + half, 0);
-    grad.addColorStop(0, 'rgba(214,224,240,0.55)');
-    grad.addColorStop(0.5, 'rgba(246,250,255,0.9)');
-    grad.addColorStop(1, 'rgba(214,224,240,0.55)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(cx - half, tapeFar, half * 2, footNear - tapeFar);
+    // Top and bottom tapes, with a cool rim light along the top edge.
+    ctx.strokeStyle = 'rgba(12,20,38,0.72)';
+    ctx.lineWidth = Math.max(6, u * 0.15);
+    ctx.beginPath();
+    ctx.moveTo(farTop.x, farTop.y + 1);
+    ctx.lineTo(nearTop.x, nearTop.y + 1);
+    ctx.stroke();
+    ctx.strokeStyle = '#f7fbff';
+    ctx.lineWidth = Math.max(4, u * 0.1);
+    ctx.beginPath();
+    ctx.moveTo(farTop.x, farTop.y);
+    ctx.lineTo(nearTop.x, nearTop.y);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(230,240,252,0.72)';
+    ctx.lineWidth = Math.max(2, u * 0.045);
+    ctx.beginPath();
+    ctx.moveTo(farBottom.x, farBottom.y);
+    ctx.lineTo(nearBottom.x, nearBottom.y);
+    ctx.stroke();
 
-    // Mesh, as fine horizontal ticks down the band.
-    ctx.strokeStyle = 'rgba(60,74,102,0.5)';
-    ctx.lineWidth = 1;
-    for (let y = tapeFar; y < footNear; y += Math.max(3, u * 0.09)) {
+    // Posts and padded bases sit just outside the sidelines. Far first, near
+    // last, so the latter correctly overlaps the mesh in this camera angle.
+    for (const x of [W + 0.55, -W - 0.55]) {
+      const foot = cam.project(x, 0, 0);
+      const top = cam.project(x, 0, NET_HEIGHT + 0.38);
+      const padTop = cam.project(x, 0, 1.25);
+      const postWidth = Math.max(5, u * 0.11);
+      ctx.strokeStyle = 'rgba(14,22,38,0.8)';
+      ctx.lineWidth = postWidth + 4;
       ctx.beginPath();
-      ctx.moveTo(cx - half, y);
-      ctx.lineTo(cx + half, y);
+      ctx.moveTo(foot.x, foot.y);
+      ctx.lineTo(top.x, top.y);
+      ctx.stroke();
+      const grad = ctx.createLinearGradient(foot.x - postWidth, 0, foot.x + postWidth, 0);
+      grad.addColorStop(0, '#1c426f');
+      grad.addColorStop(0.5, '#2f7ac0');
+      grad.addColorStop(1, '#102846');
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = postWidth;
+      ctx.beginPath();
+      ctx.moveTo(foot.x, foot.y);
+      ctx.lineTo(padTop.x, padTop.y);
+      ctx.stroke();
+      ctx.strokeStyle = '#d9e5f3';
+      ctx.lineWidth = Math.max(2, u * 0.04);
+      ctx.beginPath();
+      ctx.moveTo(padTop.x, padTop.y);
+      ctx.lineTo(top.x, top.y);
       ctx.stroke();
     }
 
-    // Bright tape along the run of the net's top edge, and the base line.
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = half * 1.5;
-    ctx.lineCap = 'butt';
-    ctx.beginPath();
-    ctx.moveTo(cx, tapeFar);
-    ctx.lineTo(cx, tapeNear);
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(150,164,190,0.8)';
-    ctx.lineWidth = half;
-    ctx.beginPath();
-    ctx.moveTo(cx, footFar);
-    ctx.lineTo(cx, footNear);
-    ctx.stroke();
-
-    // Antennae: the striped markers at each sideline, above the tape.
+    // Red/white antennas extend above the tape at the court sidelines.
     for (const x of [W, -W]) {
-      const a = cam.project(x, 0, NET_HEIGHT).y;
-      const b = cam.project(x, 0, ANTENNA_HEIGHT).y;
-      const segs = 4;
-      ctx.lineWidth = half * 1.1;
-      for (let i = 0; i < segs; i++) {
-        ctx.strokeStyle = i % 2 === 0 ? '#ff4a3d' : '#ffffff';
+      const from = cam.project(x, 0, NET_HEIGHT);
+      const to = cam.project(x, 0, ANTENNA_HEIGHT);
+      const segments = 6;
+      for (let i = 0; i < segments; i++) {
+        const a = lerpPoint(from, to, i / segments);
+        const b = lerpPoint(from, to, (i + 1) / segments);
+        ctx.strokeStyle = i % 2 === 0 ? '#ff3f55' : '#ffffff';
+        ctx.lineWidth = Math.max(2.5, u * 0.055);
         ctx.beginPath();
-        ctx.moveTo(cx, a + ((b - a) * i) / segs);
-        ctx.lineTo(cx, a + ((b - a) * (i + 1)) / segs);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
         ctx.stroke();
       }
     }
     ctx.restore();
   }
+
 }
 
 function fillQuad(

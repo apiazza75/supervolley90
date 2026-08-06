@@ -16,8 +16,9 @@ export interface Projected {
 /** Pixels per metre along the court and vertically, at a 1280 px viewport. */
 const PIXELS_PER_METRE = 55;
 /**
- * Court width, projected as a pure vertical offset: each metre further from the
- * viewer moves a point this far up the screen and no distance sideways.
+ * Court width, projected mostly upward with a restrained horizontal shear. The
+ * result remains an orthographic arcade view, but the court and net now have
+ * enough visible depth to read correctly instead of collapsing into a column.
  *
  * This is a flat side elevation. The court is a horizontal band, its lines stay
  * horizontal and vertical, and the net — which runs along the width — collapses
@@ -35,12 +36,14 @@ const PIXELS_PER_METRE = 55;
  * projection stays exactly as flat: nothing converges, lines stay horizontal,
  * and the net is still a vertical post.
  */
-const DEPTH_RISE = 30;
+const DEPTH_RISE = 28;
+/** Horizontal shear per metre of court width: a restrained broadcast 2.5D angle. */
+const DEPTH_SHEAR = 9.5;
 /**
  * How much smaller the far sideline is drawn than the near one. Applied to
  * sprite size only, never to position, so court lines stay exactly parallel.
  */
-const DEPTH_SHRINK = 0;
+const DEPTH_SHRINK = 0.06;
 
 /**
  * Orthographic side-on camera.
@@ -50,9 +53,9 @@ const DEPTH_SHRINK = 0;
  * court lines converged, and players changed size as they crossed the court.
  *
  * Here nothing converges. Court length runs across the screen, height runs up
- * it, and court width becomes a fixed vertical offset per metre. A player at
- * the back of the court is drawn higher and very slightly smaller, and that is
- * the entire third dimension. Flat on purpose.
+ * it, and court width receives fixed vertical and horizontal offsets per metre.
+ * The stable shear gives the net a readable plane while keeping the camera
+ * deterministic and free of perspective division.
  */
 export class Camera {
   viewWidth = 1280;
@@ -122,7 +125,7 @@ export class Camera {
     const k = (this.viewWidth / 1280) * this.zoom;
 
     return {
-      x: this.viewWidth / 2 + (wy - this.panY) * u + this.offsetX,
+      x: this.viewWidth / 2 + (wy - this.panY) * u + wx * DEPTH_SHEAR * k + this.offsetX,
       y: this.baseline - wx * DEPTH_RISE * k - wz * u + this.offsetY,
       // Nearer the viewer means smaller x, and must be drawn last.
       depth: wx,

@@ -2,27 +2,46 @@ import { clamp } from '../core/math3';
 import type { ContactKind } from '../core/contact';
 import type { Player } from '../core/player';
 import type { Camera } from './camera';
-import { type SpriteAction, type SheetSet, drawFrame } from './sprites';
+import {
+  type SpriteAction,
+  type SpritePalette,
+  type SheetSet,
+  drawFrame,
+  frameArtLiftPixels,
+} from './sprites';
 
-/** A selected frame from one action sheet. */
+/** A smoothly sampled point inside one 24-frame action. */
 export interface Playhead {
   action: SpriteAction;
-  /** Zero-based, 0..23. */
+  /** Current authored frame, zero-based. */
   frame: number;
+  /** Following frame, or the same frame at the end of a one-shot. */
+  nextFrame: number;
+  /** Eased blend from frame to nextFrame. */
+  mix: number;
+}
+
+export interface SpriteRenderStyle {
+  palette?: SpritePalette | string;
+  /** Stable height variation for role and player identity. */
+  heightScale?: number;
+  /** Stable build variation; 1 is the authored silhouette. */
+  widthScale?: number;
+  alpha?: number;
 }
 
 /** How long each action's 24 frames are meant to take, in seconds. */
 export const DURATION: Record<SpriteAction, number> = {
-  idle: 1.6,
-  approach: 0.75,
-  spike: 1.1,
-  block: 1.0,
-  bump: 0.85,
-  set: 0.9,
-  dive: 1.3,
-  serve: 1.6,
-  jumpServe: 1.5,
-  celebrate: 1.6,
+  idle: 1.9,
+  approach: 0.86,
+  spike: 1.12,
+  block: 1.02,
+  bump: 0.9,
+  set: 0.94,
+  dive: 1.34,
+  serve: 1.62,
+  jumpServe: 1.55,
+  celebrate: 1.7,
 };
 
 /** Actions that hold on their last frame rather than looping. */
@@ -36,11 +55,7 @@ const ONESHOT = new Set<SpriteAction>([
   'jumpServe',
 ]);
 
-/**
- * Frame on which the simulated contact must appear in the drawing.
- * Values are zero-based; docs/ART-SPEC.md lists the human-facing
- * one-based numbers.
- */
+/** Frame on which the simulated contact must appear in the drawing. */
 export const CONTACT_FRAME: Partial<Record<SpriteAction, number>> = {
   spike: 19,
   block: 16,
@@ -98,16 +113,23 @@ function actionFor(p: Player): SpriteAction {
   return 'idle';
 }
 
-function frameAt(action: SpriteAction, t: number): number {
+const smoothstep = (v: number): number => v * v * (3 - 2 * v);
+
+function sampleAt(action: SpriteAction, t: number): Playhead {
   const span = DURATION[action];
-  const u = ONESHOT.has(action) ? clamp(t / span, 0, 0.999) : (t / span) % 1;
-  return Math.floor(u * 24);
+  const u = ONESHOT.has(action) ? clamp(t / span, 0, 0.999999) : ((t / span) % 1 + 1) % 1;
+  const raw = u * 24;
+  const frame = Math.min(23, Math.floor(raw));
+  const nextFrame = ONESHOT.has(action) ? Math.min(23, frame + 1) : (frame + 1) % 24;
+  const fraction = raw - frame;
+  // Hold the authored drawing for the first third, then dissolve into the next.
+  // This removes the hard 15–24 fps step without turning every body into two
+  // equally visible ghosts for the whole interval.
+  const mix = nextFrame === frame ? 0 : smoothstep(clamp((fraction - 0.32) / 0.68, 0, 1));
+  return { action, frame, nextFrame, mix };
 }
 
-/**
- * Stateful sprite clock, deliberately independent from rendering.
- * This makes contact alignment testable without a canvas.
- */
+/** Stateful sprite clock, independent from rendering and therefore testable. */
 export class SpriteTimeline {
   private readonly heads = new Map<number, Head>();
 
@@ -119,8 +141,6 @@ export class SpriteTimeline {
     if (frame === undefined) return;
     this.heads.set(playerId, {
       action,
-      // Start in the middle of the contact frame so floating-point
-      // rounding cannot send the following draw backwards.
       t: ((frame + 0.5) / 24) * DURATION[action],
       forced: true,
       exactFrame: frame,
@@ -143,14 +163,14 @@ export class SpriteTimeline {
     if (h.exactFrame !== undefined) {
       const frame = h.exactFrame;
       delete h.exactFrame;
-      return { action: h.action, frame };
+      return { action: h.action, frame, nextFrame: frame, mix: 0 };
     }
 
     if (h.forced) {
       h.t += dt;
-      const frame = frameAt(h.action, h.t);
+      const sample = sampleAt(h.action, h.t);
       if (h.t >= DURATION[h.action]) h.forced = false;
-      return { action: h.action, frame };
+      return sample;
     }
 
     if (h.action !== observed) {
@@ -159,7 +179,7 @@ export class SpriteTimeline {
     } else {
       h.t += dt;
     }
-    return { action: h.action, frame: frameAt(h.action, h.t) };
+    return sampleAt(h.action, h.t);
   }
 }
 
@@ -184,23 +204,74 @@ export function drawSpritePlayer(
   p: Player,
   sheets: SheetSet,
   dt: number,
-  kit?: string,
+  style: SpriteRenderStyle = {},
   actionHint?: SpriteAction,
 ): boolean {
   const head = timeline.frameFor(p, dt, actionHint);
   const sheet = sheets[head.action];
   if (!sheet) return false;
 
-  // The art of a jumping action already contains the lift, so the
-  // sprite is planted on the floor and the drawing does the rising.
-  const lift = sheet.layout.artHasLift ? 0 : p.height;
-  const feet = cam.project(p.pos.x, p.pos.y, lift);
-  const bodyPx = 1.9 * feet.scale * 42;
+  const floor = cam.projectFloor(p.pos.x, p.pos.y);
+  const heightScale = style.heightScale ?? 1;
+  const widthScale = style.widthScale ?? 1;
+  const bodyPx = 1.9 * floor.scale * 42 * heightScale;
   if (bodyPx < 6) return true;
 
+  // Authored sheets already lift the feet inside their 512 px cell. The old
+  // renderer responded by ignoring the simulation's height entirely for jump
+  // actions, which made a real block or spike appear planted on the floor.
+  // Add only the physical lift not already present in the two blended frames.
+  const authoredLift =
+    frameArtLiftPixels(sheet, head.frame, bodyPx) * (1 - head.mix) +
+    frameArtLiftPixels(sheet, head.nextFrame, bodyPx) * head.mix;
+  const worldUnitPx = Math.max(1, floor.scale * 42);
+  const lift = Math.max(0, p.height - authoredLift / worldUnitPx);
+  const anchor = cam.project(p.pos.x, p.pos.y, lift);
+
   ctx.save();
-  ctx.globalAlpha = 1 - clamp((p.pos.x + 4.5) / 9, 0, 1) * 0.09;
-  drawFrame(ctx, sheet, head.frame, feet.x, feet.y, bodyPx, p.facing >= 0 ? 1 : -1, kit);
+  const depthAlpha = 1 - clamp((p.pos.x + 4.5) / 9, 0, 1) * 0.09;
+  const baseAlpha = depthAlpha * (style.alpha ?? 1);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  if (head.mix <= 0.001 || head.nextFrame === head.frame) {
+    ctx.globalAlpha = baseAlpha;
+    drawFrame(
+      ctx,
+      sheet,
+      head.frame,
+      anchor.x,
+      anchor.y,
+      bodyPx,
+      p.facing >= 0 ? 1 : -1,
+      style.palette,
+      widthScale,
+    );
+  } else {
+    ctx.globalAlpha = baseAlpha * (1 - head.mix);
+    drawFrame(
+      ctx,
+      sheet,
+      head.frame,
+      anchor.x,
+      anchor.y,
+      bodyPx,
+      p.facing >= 0 ? 1 : -1,
+      style.palette,
+      widthScale,
+    );
+    ctx.globalAlpha = baseAlpha * head.mix;
+    drawFrame(
+      ctx,
+      sheet,
+      head.nextFrame,
+      anchor.x,
+      anchor.y,
+      bodyPx,
+      p.facing >= 0 ? 1 : -1,
+      style.palette,
+      widthScale,
+    );
+  }
   ctx.restore();
   return true;
 }

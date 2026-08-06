@@ -1,0 +1,181 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# A newer push makes an in-flight run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Types, tests and web build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Validate art assets
+        run: npm run assets:check
+
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit and simulation tests
+        run: npm test
+
+      - name: Web build
+        run: npx vite build
+
+      # The build is what ships, and it is not the dev server: paths resolve
+      # differently and the page and its assets need not share an origin. A
+      # build went out in which no sprite sheet loaded at all and the game fell
+      # back to its vector figures without a word, so the bundle is now started
+      # and asked whether the drawn art actually arrived.
+      - name: Built bundle loads its assets
+        run: npx playwright install --with-deps chromium && npx tsx tools/build-check.ts
+
+      # The balance harness doubles as an integration test: if a tuning change
+      # collapses rallies or stops matches from finishing, it fails here rather
+      # than being noticed weeks later while playing.
+      - name: Headless match simulation
+        run: npm run sim -- --matches 2 --seed 1337
+
+  macos-app:
+    name: macOS app bundle
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Validate art assets
+        run: npm run assets:check
+
+      # Detect once whether a Developer ID is configured, so the later steps do
+      # not each have to reason about it. Secrets are not readable in forked
+      # pull requests, which is exactly when the ad-hoc fallback matters.
+      - name: Determine signing mode
+        id: signing
+        env:
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        run: |
+          if [ -n "${IDENTITY:-}" ] && [ -n "${CERTIFICATE:-}" ]; then
+            echo "mode=developer-id" >> "$GITHUB_OUTPUT"
+            echo "Signing with a Developer ID; the build will also be notarised."
+          else
+            echo "mode=ad-hoc" >> "$GITHUB_OUTPUT"
+            echo "No Apple credentials configured; falling back to an ad-hoc signature."
+          fi
+
+      # `app:build` derives the full macOS icon set from the source PNG first,
+      # so the .icns the bundler needs is never missing.
+      #
+      # There are two build steps rather than one because a missing secret still
+      # produces a *defined but empty* environment variable, and Tauri treats a
+      # defined APPLE_CERTIFICATE as "a certificate exists" and tries to import
+      # it — which fails the whole bundle. The unsigned path must therefore not
+      # mention these variables at all.
+      #
+      # In signed mode Tauri does everything itself: imports the certificate
+      # into a temporary keychain, signs with hardened runtime, submits to
+      # Apple's notary service and staples the ticket.
+      - name: Build the app (signed and notarised)
+        if: steps.signing.outputs.mode == 'developer-id'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run app:build
+
+      - name: Build the app (unsigned)
+        if: steps.signing.outputs.mode == 'ad-hoc'
+        run: npm run app:build
+
+      # Two separate things make a downloaded build report as "damaged":
+      #
+      # 1. `upload-artifact` re-zips its input and drops Unix permission bits,
+      #    stripping the executable flag off the binary inside a .app.
+      # 2. On Apple Silicon every binary must carry a valid signature. The one
+      #    the linker applies does not survive that same zip round trip.
+      #
+      # Either way the fix is to ship containers that preserve their own
+      # contents — a disk image and a tarball — and never a bare .app.
+      - name: Sign, verify and package
+        env:
+          MODE: ${{ steps.signing.outputs.mode }}
+        run: |
+          set -euo pipefail
+          cd src-tauri/target/release/bundle
+          app="macos/Super Volley 90.app"
+
+          # The executable inside the bundle is named after the Cargo crate,
+          # not the product, so discover it rather than assuming either name.
+          binary="$(find "$app/Contents/MacOS" -maxdepth 1 -type f -perm -u+x | head -1)"
+          if [ -z "$binary" ]; then
+            echo "::error::no executable found in $app/Contents/MacOS"
+            ls -l "$app/Contents/MacOS" || true
+            exit 1
+          fi
+          echo "executable: $(ls -l "$binary")"
+
+          if [ "$MODE" = "ad-hoc" ]; then
+            # Valid enough to launch, but Gatekeeper still asks the user to
+            # allow it, since nothing vouches for who built it.
+            codesign --force --deep --sign - "$app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+
+            # Rebuild the disk image from the *signed* app: the one Tauri made
+            # during the build still holds the pre-signature copy.
+            mkdir -p dmg && rm -f dmg/*.dmg
+            hdiutil create -volname "Super Volley 90" -srcfolder "$app" \
+              -ov -format UDZO dmg/SuperVolley90.dmg
+          else
+            # Tauri already signed, notarised and stapled. Re-signing here would
+            # destroy that, and rebuilding the dmg would discard the stapled
+            # ticket — so only verify, and ship exactly what the bundler made.
+            codesign --verify --deep --strict --verbose=2 "$app"
+            codesign --display --verbose=4 "$app" 2>&1 | grep -E "Authority|TeamIdentifier|flags" || true
+
+            # The real test: would Gatekeeper accept this on a user's machine?
+            spctl --assess --type execute --verbose=4 "$app"
+            xcrun stapler validate "$app"
+            for image in dmg/*.dmg; do xcrun stapler validate "$image"; done
+          fi
+
+          tar -czf SuperVolley90-macos-app.tar.gz -C macos "Super Volley 90.app"
+
+      - name: Upload the app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: SuperVolley90-macos
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/SuperVolley90-macos-app.tar.gz
+          if-no-files-found: error

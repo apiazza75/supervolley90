@@ -214,15 +214,49 @@ class Game {
 
   private drawPauseOverlay(w: number, h: number): void {
     const ctx = this.ctx;
-    ctx.fillStyle = 'rgba(6,9,20,0.68)';
+    ctx.save();
+    ctx.fillStyle = 'rgba(2,5,13,0.76)';
     ctx.fillRect(0, 0, w, h);
+    const pw = Math.min(560, w * 0.56);
+    const ph = 148;
+    const x = w / 2 - pw / 2;
+    const y = h / 2 - ph / 2;
+    const cut = 24;
+    ctx.beginPath();
+    ctx.moveTo(x + cut, y);
+    ctx.lineTo(x + pw - cut, y);
+    ctx.lineTo(x + pw, y + cut);
+    ctx.lineTo(x + pw, y + ph - cut);
+    ctx.lineTo(x + pw - cut, y + ph);
+    ctx.lineTo(x + cut, y + ph);
+    ctx.lineTo(x, y + ph - cut);
+    ctx.lineTo(x, y + cut);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0, y, 0, y + ph);
+    grad.addColorStop(0, 'rgba(18,30,54,0.98)');
+    grad.addColorStop(1, 'rgba(4,8,18,0.98)');
+    ctx.fillStyle = grad;
+    ctx.shadowColor = '#49dcff';
+    ctx.shadowBlur = 22;
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = 'rgba(73,220,255,0.72)';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.fillStyle = '#ffd35c';
+    ctx.fillRect(x + 42, y, pw - 84, 4);
     ctx.textAlign = 'center';
-    ctx.font = '900 46px "Arial Black", system-ui, sans-serif';
-    ctx.fillStyle = '#ffe27a';
-    ctx.fillText('PAUSED', w / 2, h / 2 - 6);
-    ctx.font = '600 15px system-ui, sans-serif';
-    ctx.fillStyle = 'rgba(220,230,255,0.7)';
-    ctx.fillText('ESC to resume', w / 2, h / 2 + 30);
+    ctx.textBaseline = 'middle';
+    ctx.font = '950 46px "Arial Black", "Inter", system-ui, sans-serif';
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = '#030712';
+    ctx.strokeText('MATCH PAUSED', w / 2, h / 2 - 17);
+    ctx.fillStyle = '#f4f7ff';
+    ctx.fillText('MATCH PAUSED', w / 2, h / 2 - 17);
+    ctx.font = '900 12px "Arial Narrow", "Inter", system-ui, sans-serif';
+    ctx.fillStyle = '#49dcff';
+    ctx.fillText('ESC  //  RESUME PLAY', w / 2, h / 2 + 35);
+    ctx.restore();
   }
 
   private startMatch(): void {

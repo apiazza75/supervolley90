@@ -3,6 +3,7 @@ import { Rng } from '../core/rng';
 import { COURT_HALF_LENGTH, COURT_HALF_WIDTH, NET_HEIGHT, Side } from '../core/rules';
 import { Camera } from './camera';
 import { OUTLINE, capsule, drawPlayer, drawPlayerShadow, shade } from './players';
+import { drawFrame, type SheetSet, type SpritePalette } from './sprites';
 
 /**
  * The people around the court who are not playing: the two referees and three
@@ -179,7 +180,13 @@ export class Officials {
    * Everyone on the far side of the court, drawn before the players so the
    * play always reads in front of them.
    */
-  drawFar(ctx: CanvasRenderingContext2D, cam: Camera, time: number, dt: number): void {
+  drawFar(
+    ctx: CanvasRenderingContext2D,
+    cam: Camera,
+    time: number,
+    dt: number,
+    sheets: SheetSet,
+  ): void {
     // Stepped just off the net line: from directly side-on, everything at y=0
     // shares one screen column, so a referee standing exactly on the net line
     // looks like they are standing on the net.
@@ -187,16 +194,22 @@ export class Officials {
     const py = 0.7;
     this.drawPodium(ctx, cam, px, py);
     // The far referee faces across the court, which is straight at the camera.
-    this.official(ctx, cam, px, py, NET_HEIGHT - 0.62, true);
+    this.official(ctx, cam, px, py, NET_HEIGHT - 0.62, true, time, sheets);
 
-    for (const k of this.kids) if (k.x > 0) this.kid(ctx, cam, k, time, dt);
+    for (const k of this.kids) if (k.x > 0) this.kid(ctx, cam, k, time, dt, sheets);
   }
 
   /** The near-side referee, drawn after the players so they sit in front. */
-  drawNear(ctx: CanvasRenderingContext2D, cam: Camera, time: number, dt: number): void {
+  drawNear(
+    ctx: CanvasRenderingContext2D,
+    cam: Camera,
+    time: number,
+    dt: number,
+    sheets: SheetSet,
+  ): void {
     // The near referee faces the other way, so we are behind them.
-    this.official(ctx, cam, -COURT_HALF_WIDTH - 0.95, -0.7, 0, false);
-    for (const k of this.kids) if (k.x <= 0) this.kid(ctx, cam, k, time, dt);
+    this.official(ctx, cam, -COURT_HALF_WIDTH - 0.95, -0.7, 0, false, time, sheets);
+    for (const k of this.kids) if (k.x <= 0) this.kid(ctx, cam, k, time, dt, sheets);
   }
 
   /**
@@ -217,7 +230,10 @@ export class Officials {
     y: number,
     z: number,
     facingCamera: boolean,
+    time: number,
+    sheets: SheetSet,
   ): void {
+    if (this.spriteOfficial(ctx, cam, x, y, z, facingCamera, time, sheets)) return;
     const p = cam.project(x, y, z);
     const u = 1.9 * p.scale * 42;
     if (u < 6) return;
@@ -354,12 +370,56 @@ export class Officials {
     ctx.restore();
   }
 
+  private spriteOfficial(
+    ctx: CanvasRenderingContext2D,
+    cam: Camera,
+    x: number,
+    y: number,
+    z: number,
+    facingCamera: boolean,
+    time: number,
+    sheets: SheetSet,
+  ): boolean {
+    const action = this.signal > 0 ? 'celebrate' : 'idle';
+    const sheet = sheets[action];
+    if (!sheet) return false;
+    const anchor = cam.project(x, y, z);
+    const bodyPx = 1.76 * anchor.scale * 42;
+    const progress = this.signal > 0 ? 1 - this.signal / SIGNAL_TIME : 0;
+    const frame =
+      action === 'celebrate'
+        ? Math.min(18, 8 + Math.floor(progress * 10))
+        : Math.floor(time * 5 + (facingCamera ? 0 : 7)) % 24;
+    const palette: SpritePalette = {
+      primary: REF_KIT[0],
+      secondary: '#151a28',
+      skin: facingCamera ? '#d69a6a' : '#b9774b',
+      hair: facingCamera ? '#221916' : '#111622',
+    };
+    ctx.save();
+    ctx.globalAlpha = z > 0.1 ? 0.97 : 1;
+    drawFrame(
+      ctx,
+      sheet,
+      frame,
+      anchor.x,
+      anchor.y,
+      bodyPx,
+      facingCamera ? -1 : 1,
+      palette,
+      0.92,
+    );
+    ctx.restore();
+    return true;
+  }
+
   private kid(
     ctx: CanvasRenderingContext2D,
     cam: Camera,
     k: Kid,
     time: number,
     dt: number,
+    sheets: SheetSet,
   ): void {
     const moving = k.state !== 'wait';
     const f = figure({
@@ -373,39 +433,102 @@ export class Officials {
       facing: k.vy >= 0 ? 1 : -1,
     });
     drawPlayerShadow(ctx, cam, f);
+    const action = moving ? 'approach' : 'idle';
+    const sheet = sheets[action];
+    if (sheet) {
+      const feet = cam.projectFloor(k.x, k.y);
+      const bodyPx = 1.46 * feet.scale * 42;
+      const frame = moving ? Math.floor(time * 18 + k.id) % 24 : Math.floor(time * 6 + k.id) % 24;
+      const palette: SpritePalette = {
+        primary: KID_KIT[0],
+        secondary: KID_KIT[1],
+        skin: ['#efc29d', '#c98b5a', '#8b572f'][Math.abs(k.id + 1) % 3],
+        hair: ['#17131a', '#4a2d1c', '#242834'][Math.abs(k.id) % 3],
+      };
+      drawFrame(ctx, sheet, frame, feet.x, feet.y, bodyPx, k.vy >= 0 ? 1 : -1, palette, 0.88);
+      return;
+    }
     drawPlayer(ctx, cam, f, KID_KIT, { active: false, charge: 0, time, dt });
   }
 
-  /** The referee's podium: a slim tower with a platform at tape height. */
+  /** Angular carbon-and-light referee tower, matched to the 2026 HUD language. */
   private drawPodium(ctx: CanvasRenderingContext2D, cam: Camera, x: number, y: number): void {
     const foot = cam.project(x, y, 0);
     const deck = cam.project(x, y, NET_HEIGHT - 0.62);
     const u = foot.scale * 42;
-    const w = u * 0.5;
+    const w = u * 0.56;
 
     ctx.save();
-    ctx.strokeStyle = '#5d667a';
-    ctx.lineWidth = Math.max(2, u * 0.07);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    // Ground plate and two tapered carbon rails.
+    ctx.fillStyle = 'rgba(4,8,17,0.5)';
     ctx.beginPath();
-    ctx.moveTo(foot.x - w * 0.6, foot.y);
-    ctx.lineTo(deck.x - w * 0.32, deck.y);
-    ctx.moveTo(foot.x + w * 0.6, foot.y);
-    ctx.lineTo(deck.x + w * 0.32, deck.y);
+    ctx.ellipse(foot.x, foot.y + u * 0.015, w * 0.86, u * 0.095, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const leftBottom = foot.x - w * 0.58;
+    const rightBottom = foot.x + w * 0.58;
+    const leftTop = deck.x - w * 0.34;
+    const rightTop = deck.x + w * 0.34;
+    ctx.strokeStyle = '#07111f';
+    ctx.lineWidth = Math.max(7, u * 0.16);
+    ctx.beginPath();
+    ctx.moveTo(leftBottom, foot.y);
+    ctx.lineTo(leftTop, deck.y);
+    ctx.moveTo(rightBottom, foot.y);
+    ctx.lineTo(rightTop, deck.y);
     ctx.stroke();
-    ctx.lineWidth = Math.max(1, u * 0.035);
-    ctx.strokeStyle = 'rgba(93,102,122,0.7)';
-    for (let i = 0; i < 3; i++) {
-      const a = i / 3;
-      const b = (i + 1) / 3;
+    ctx.strokeStyle = '#2f78b7';
+    ctx.lineWidth = Math.max(3, u * 0.07);
+    ctx.beginPath();
+    ctx.moveTo(leftBottom, foot.y);
+    ctx.lineTo(leftTop, deck.y);
+    ctx.moveTo(rightBottom, foot.y);
+    ctx.lineTo(rightTop, deck.y);
+    ctx.stroke();
+
+    // Cyan rungs and diagonal bracing.
+    ctx.strokeStyle = 'rgba(73,220,255,0.72)';
+    ctx.lineWidth = Math.max(1.2, u * 0.028);
+    for (let i = 1; i < 6; i++) {
+      const t = i / 6;
+      const lx = lerp(leftBottom, leftTop, t);
+      const rx = lerp(rightBottom, rightTop, t);
+      const yy = lerp(foot.y, deck.y, t);
       ctx.beginPath();
-      ctx.moveTo(lerp(foot.x - w * 0.6, deck.x - w * 0.32, a), lerp(foot.y, deck.y, a));
-      ctx.lineTo(lerp(foot.x + w * 0.6, deck.x + w * 0.32, b), lerp(foot.y, deck.y, b));
+      ctx.moveTo(lx, yy);
+      ctx.lineTo(rx, yy);
       ctx.stroke();
     }
-    ctx.fillStyle = '#39414f';
-    ctx.fillRect(deck.x - w * 0.75, deck.y - u * 0.05, w * 1.5, u * 0.1);
+    ctx.strokeStyle = 'rgba(255,211,92,0.46)';
+    ctx.beginPath();
+    ctx.moveTo(leftBottom, foot.y);
+    ctx.lineTo(rightTop, deck.y);
+    ctx.stroke();
+
+    // Cut-corner platform and safety back.
+    const deckH = u * 0.13;
+    ctx.beginPath();
+    ctx.moveTo(deck.x - w * 0.78, deck.y - deckH * 0.5);
+    ctx.lineTo(deck.x + w * 0.63, deck.y - deckH * 0.5);
+    ctx.lineTo(deck.x + w * 0.78, deck.y);
+    ctx.lineTo(deck.x + w * 0.63, deck.y + deckH * 0.5);
+    ctx.lineTo(deck.x - w * 0.78, deck.y + deckH * 0.5);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(deck.x - w, 0, deck.x + w, 0);
+    grad.addColorStop(0, '#0b192b');
+    grad.addColorStop(0.55, '#235a8c');
+    grad.addColorStop(1, '#091321');
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.strokeStyle = '#49dcff';
+    ctx.lineWidth = Math.max(1.2, u * 0.028);
+    ctx.stroke();
+    ctx.fillStyle = '#ffd35c';
+    ctx.fillRect(deck.x - w * 0.48, deck.y - deckH * 0.14, w * 0.62, deckH * 0.27);
     ctx.restore();
-  }
-}
+  }}
 
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;

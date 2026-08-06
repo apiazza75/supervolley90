@@ -276,34 +276,73 @@ export class Effects {
       const t = p.life / p.maxLife;
 
       if (p.kind === 'ring') {
-        ctx.globalAlpha = t * 0.7;
+        // Faceted shock ring: a 2026 broadcast treatment with an arcade edge,
+        // rather than the old generic expanding circle.
+        const r = (1 - t) * 50 * s.scale + 5;
+        ctx.globalAlpha = t * 0.78;
         ctx.strokeStyle = `${p.color}1)`;
-        ctx.lineWidth = 2.5;
+        ctx.lineWidth = 2.2 + (1 - t) * 1.8;
         ctx.beginPath();
-        ctx.arc(s.x, s.y, (1 - t) * 46 * s.scale + 4, 0, Math.PI * 2);
+        for (let i = 0; i <= 8; i++) {
+          const a = -Math.PI / 8 + (i / 8) * Math.PI * 2;
+          const x = s.x + Math.cos(a) * r;
+          const y = s.y + Math.sin(a) * r * 0.72;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
         ctx.stroke();
         continue;
       }
       if (p.kind === 'burst') {
-        const r = (1 - t) * 110 * s.scale + 6;
-        const grad = ctx.createRadialGradient(s.x, s.y, r * 0.55, s.x, s.y, r);
+        const r = (1 - t) * 118 * s.scale + 7;
+        const grad = ctx.createRadialGradient(s.x, s.y, r * 0.48, s.x, s.y, r);
         grad.addColorStop(0, 'rgba(255,255,255,0)');
-        grad.addColorStop(0.7, p.color);
+        grad.addColorStop(0.66, p.color);
         grad.addColorStop(1, 'rgba(255,255,255,0)');
         ctx.globalAlpha = t;
         ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
         ctx.fill();
+        ctx.strokeStyle = `${p.color}${Math.min(1, t * 0.9)})`;
+        ctx.lineWidth = Math.max(2, 5 * s.scale);
+        for (let i = 0; i < 4; i++) {
+          const a = Math.PI / 4 + i * Math.PI / 2;
+          ctx.beginPath();
+          ctx.moveTo(s.x + Math.cos(a) * r * 0.28, s.y + Math.sin(a) * r * 0.28);
+          ctx.lineTo(s.x + Math.cos(a) * r * 0.88, s.y + Math.sin(a) * r * 0.88);
+          ctx.stroke();
+        }
         continue;
       }
 
-      ctx.globalAlpha = Math.min(1, t * 1.6);
-      ctx.fillStyle = `${p.color}${Math.min(1, t * 1.4)})`;
       const size = p.size * s.scale * (p.kind === 'spark' ? 0.8 + t : 1);
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, Math.max(0.6, size), 0, Math.PI * 2);
-      ctx.fill();
+      ctx.globalAlpha = Math.min(1, t * 1.6);
+      if (p.kind === 'spark') {
+        const tail = cam.project(
+          p.pos.x - p.vel.x * 0.035,
+          p.pos.y - p.vel.y * 0.035,
+          p.pos.z - p.vel.z * 0.035,
+        );
+        ctx.strokeStyle = `${p.color}${Math.min(1, t * 1.35)})`;
+        ctx.lineCap = 'round';
+        ctx.lineWidth = Math.max(1, size * 0.72);
+        ctx.beginPath();
+        ctx.moveTo(tail.x, tail.y);
+        ctx.lineTo(s.x, s.y);
+        ctx.stroke();
+        ctx.save();
+        ctx.translate(s.x, s.y);
+        ctx.rotate(Math.atan2(s.y - tail.y, s.x - tail.x));
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(-size * 0.38, -size * 0.38, size * 0.76, size * 0.76);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = `${p.color}${Math.min(1, t * 1.4)})`;
+        ctx.beginPath();
+        ctx.ellipse(s.x, s.y, Math.max(0.6, size * 1.25), Math.max(0.5, size * 0.65), 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     for (const t of this.texts) {
@@ -317,16 +356,22 @@ export class Effects {
       ctx.textAlign = 'center';
       ctx.lineJoin = 'round';
 
-      // Dark outline, then a thick team-coloured one, then a white core. Three
-      // passes, but it is the only way this stays readable over the crowd.
+      // Slanted three-pass title treatment, shared with the menu and HUD.
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.transform(1, 0, -0.12, 1, 0, 0);
       ctx.lineWidth = size * 0.28;
-      ctx.strokeStyle = 'rgba(4,6,14,0.92)';
-      ctx.strokeText(t.text, s.x, s.y);
-      ctx.lineWidth = size * 0.16;
+      ctx.strokeStyle = 'rgba(4,6,14,0.94)';
+      ctx.strokeText(t.text, 0, 0);
+      ctx.lineWidth = size * 0.15;
       ctx.strokeStyle = t.color;
-      ctx.strokeText(t.text, s.x, s.y);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(t.text, s.x, s.y);
+      ctx.strokeText(t.text, 0, 0);
+      const grad = ctx.createLinearGradient(0, -size, 0, size * 0.3);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(1, '#c9e7ff');
+      ctx.fillStyle = grad;
+      ctx.fillText(t.text, 0, 0);
+      ctx.restore();
     }
     ctx.restore();
   }

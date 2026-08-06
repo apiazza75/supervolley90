@@ -125,18 +125,33 @@ export interface Frame {
   boxBottom: number;
 }
 
+export interface SpritePalette {
+  /** Main shirt and shorts colour. */
+  primary: string;
+  /** Panels, piping and number-block colour. */
+  secondary?: string;
+  /** Optional per-player skin tone. Omitted means preserve the authored skin. */
+  skin?: string;
+  /** Optional per-player hair tone. */
+  hair?: string;
+}
+
 export interface Sheet {
   canvas: HTMLCanvasElement;
+  /** Packed RGBA material mask: R primary, G secondary, B skin. */
+  maskCanvas?: HTMLCanvasElement;
+  /** Packed hair mask; red channel contains hair weight. */
+  hairMaskCanvas?: HTMLCanvasElement;
   frames: Frame[];
   layout: SheetLayout;
-  /** Hue of the kit as drawn, in degrees. Used to find what to recolour. */
+  /** Hue of the kit as drawn, used only by legacy sheets without a mask. */
   kitHue: number;
   /**
    * Authored standing-body height after packing. Present only on strict
    * transparent sheets, whose 24 poses must all share one scale.
    */
   nativeBodyHeight?: number;
-  /** Recoloured copies, keyed by target colour. */
+  /** Recoloured copies, keyed by the complete palette. */
   variants: Map<string, HTMLCanvasElement>;
 }
 
@@ -209,16 +224,34 @@ function dominantHue(ctx: CanvasRenderingContext2D, frames: Frame[]): number {
   return best * 10 + 5;
 }
 
+/** Convert #rrggbb or rgb() to an RGB triplet. */
+function parseColour(value: string): [number, number, number] | null {
+  const hex = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(value.trim());
+  if (hex) return [parseInt(hex[1], 16), parseInt(hex[2], 16), parseInt(hex[3], 16)];
+  const rgb = /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/i.exec(value.trim());
+  return rgb ? [parseInt(rgb[1], 10), parseInt(rgb[2], 10), parseInt(rgb[3], 10)] : null;
+}
+
+const CHANNEL_SOURCE_LIGHTNESS = [0.31, 0.7, 0.55, 0.16] as const;
+const CHANNEL_TONE_RANGE = [0.9, 0.62, 0.7, 0.5] as const;
+
+function paletteKey(palette: SpritePalette): string {
+  return [palette.primary, palette.secondary ?? '', palette.skin ?? '', palette.hair ?? ''].join('|');
+}
+
 /**
- * A copy of the sheet with the kit remapped to `hex`.
+ * Repaint only the authored material masks.
  *
- * Only pixels within a hue window of the drawn kit move, and only their hue
- * and saturation move: the lightness is left exactly as the artist set it, so
- * every fold, shadow and highlight in the shirt survives the swap. Repainting
- * the whole silhouette instead would flatten the drawing into a stencil.
+ * The old implementation guessed a single dominant hue and moved every nearby
+ * pixel. On these sheets skin, hair and shoes contain enough saturated colour
+ * to fall into the same window, so a yellow team acquired yellow faces and a
+ * green team acquired green legs. The companion mask makes the operation
+ * explicit: uniform panels move, skin and hair do not unless a per-player
+ * palette deliberately asks them to.
  */
-function recolour(sheet: Sheet, hex: string): HTMLCanvasElement {
-  const cached = sheet.variants.get(hex);
+function recolour(sheet: Sheet, palette: SpritePalette): HTMLCanvasElement {
+  const cacheKey = paletteKey(palette);
+  const cached = sheet.variants.get(cacheKey);
   if (cached) return cached;
 
   const src = sheet.canvas;
@@ -229,44 +262,87 @@ function recolour(sheet: Sheet, hex: string): HTMLCanvasElement {
   if (!ctx) return src;
   ctx.drawImage(src, 0, 0);
 
-  const n = parseInt(hex.replace('#', ''), 16);
-  const [th, ts] = rgbToHsl((n >> 16) & 255, (n >> 8) & 255, n & 255);
-
+  const targets = [palette.primary, palette.secondary, palette.skin, palette.hair].map((c) =>
+    c ? parseColour(c) : null,
+  );
+  const targetHsl = targets.map((c) => (c ? rgbToHsl(c[0], c[1], c[2]) : null));
   const img = ctx.getImageData(0, 0, out.width, out.height);
   const d = img.data;
-  // Memoised by packed RGB. A drawing uses a few hundred distinct colours over
-  // a million and a half pixels, and converting each pixel through HSL and back
-  // stalled startup long enough to be visible; looking the answer up instead
-  // makes the swap effectively free.
-  const map = new Map<number, number>();
-  for (let i = 0; i < out.width * out.height; i++) {
-    if (d[i * 4 + 3] < 40) continue;
-    const key = (d[i * 4] << 16) | (d[i * 4 + 1] << 8) | d[i * 4 + 2];
-    let val = map.get(key);
-    if (val === undefined) {
-      val = key;
-      const [hue, s, l] = rgbToHsl(d[i * 4], d[i * 4 + 1], d[i * 4 + 2]);
-      let diff = Math.abs(hue - sheet.kitHue);
-      if (diff > 180) diff = 360 - diff;
-      if (s >= 0.18 && diff <= 40) {
-        const [r, g, b] = hslToRgb(th, Math.max(ts * 0.8, s), l);
-        val = (r << 16) | (g << 8) | b;
+
+  if (sheet.maskCanvas) {
+    const mctx = sheet.maskCanvas.getContext('2d', { willReadFrequently: true });
+    const hctx = sheet.hairMaskCanvas?.getContext('2d', { willReadFrequently: true });
+    const md = mctx?.getImageData(0, 0, out.width, out.height).data;
+    const hd = hctx?.getImageData(0, 0, out.width, out.height).data;
+    if (md) {
+      for (let i = 0; i < out.width * out.height; i++) {
+        if (d[i * 4 + 3] < 24) continue;
+        const weights = [md[i * 4], md[i * 4 + 1], md[i * 4 + 2], hd?.[i * 4] ?? 0];
+        let channel = -1;
+        let weight = 0;
+        for (let c = 0; c < weights.length; c++) {
+          const w = weights[c];
+          if (targets[c] && w > weight) {
+            channel = c;
+            weight = w;
+          }
+        }
+        if (channel < 0 || weight < 24) continue;
+        const target = targetHsl[channel];
+        if (!target) continue;
+        const [, sourceS, sourceL] = rgbToHsl(d[i * 4], d[i * 4 + 1], d[i * 4 + 2]);
+        const [targetH, targetS, targetL] = target;
+        const tone = CHANNEL_SOURCE_LIGHTNESS[channel];
+        const range = CHANNEL_TONE_RANGE[channel];
+        const lightness = Math.max(0.025, Math.min(0.975, targetL + (sourceL - tone) * range));
+        const saturation = Math.max(targetS * 0.82, sourceS * 0.42);
+        const [r, g, b] = hslToRgb(targetH, Math.min(1, saturation), lightness);
+        const mix = weight / 255;
+        d[i * 4] = Math.round(d[i * 4] * (1 - mix) + r * mix);
+        d[i * 4 + 1] = Math.round(d[i * 4 + 1] * (1 - mix) + g * mix);
+        d[i * 4 + 2] = Math.round(d[i * 4 + 2] * (1 - mix) + b * mix);
       }
-      map.set(key, val);
     }
-    if (val === key) continue;
-    d[i * 4] = (val >> 16) & 255;
-    d[i * 4 + 1] = (val >> 8) & 255;
-    d[i * 4 + 2] = val & 255;
+  } else {
+    // Legacy fallback for old paper sheets: only the primary hue is available.
+    const target = targetHsl[0];
+    if (target) {
+      const [th, ts] = target;
+      const memo = new Map<number, number>();
+      for (let i = 0; i < out.width * out.height; i++) {
+        if (d[i * 4 + 3] < 40) continue;
+        const key = (d[i * 4] << 16) | (d[i * 4 + 1] << 8) | d[i * 4 + 2];
+        let val = memo.get(key);
+        if (val === undefined) {
+          val = key;
+          const [hue, sat, light] = rgbToHsl(d[i * 4], d[i * 4 + 1], d[i * 4 + 2]);
+          let diff = Math.abs(hue - sheet.kitHue);
+          if (diff > 180) diff = 360 - diff;
+          if (sat >= 0.28 && diff <= 24) {
+            const [r, g, b] = hslToRgb(th, Math.max(ts * 0.82, sat), light);
+            val = (r << 16) | (g << 8) | b;
+          }
+          memo.set(key, val);
+        }
+        if (val === key) continue;
+        d[i * 4] = (val >> 16) & 255;
+        d[i * 4 + 1] = (val >> 8) & 255;
+        d[i * 4 + 2] = val & 255;
+      }
+    }
   }
+
   ctx.putImageData(img, 0, 0);
-  sheet.variants.set(hex, out);
+  sheet.variants.set(cacheKey, out);
   return out;
 }
 
-/** The sheet's canvas painted in a team's kit colour. */
-export function kitCanvas(sheet: Sheet, hex: string): HTMLCanvasElement {
-  return recolour(sheet, hex);
+/** The packed sheet painted in a complete player/team palette. */
+export function kitCanvas(
+  sheet: Sheet,
+  palette: SpritePalette | string,
+): HTMLCanvasElement {
+  return recolour(sheet, typeof palette === 'string' ? { primary: palette } : palette);
 }
 
 /**
@@ -657,6 +733,309 @@ function pack(
  * every sheet puts the floor on the same line, so a figure above it is in the
  * air and the game does not have to work out which.
  */
+
+/** Circular hue distance in degrees. */
+function hueDistance(a: number, b: number): number {
+  const d = Math.abs(a - b);
+  return Math.min(d, 360 - d);
+}
+
+/**
+ * Remove paper-coloured pixels that are connected to the transparent exterior.
+ *
+ * The supplied sheets are genuine RGBA cut-outs, but a white backing polygon
+ * was sealed between the legs in many frames. It is not part of the athlete:
+ * starting at the transparent edge and walking only through transparent or
+ * near-white pixels removes that polygon and the white halo without touching
+ * enclosed socks, numbers or shirt panels behind a dark outline.
+ */
+function clearExteriorWhite(
+  ctx: CanvasRenderingContext2D,
+  rx: number,
+  ry: number,
+  w: number,
+  h: number,
+): void {
+  const image = ctx.getImageData(rx, ry, w, h);
+  const d = image.data;
+  const n = w * h;
+  const seen = new Uint8Array(n);
+  const queue = new Int32Array(n);
+  let head = 0;
+  let tail = 0;
+
+  const allowed = (i: number): boolean => {
+    const o = i * 4;
+    return d[o + 3] < 24 || (d[o] > 215 && d[o + 1] > 215 && d[o + 2] > 208);
+  };
+  const push = (i: number): void => {
+    if (seen[i] || !allowed(i)) return;
+    seen[i] = 1;
+    queue[tail++] = i;
+  };
+
+  for (let x = 0; x < w; x++) {
+    push(x);
+    push((h - 1) * w + x);
+  }
+  for (let y = 1; y < h - 1; y++) {
+    push(y * w);
+    push(y * w + w - 1);
+  }
+
+  while (head < tail) {
+    const i = queue[head++];
+    const x = i % w;
+    const y = (i / w) | 0;
+    const o = i * 4;
+    if (d[o + 3] >= 24) d[o + 3] = 0;
+    if (x > 0) push(i - 1);
+    if (x < w - 1) push(i + 1);
+    if (y > 0) push(i - w);
+    if (y < h - 1) push(i + w);
+  }
+
+  for (let i = 0; i < n; i++) {
+    const o = i * 4;
+    if (d[o + 3] < 24) {
+      d[o] = 0;
+      d[o + 1] = 0;
+      d[o + 2] = 0;
+      d[o + 3] = 0;
+    }
+  }
+  ctx.putImageData(image, rx, ry);
+}
+
+function sanitizeTransparentSheet(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+): void {
+  if (width !== 3072 || height !== 2048) return;
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 6; col++) {
+      clearExteriorWhite(ctx, col * 512, row * 512, 512, 512);
+    }
+  }
+}
+
+interface Components {
+  labels: Int32Array;
+  sizes: number[];
+  sumX: number[];
+  sumY: number[];
+}
+
+function labelComponents(candidate: Uint8Array, width: number, height: number): Components {
+  const labels = new Int32Array(candidate.length);
+  labels.fill(-1);
+  const sizes: number[] = [];
+  const sumX: number[] = [];
+  const sumY: number[] = [];
+  const queue = new Int32Array(candidate.length);
+
+  for (let start = 0; start < candidate.length; start++) {
+    if (!candidate[start] || labels[start] >= 0) continue;
+    const id = sizes.length;
+    let head = 0;
+    let tail = 0;
+    let size = 0;
+    let sx = 0;
+    let sy = 0;
+    labels[start] = id;
+    queue[tail++] = start;
+    while (head < tail) {
+      const i = queue[head++];
+      const x = i % width;
+      const y = (i / width) | 0;
+      size++;
+      sx += x;
+      sy += y;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          const ni = ny * width + nx;
+          if (!candidate[ni] || labels[ni] >= 0) continue;
+          labels[ni] = id;
+          queue[tail++] = ni;
+        }
+      }
+    }
+    sizes.push(size);
+    sumX.push(sx);
+    sumY.push(sy);
+  }
+  return { labels, sizes, sumX, sumY };
+}
+
+function proximityFrom(seed: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  const distance = new Int16Array(seed.length);
+  distance.fill(-1);
+  const queue = new Int32Array(seed.length);
+  let head = 0;
+  let tail = 0;
+  for (let i = 0; i < seed.length; i++) {
+    if (!seed[i]) continue;
+    distance[i] = 0;
+    queue[tail++] = i;
+  }
+  while (head < tail) {
+    const i = queue[head++];
+    const d = distance[i];
+    if (d >= radius) continue;
+    const x = i % width;
+    const y = (i / width) | 0;
+    const neighbours = [i - 1, i + 1, i - width, i + width];
+    for (let k = 0; k < neighbours.length; k++) {
+      if ((k === 0 && x === 0) || (k === 1 && x === width - 1) || (k === 2 && y === 0) || (k === 3 && y === height - 1)) continue;
+      const ni = neighbours[k];
+      if (distance[ni] >= 0) continue;
+      distance[ni] = d + 1;
+      queue[tail++] = ni;
+    }
+  }
+  const near = new Uint8Array(seed.length);
+  for (let i = 0; i < near.length; i++) if (distance[i] >= 0) near[i] = 1;
+  return near;
+}
+
+/**
+ * Build explicit material masks from the packed, sanitised artwork.
+ *
+ * This happens once per sheet, off the gameplay path. It removes the unsafe
+ * dominant-hue guess: only the connected royal-blue shirt/short components are
+ * primary kit, nearby white/gold panels are secondary kit, and skin/hair are
+ * isolated separately. Shoes and unrelated saturated pixels stay authored.
+ */
+function attachGeneratedMasks(sheet: Sheet): Sheet {
+  const sourceCtx = sheet.canvas.getContext('2d', { willReadFrequently: true });
+  if (!sourceCtx) return sheet;
+  const source = sourceCtx.getImageData(0, 0, sheet.canvas.width, sheet.canvas.height);
+  const mask = document.createElement('canvas');
+  mask.width = sheet.canvas.width;
+  mask.height = sheet.canvas.height;
+  const maskCtx = mask.getContext('2d', { willReadFrequently: true });
+  const hairMask = document.createElement('canvas');
+  hairMask.width = sheet.canvas.width;
+  hairMask.height = sheet.canvas.height;
+  const hairCtx = hairMask.getContext('2d', { willReadFrequently: true });
+  if (!maskCtx || !hairCtx) return sheet;
+  const maskImage = maskCtx.createImageData(mask.width, mask.height);
+  const hairImage = hairCtx.createImageData(hairMask.width, hairMask.height);
+  for (let i = 0; i < mask.width * mask.height; i++) {
+    maskImage.data[i * 4 + 3] = 255;
+    hairImage.data[i * 4 + 3] = 255;
+  }
+
+  for (const frame of sheet.frames) {
+    const width = frame.sw;
+    const height = frame.sh;
+    const count = width * height;
+    const opaque = new Uint8Array(count);
+    const hue = new Float32Array(count);
+    const sat = new Float32Array(count);
+    const light = new Float32Array(count);
+    let top = height;
+    let bottom = 0;
+    let left = width;
+    let right = 0;
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const local = y * width + x;
+        const global = ((frame.sy + y) * sheet.canvas.width + frame.sx + x) * 4;
+        if (source.data[global + 3] < 32) continue;
+        opaque[local] = 1;
+        if (x < left) left = x;
+        if (x > right) right = x;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+        const hsl = rgbToHsl(source.data[global], source.data[global + 1], source.data[global + 2]);
+        hue[local] = hsl[0];
+        sat[local] = hsl[1];
+        light[local] = hsl[2];
+      }
+    }
+    if (top > bottom) continue;
+    const bodyHeight = Math.max(1, bottom - top + 1);
+
+    const blueCandidate = new Uint8Array(count);
+    for (let i = 0; i < count; i++) {
+      if (opaque[i] && hueDistance(hue[i], 225) <= 42 && sat[i] >= 0.24 && light[i] >= 0.045 && light[i] <= 0.88) blueCandidate[i] = 1;
+    }
+    const blue = labelComponents(blueCandidate, width, height);
+    const primary = new Uint8Array(count);
+    const largest = blue.sizes.length ? Math.max(...blue.sizes) : 0;
+    for (let id = 0; id < blue.sizes.length; id++) {
+      const size = blue.sizes[id];
+      const cy = blue.sumY[id] / Math.max(1, size);
+      const relY = (cy - top) / bodyHeight;
+      if (size < Math.max(8, largest * 0.035)) continue;
+      if (size >= largest * 0.16 || relY < 0.76) {
+        for (let i = 0; i < count; i++) if (blue.labels[i] === id) primary[i] = 1;
+      }
+    }
+    const nearPrimary = proximityFrom(primary, width, height, 7);
+
+    const secondary = new Uint8Array(count);
+    for (let i = 0; i < count; i++) {
+      if (!opaque[i] || primary[i] || !nearPrimary[i]) continue;
+      const y = (i / width) | 0;
+      if ((y - top) / bodyHeight > 0.72) continue;
+      const neutral = sat[i] < 0.16 && light[i] > 0.58;
+      const gold = hue[i] >= 48 && hue[i] <= 78 && sat[i] > 0.35 && light[i] > 0.18;
+      if (neutral || gold) secondary[i] = 1;
+    }
+
+    const skinCandidate = new Uint8Array(count);
+    for (let i = 0; i < count; i++) {
+      if (!opaque[i] || primary[i] || secondary[i]) continue;
+      if (hue[i] >= 5 && hue[i] <= 45 && sat[i] >= 0.18 && light[i] >= 0.16 && light[i] <= 0.92) skinCandidate[i] = 1;
+    }
+    const skinComponents = labelComponents(skinCandidate, width, height);
+    const skin = new Uint8Array(count);
+    const largestSkin = skinComponents.sizes.length ? Math.max(...skinComponents.sizes) : 0;
+    for (let id = 0; id < skinComponents.sizes.length; id++) {
+      const size = skinComponents.sizes[id];
+      if (size < Math.max(6, largestSkin * 0.018)) continue;
+      const cy = skinComponents.sumY[id] / Math.max(1, size);
+      const relY = (cy - top) / bodyHeight;
+      if (relY < 0.34 || relY > 0.47 || size >= largestSkin * 0.08) {
+        for (let i = 0; i < count; i++) if (skinComponents.labels[i] === id) skin[i] = 1;
+      }
+    }
+
+    const hair = new Uint8Array(count);
+    for (let i = 0; i < count; i++) {
+      if (!opaque[i]) continue;
+      const y = (i / width) | 0;
+      const relY = (y - top) / bodyHeight;
+      if (relY <= 0.3 && light[i] < 0.3 && (sat[i] < 0.78 || hue[i] <= 55)) hair[i] = 1;
+    }
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const local = y * width + x;
+        const global = ((frame.sy + y) * mask.width + frame.sx + x) * 4;
+        if (primary[local]) maskImage.data[global] = 255;
+        if (secondary[local]) maskImage.data[global + 1] = 255;
+        if (skin[local]) maskImage.data[global + 2] = 255;
+        if (hair[local]) hairImage.data[global] = 255;
+      }
+    }
+  }
+
+  maskCtx.putImageData(maskImage, 0, 0);
+  hairCtx.putImageData(hairImage, 0, 0);
+  sheet.maskCanvas = mask;
+  sheet.hairMaskCanvas = hairMask;
+  return sheet;
+}
+
 const CUT_OUT_CELL = 512;
 const CUT_OUT_COLS = 6;
 const CUT_OUT_ROWS = 4;
@@ -728,16 +1107,20 @@ function sliceCutOut(
   // No outlier substitution here. A strict cut-out sheet contains 24
   // intentional poses; silently replacing a crouch, dive or full reach
   // would destroy authored animation while pretending to repair it.
-  return pack(
+  const packed = pack(
     canvas,
     frames,
     layout,
     dominantHue(ctx, frames),
     CUT_OUT_BODY_HEIGHT,
   );
+  return packed ? attachGeneratedMasks(packed) : null;
 }
 
-async function loadOne(url: string, layout: SheetLayout): Promise<Sheet | null> {
+async function loadOne(
+  url: string,
+  layout: SheetLayout,
+): Promise<Sheet | null> {
   const img = await decode(url);
 
   const canvas = document.createElement('canvas');
@@ -756,7 +1139,10 @@ async function loadOne(url: string, layout: SheetLayout): Promise<Sheet | null> 
   // thing in the cell, so the cell is simply cut on an exact grid and used.
   // See docs/ART-SPEC.md; this is the form worth asking for.
   const cut = cutOut(ctx, canvas.width, canvas.height);
-  if (cut) return sliceCutOut(canvas, ctx, layout);
+  if (cut) {
+    sanitizeTransparentSheet(ctx, canvas.width, canvas.height);
+    return sliceCutOut(canvas, ctx, layout);
+  }
 
   const gx = layout.left * canvas.width;
   const gy = layout.top * canvas.height;
@@ -823,7 +1209,8 @@ async function loadOne(url: string, layout: SheetLayout): Promise<Sheet | null> 
   // gigabyte of canvases between them. The keying and the shape-finding were
   // done at full resolution, where the edges are still crisp; only the result
   // is shrunk.
-  return pack(canvas, dropOutliers(frames, layout.skip ?? []), layout, kitHue);
+  const packed = pack(canvas, dropOutliers(frames, layout.skip ?? []), layout, kitHue);
+  return packed ? attachGeneratedMasks(packed) : null;
 }
 
 export type SheetSet = Partial<Record<SpriteAction, Sheet>>;
@@ -871,6 +1258,13 @@ export async function loadSheets(
  * Draw one frame with its feet at (x, y) and the figure scaled to `height`
  * pixels from the floor to the top of the head.
  */
+export function frameArtLiftPixels(sheet: Sheet, index: number, height: number): number {
+  const f = sheet.frames[Math.max(0, Math.min(sheet.frames.length - 1, index))];
+  if (!f) return 0;
+  const drawn = sheet.nativeBodyHeight ?? Math.max(1, f.footY - f.boxTop);
+  return Math.max(0, f.footY - f.boxBottom) * (height / drawn);
+}
+
 export function drawFrame(
   ctx: CanvasRenderingContext2D,
   sheet: Sheet,
@@ -879,21 +1273,19 @@ export function drawFrame(
   y: number,
   height: number,
   facing = 1,
-  kit?: string,
+  palette?: SpritePalette | string,
+  widthScale = 1,
 ): void {
   const f = sheet.frames[Math.max(0, Math.min(sheet.frames.length - 1, index))];
   if (!f) return;
-  // Scale so the drawn body occupies `height`, measured from the sheet's floor
-  // line to the highest drawn pixel. Scaling by the cell instead would make the
-  // figure shrink and grow as the pose reached higher or lower.
   const drawn = sheet.nativeBodyHeight ?? Math.max(1, f.footY - f.boxTop);
   const k = height / drawn;
 
   ctx.save();
   ctx.translate(x, y);
-  ctx.scale(facing, 1);
+  ctx.scale(facing * widthScale, 1);
   ctx.drawImage(
-    kit ? kitCanvas(sheet, kit) : sheet.canvas,
+    palette ? kitCanvas(sheet, palette) : sheet.canvas,
     f.sx,
     f.sy,
     f.sw,

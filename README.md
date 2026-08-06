@@ -1,1 +1,240 @@
-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
+# Super Volley 90
+
+Arcade 6-on-6 volleyball for macOS, built in the spirit of the early-90s coin-ops
+— a side-on court with the net down the middle, two buttons, a landing marker on
+the floor, and rallies that resolve in a few loud seconds.
+
+Everything here is original: the code, the procedural art, the synthesised
+audio, the fictional teams. No assets or data from any existing game are used.
+
+![gameplay](docs/screenshot.png)
+
+## Why it was built from scratch
+
+The obvious starting point would have been an existing open-source volleyball
+game, but none of the candidates fit:
+
+| Project | Why not |
+| --- | --- |
+| [blobbyvolley2](https://github.com/danielknobe/blobbyvolley2) | The best-maintained option, but it is 1-on-1 blob physics under GPLv2 — the six-player rotations, blocking and landing-marker aiming that define this genre would mean replacing essentially all of it. |
+| [DJWOMS/volleyball-game-godot](https://github.com/DJWOMS/volleyball-game-godot) | 3D, 14 commits, no licence file. |
+| [Ahish9009/Volleyball](https://github.com/Ahish9009/Volleyball) | Python 2.7 / PyGame, single-player-vs-computer toy. |
+
+So the simulation is new, and the *design* is what borrows from the era: the
+landing marker, the semi-automatic contacts, the knockdown on a hard spike.
+
+## Running it
+
+```sh
+npm install
+npm run dev          # http://localhost:5173
+```
+
+### Building the macOS app
+
+The game ships as a native `.app` via [Tauri](https://tauri.app) — a small Rust
+shell around a WKWebView, so it is Metal-backed, Apple-Silicon-native and a few
+megabytes rather than a bundled browser.
+
+```sh
+npm run app:dev      # run the native app with hot reload
+npm run app:build    # produces src-tauri/target/release/bundle/{macos,dmg}
+```
+
+Both derive the macOS icon set from `src-tauri/icons/icon.png` first, so the
+`.icns` the bundler needs is never missing — only the source PNG is in git.
+
+Requires Rust (`rustup`) and the Xcode command line tools. Signing and
+notarisation are not configured; add your identity to `tauri.conf.json` when you
+need a distributable build.
+
+**Or skip the toolchain entirely.** CI builds the app on a macOS runner for
+every push; download `SuperVolley90-macos` from the run's artifacts. It contains
+a `.dmg` and a `.tar.gz`, deliberately not a bare `.app`: GitHub re-zips
+artifacts and drops Unix permission bits, which strips the executable flag off
+the binary inside a `.app` and makes macOS report it as damaged. A disk image
+and a tarball both carry their own permissions and survive intact.
+
+### Signing and notarisation
+
+The `macos-app` job has two modes, chosen by whether the repository has an
+`APPLE_SIGNING_IDENTITY` secret.
+
+**Without it** the app gets an ad-hoc signature. It runs, but nothing vouches
+for who built it, so Gatekeeper blocks the first launch:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Super Volley 90.app"
+```
+
+On macOS 15 and later the old right-click → Open bypass no longer works; use the
+command above, or System Settings → Privacy & Security → **Open Anyway**.
+
+**With a Developer ID** Tauri signs with hardened runtime, submits the build to
+Apple's notary service and staples the ticket, so the app opens on a double
+click like any other download. Add these repository secrets
+(Settings → Secrets and variables → Actions):
+
+| Secret | What it is | Where it comes from |
+| --- | --- | --- |
+| `APPLE_CERTIFICATE` | Developer ID Application certificate, as base64 | Export it from Keychain Access as `.p12`, then `base64 -i cert.p12 \| pbcopy` |
+| `APPLE_CERTIFICATE_PASSWORD` | The password you set on that `.p12` | You choose it during the export |
+| `APPLE_SIGNING_IDENTITY` | e.g. `Developer ID Application: Your Name (TEAMID)` | `security find-identity -v -p codesigning` |
+| `APPLE_ID` | The Apple ID email on the developer account | — |
+| `APPLE_PASSWORD` | An **app-specific** password, not your Apple ID password | [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords |
+| `APPLE_TEAM_ID` | 10-character team identifier | [developer.apple.com/account](https://developer.apple.com/account) → Membership |
+
+The certificate must be a **Developer ID Application** certificate, not a Mac
+App Store or Apple Development one — only that kind is accepted for software
+distributed outside the App Store.
+
+Notarisation adds a few minutes to the job. The workflow verifies the result
+with `spctl --assess` and `stapler validate`, so a build that would still be
+blocked on a user's machine fails in CI rather than in a download.
+
+## Controls
+
+| | Keyboard | Gamepad |
+| --- | --- | --- |
+| Move / aim | Arrows or WASD | Left stick / D-pad |
+| Play the ball | Space or J | A / X |
+| Jump | Shift or K | B / Y |
+| Pause | Esc or P | Start |
+
+Two buttons carry everything, exactly as the cabinets did:
+
+- **Hold to charge.** A tap is a controlled pass or a tip; a full hold is a
+  power swing or a jump serve. The meter above your player shows it.
+- **Left/right run along the court; up/down step across it.** The same axes
+  aim your shots: right is deep, left is short over the net, up and down pick
+  the far or near sideline.
+- **The stick aims.** Where you are pushing when you make contact is where the
+  ball goes — wide or line, short or deep.
+- **Jump early.** Contact quality peaks at the top of your reach, so the spike
+  that lands is the one where you took off before the set arrived.
+- You steer one player; the ring on the floor shows who. Control hands over to
+  whoever can realistically play the next ball, never mid-jump.
+
+### Lethal Maneuvers
+
+The gauge at the bottom of the screen fills from **defence** — digging a hard
+spike, getting a block up, laying out for a save — and barely at all from
+winning points. A team under pressure is therefore the one most likely to earn a
+way out of it.
+
+When it is full, jump and press the jump button **again in mid-air** to unleash
+one. Which of the three you get depends on where the stick is pushed at that
+moment:
+
+| Stick | Move | What it does |
+| --- | --- | --- |
+| Neutral / forward | **Meteor Smash** | Straight down off the top of the reach, at the fastest the ball travels |
+| Left or right | **Comet Drive** | Leaves towards the antenna and hooks violently back inside |
+| Back (short) | **Phantom Drop** | Floats over, stalls on backspin, then falls dead behind the block |
+
+A Lethal Maneuver flattens any blocker who gets a hand to it, and empties the
+gauge.
+
+## Architecture
+
+```
+src/core/     simulation — no DOM, no rendering, fully deterministic
+  rules.ts      court dimensions, scoring, tuning constants
+  ball.ts       physics and the arc solvers
+  player.ts     movement, jumping, diving, pose state
+  contact.ts    what each kind of strike does to the ball
+  team.ts       roster, rotation, formation anchors
+  ai.ts         per-team job assignment and command generation
+  world.ts      rally state machine, faults, scoring
+src/render/   canvas presentation, projection, effects, HUD
+src/game/     input, audio, menu, roster
+src-tauri/    native macOS shell
+tools/        headless runner, rally tracer, screenshot capture, icon generator
+```
+
+Two decisions shape the rest:
+
+**The core never touches the DOM and never calls `Math.random()`.** Every random
+draw comes from a seeded PRNG, so a match replays identically from its seed.
+That is what makes `npm run sim` a usable balance tool and the tests meaningful.
+
+**The simulation runs at a fixed 120 Hz, the renderer at display refresh.** On a
+60 Hz panel that is two steps per frame; on a 120 Hz ProMotion display, one.
+Physics and feel are identical either way, and there is no frame-rate-dependent
+behaviour to chase.
+
+That separation paid for itself when the camera changed. The simulation works in
+metres — x across the court, y along it, z up — and knows nothing about how any
+of it is drawn, so switching from a behind-the-baseline view to the side-on one
+this game needed was a change to the projection alone. Not a line of gameplay
+code moved.
+
+**The projection is controlled 2.5D orthographic.** There is still no
+perspective divide, so court geometry remains stable and players do not change
+size unpredictably, but court width now contributes a restrained horizontal
+shear, vertical rise and six-percent scale shift. That is enough to give the net
+and playing surface a readable plane without turning the game into a 3D camera.
+
+The net is projected from four world-space corners and drawn as a one-metre mesh
+band between padded posts, with separate tapes and antennae. Players can pass
+visually in front of or behind it according to their actual court position.
+
+Players use ten 24-frame illustrated sprite sheets. At load time each sheet is
+cleaned to true transparency and analysed into explicit primary-kit,
+secondary-kit, skin and hair material masks before being sampled by a continuous
+playhead. The renderer crossfades
+adjacent authored poses, pins the exact contact frame, and combines the lift
+inside the drawing with the physical jump height instead of cancelling either.
+The old articulated vector figure remains only as a safe fallback.
+
+## Tooling
+
+```sh
+npm test                            # unit and simulation tests
+npm run typecheck
+npm run sim -- --matches 6          # headless AI-vs-AI matches with statistics
+npm run trace -- --seconds 20       # step-by-step rally trace
+npm run shots -- shots/             # drive the real game in Chromium, capture frames
+npm run e2e:input                   # press the actual arrow keys, assert the player moves
+npm run shots:overhaul out/           # menu, jump serve, block and team-identity visual QA
+```
+
+`e2e:input` exists because the input mapping once rotated 90 degrees when the
+camera changed and nothing noticed: simulation correct, renderer correct, every
+unit test green, game unplayable. Only pressing real keys catches that class of
+bug.
+
+`npm run sim` is the balance harness. A healthy build looks roughly like this:
+
+```
+1124 points, avg rally 6.5s, avg touches/rally 7.0
+reasons: kill ~68%, out ~13%, own error ~13%, serveFault ~5%
+power moves ~25 per side per match, home/away wins 3-3
+```
+
+The home/away win split matters as much as the rates. Two asymmetries were found
+exactly this way: sidespin that curved one way for one team and the other way
+for the other, because the Magnus force depends on the sign of the velocity, and
+a serve that had become risk-free once the arc solver stopped undershooting.
+
+Rallies collapsing to one or two touches, or serve faults dominating, means a
+tuning constant has drifted — both failure modes happened during development and
+both showed up here first.
+
+## Rules implemented
+
+Rally scoring to 25 (deciding set to 15), win by two, best of five. Three
+touches a side with blocks free, no consecutive contacts by one player, rotation
+on side-out, back-row attack restriction behind the attack line, serve faults,
+balls outside the antennae, and the plane-crossing fault under the net.
+
+## Known gaps
+
+- The native macOS build was not verifiable during development (built on Linux,
+  where Tauri's GTK/WebKit backend cannot compile). The `macos-app` CI job now
+  covers it — treat a green run there as the confirmation, not local testing.
+- Unless the Apple secrets are configured, builds are ad-hoc signed and need
+  one Gatekeeper bypass on first launch.
+- No local two-player mode yet — the second side is always AI.
+
+- Audio is a synthesised placeholder: functional, not composed.
