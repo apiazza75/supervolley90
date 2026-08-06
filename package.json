@@ -26,6 +26,7 @@
     "sheets": "tsx tools/make-sheets.ts",
     "frames": "tsx tools/dump-frames.ts",
     "measure:sheet": "tsx tools/measure-sheet.ts",
+    "assets:check": "tsx tools/validate-art-assets.ts",
     "check:build": "npm run build && tsx tools/build-check.ts"
   },
   "devDependencies": {
