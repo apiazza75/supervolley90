@@ -1,0 +1,168 @@
+name: Keep illustrated players in instant replay
+
+on:
+  push:
+    branches:
+      - claude/volley-2d-macos-game-cl9ary
+    paths:
+      - .github/workflows/fix-replay-sprites.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    name: Patch replay, test and commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/volley-2d-macos-game-cl9ary
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Preserve role and draw sprite sheets in replay
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          replay = Path('src/game/replay.ts')
+          text = replay.read_text(encoding='utf-8')
+          old = "import { Side } from '../core/rules';\nimport { World } from '../core/world';"
+          new = "import type { PlayerRole } from '../core/player';\nimport { Side } from '../core/rules';\nimport { World } from '../core/world';"
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = "    side: Side;\n    pos: { x: number; y: number; z: number };"
+          new = "    side: Side;\n    role: PlayerRole;\n    pos: { x: number; y: number; z: number };"
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = "        side: p.side,\n        pos: { x: p.pos.x, y: p.pos.y, z: 0 },"
+          new = "        side: p.side,\n        role: p.role,\n        pos: { x: p.pos.x, y: p.pos.y, z: 0 },"
+          assert old in text
+          text = text.replace(old, new, 1)
+          replay.write_text(text, encoding='utf-8')
+
+          renderer = Path('src/render/renderer.ts')
+          text = renderer.read_text(encoding='utf-8')
+          old = "\n".join([
+              "      const colors = world.team(rp.side).config.colors;",
+              "      // Replay snapshots do not carry a role, so the libero keeps the team kit",
+              "      // there. Adding one field to every recorded frame to recolour a shirt for",
+              "      // two seconds is not worth the memory.",
+              "      const proj = cam.project(rp.pos.x, rp.pos.y, rp.height);",
+          ])
+          new = "\n".join([
+              "      const colors = world.team(rp.side).config.colors;",
+              "      const proj = cam.project(rp.pos.x, rp.pos.y, rp.height);",
+          ])
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = "\n".join([
+              "        draw: () => {",
+              "          drawPlayerShadow(ctx, cam, ghost);",
+              "          drawPlayer(ctx, cam, ghost, colors, { active: false, charge: 0, time, dt });",
+              "        },",
+          ])
+          new = "\n".join([
+              "        draw: () => {",
+              "          drawPlayerShadow(ctx, cam, ghost);",
+              "          const kit = kitFor(ghost, colors);",
+              "          if (this.useSprites && drawSpritePlayer(ctx, cam, ghost, this.sheets, dt, kit[0])) {",
+              "            return;",
+              "          }",
+              "          drawPlayer(ctx, cam, ghost, kit, { active: false, charge: 0, time, dt });",
+              "        },",
+          ])
+          assert old in text
+          text = text.replace(old, new, 1)
+          text = text.replace(
+              "the bodies and the ball: no markers, no cues, no gauges —\n   * a replay is for watching, not for playing. The recorded players are cast\n   * to `Player` because `drawPlayer` only ever reads the fields a snapshot\n   * carries.",
+              "the bodies and the ball: no markers, no cues, no gauges —\n   * a replay is for watching, not for playing. Recorded poses use the same\n   * illustrated sheets and kit remapping as live play, with the vector figure\n   * retained as the safe fallback.",
+              1,
+          )
+          renderer.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Typecheck, tests, build and simulation
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+          npm run sim -- --matches 2 --seed 1337
+
+      - name: Capture replay verification
+        run: |
+          set -euo pipefail
+          npx playwright install --with-deps chromium
+          npm run shots -- /tmp/supervolley-replay-shots
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SuperVolley90-replay-sprite-screenshots
+          path: /tmp/supervolley-replay-shots/*.png
+          if-no-files-found: error
+
+      - name: Commit replay consistency fix
+        run: |
+          set -euo pipefail
+          git config user.name "Codex Replay Engineering"
+          git config user.email "noreply@openai.com"
+          git add src/game/replay.ts src/render/renderer.ts
+          git rm .github/workflows/fix-replay-sprites.yml
+          git commit -m "Use illustrated player sheets in instant replay"
+          git push origin HEAD:claude/volley-2d-macos-game-cl9ary
+
+  macos-verify:
+    name: Verify final macOS app
+    needs: patch-and-test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/volley-2d-macos-game-cl9ary
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build final Tauri app
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run app:build
+
+      - name: Ad-hoc sign and package final build
+        run: |
+          set -euo pipefail
+          cd src-tauri/target/release/bundle
+          app="macos/Super Volley 90.app"
+          test -d "$app"
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          mkdir -p final-dmg
+          hdiutil create -volname "Super Volley 90" -srcfolder "$app" \
+            -ov -format UDZO final-dmg/SuperVolley90.dmg
+          tar -czf SuperVolley90-macos-app.tar.gz -C macos "Super Volley 90.app"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SuperVolley90-macos-final-sprites-and-arena
+          path: |
+            src-tauri/target/release/bundle/final-dmg/SuperVolley90.dmg
+            src-tauri/target/release/bundle/SuperVolley90-macos-app.tar.gz
+          if-no-files-found: error
