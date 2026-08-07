@@ -257,7 +257,22 @@ async function captureScreenshots(browser: Browser): Promise<Record<string, unkn
   await page.screenshot({ path: resolve(SHOTS, '00-build-id.png') });
 
   await startDemo(page, SEED, FAST);
-
+  let arenaV3LayersLoaded = 0;
+  try {
+    await page.waitForFunction(
+      'window.__sv90 && window.__sv90.renderer && window.__sv90.renderer.arenaAssetCount === 5',
+      undefined,
+      { timeout: 15_000, polling: 100 },
+    );
+    arenaV3LayersLoaded = await page.evaluate(
+      'window.__sv90.renderer.arenaAssetCount',
+    ) as number;
+  } catch {
+    arenaV3LayersLoaded = await page.evaluate(
+      'window.__sv90 && window.__sv90.renderer ? window.__sv90.renderer.arenaAssetCount : 0',
+    ) as number;
+    failures.push(`arenaV3LayersLoaded = ${arenaV3LayersLoaded}, expected 5`);
+  }
   for (const shot of SHOT_LIST) {
     if (shot.condition && !(await awaitMoment(page, shot.condition, shot.timeout ?? 90))) {
       continue;
@@ -286,17 +301,20 @@ async function captureScreenshots(browser: Browser): Promise<Record<string, unkn
     failures.push('15-sprite-white-qc.png: run sprite:qc:v3 first');
   }
 
-  // Shots the brief asks for that describe systems this pass did not rebuild;
-  // taken from the live game so they show what is actually there.
-  for (const file of ['14-team-lineup.png', '16-arena-v3.png']) {
-    await awaitMoment(page, 'rally', 60);
-    await page.screenshot({ path: resolve(SHOTS, file) });
+  // Comparative lineup: a real composed serve formation, not an arbitrary
+  // rally frame.  It shows home 1–6 and away 1–6 simultaneously.
+  if (await awaitMoment(page, 'serveReady', 120)) {
+    await page.screenshot({ path: resolve(SHOTS, '14-team-lineup.png') });
+    await release(page);
+  }
+  if (await awaitMoment(page, 'rally', 60)) {
+    await page.screenshot({ path: resolve(SHOTS, '16-arena-v3.png') });
     await release(page);
   }
 
   await ctx.close();
   if (errors.length) failures.push(`page errors: ${errors.slice(0, 3).join(' | ')}`);
-  return { bodyDrawsPerPlayerPerFrameMax: bodyDraws, buildInfo };
+  return { bodyDrawsPerPlayerPerFrameMax: bodyDraws, buildInfo, arenaV3LayersLoaded };
 }
 
 async function captureVideos(browser: Browser): Promise<void> {
@@ -359,11 +377,18 @@ async function main(): Promise<void> {
   if (bodyDraws < 1) failures.push('no player bodies were drawn at all');
 
   const buildInfo = (render.buildInfo as Record<string, string> | null) ?? null;
+  const arenaV3LayersLoaded = (render.arenaV3LayersLoaded as number) ?? 0;
+  if (arenaV3LayersLoaded !== 5) {
+    failures.push(`arenaV3LayersLoaded = ${arenaV3LayersLoaded}, expected 5`);
+  }
   const metrics = {
     branch: buildInfo?.branch ?? 'unknown',
     commit: buildInfo?.commit ?? 'unknown',
     runId: buildInfo?.runId ?? 'local',
     bodyDrawsPerPlayerPerFrameMax: bodyDraws,
+    arenaV3LayersLoaded,
+    distinctCharacterSignaturesHome: gameplay.distinctCharacterSignaturesHome,
+    distinctCharacterSignaturesAway: gameplay.distinctCharacterSignaturesAway,
     serveReadyApproachPlayers: gameplay.serveReadyApproachPlayers,
     maxConcurrentApproachPlayers: gameplay.maxConcurrentApproachPlayers,
     longestOverTwoApproach: gameplay.longestOverTwoApproach,
@@ -375,7 +400,14 @@ async function main(): Promise<void> {
     block: gameplay.block,
     ballKids: 0,
     officialsUsingPlayerRenderer: false,
-    screenshots: SHOT_LIST.map((s) => s.file),
+    screenshots: [
+      '00-build-id.png',
+      '01-menu.png',
+      ...SHOT_LIST.map((s) => s.file),
+      '14-team-lineup.png',
+      '15-sprite-white-qc.png',
+      '16-arena-v3.png',
+    ],
     videos: VIDEO_LIST.map((v) => v.file),
     violations: [...gameplayViolations.map((v) => `${v.metric}: expected ${v.expected}, got ${v.actual}`), ...failures],
   };
@@ -385,6 +417,8 @@ async function main(): Promise<void> {
   }
 
   console.log(`\nbody draws per player per frame: ${bodyDraws}`);
+  console.log(`arena v3 layers:                ${arenaV3LayersLoaded}/5`);
+  console.log(`character signatures:           ${gameplay.distinctCharacterSignaturesHome} / ${gameplay.distinctCharacterSignaturesAway}`);
   console.log(`back-facing contacts:           ${gameplay.backFacingContacts}`);
   console.log(`block attempts / contacts:      ${gameplay.block.attempts} / ${gameplay.block.contacts}`);
   console.log(`artifacts in ${OUT}`);

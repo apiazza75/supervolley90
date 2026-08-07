@@ -16,6 +16,7 @@ import { facesNet, type VolleyballAction } from '../core/presentation';
 import type { Player } from '../core/player';
 import { World } from '../core/world';
 import { TEAMS } from '../game/teams';
+import { countDistinctCharacterSignatures } from '../render/character-signature';
 
 /**
  * A technical sequence, summarised across every occurrence.
@@ -43,6 +44,8 @@ export interface SequenceMetrics {
 export interface GameplayMetrics {
   steps: number;
   seeds: number[];
+  distinctCharacterSignaturesHome: number;
+  distinctCharacterSignaturesAway: number;
   /** Rallies played to a point. */
   points: number;
   backFacingContacts: number;
@@ -131,6 +134,8 @@ export function measureGameplay(seeds: number[], steps: number): GameplayMetrics
   const m: GameplayMetrics = {
     steps,
     seeds: [...seeds],
+    distinctCharacterSignaturesHome: 0,
+    distinctCharacterSignaturesAway: 0,
     points: 0,
     backFacingContacts: 0,
     contactsByKind: {},
@@ -152,6 +157,14 @@ export function measureGameplay(seeds: number[], steps: number): GameplayMetrics
 
   for (const seed of seeds) {
     const w = makeWorld(seed);
+    m.distinctCharacterSignaturesHome = Math.max(
+      m.distinctCharacterSignaturesHome,
+      countDistinctCharacterSignatures(w.home.players),
+    );
+    m.distinctCharacterSignaturesAway = Math.max(
+      m.distinctCharacterSignaturesAway,
+      countDistinctCharacterSignatures(w.away.players),
+    );
     // Per-player run-up bookkeeping, so a contact can report the distance the
     // body actually covered getting there.
     const approachRun = new Map<number, number>();
@@ -284,6 +297,18 @@ export function checkGameplayGates(m: GameplayMetrics): Violation[] {
     if (!ok) v.push({ metric, expected, actual });
   };
 
+  need(
+    m.distinctCharacterSignaturesHome === 6,
+    'distinctCharacterSignaturesHome',
+    '6',
+    String(m.distinctCharacterSignaturesHome),
+  );
+  need(
+    m.distinctCharacterSignaturesAway === 6,
+    'distinctCharacterSignaturesAway',
+    '6',
+    String(m.distinctCharacterSignaturesAway),
+  );
   need(m.backFacingContacts === 0, 'backFacingContacts', '0', String(m.backFacingContacts));
   need(
     m.longestOverTwoApproach <= 0.25,

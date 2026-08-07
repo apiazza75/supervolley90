@@ -42,65 +42,142 @@ export function netDestinationRect(
   return { x: centreX - width / 2, y: top, width, height: Math.max(1, bottom - top) };
 }
 
-type ArenaLayer = 'backdrop' | 'floor' | 'net';
+export const ARENA_V3_LAYER_NAMES = [
+  'backdrop',
+  'crowdFar',
+  'ledMid',
+  'floor',
+  'foreground',
+] as const;
+
+export type ArenaV3Layer = (typeof ARENA_V3_LAYER_NAMES)[number];
 
 interface LayerHandle {
   img: HTMLImageElement;
   loaded: boolean;
+  failed: boolean;
 }
 
 /**
- * Loads and draws the illustrated arena layers.
+ * Five-layer arena art used by Recovery V3.
  *
- * If any layer is unavailable the procedural draw path in `arena.ts` remains active.
+ * All screen-space layers share a 2560 x 1440 virtual composition.  This keeps
+ * the crowd, LED ribbon and foreground locked to the backdrop at every aspect
+ * ratio instead of scaling each transparent PNG independently.
  */
 export class ArenaArtwork {
+  private static readonly SCENE_WIDTH = 2560;
+  private static readonly SCENE_HEIGHT = 1440;
   private readonly base: string;
-  private readonly layers: Record<ArenaLayer, LayerHandle>;
+  private readonly layers: Record<ArenaV3Layer, LayerHandle>;
 
-  constructor(base = 'arena') {
-    this.base = base.replace(/\/$/, '');
+  constructor(base = 'arena/v3') {
+    this.base = base.replace(/^\//, '').replace(/\/$/, '');
     this.layers = {
-      backdrop: { img: this.load(`${this.base}/arena-back.png`), loaded: false },
-      floor: { img: this.load(`${this.base}/arena-floor.png`), loaded: false },
-      net: { img: this.load(`${this.base}/net.png`), loaded: false },
+      backdrop: this.createLayer('backdrop.png'),
+      crowdFar: this.createLayer('crowd-far.png'),
+      ledMid: this.createLayer('led-mid.png'),
+      floor: this.createLayer('floor.png'),
+      foreground: this.createLayer('foreground.png'),
     };
   }
 
-  private load(src: string): HTMLImageElement {
-    const img = new Image();
-    img.onload = () => {
-      for (const key of Object.keys(this.layers) as Array<ArenaLayer>) {
-        if (this.layers[key].img === img) this.layers[key].loaded = true;
-      }
+  private createLayer(file: string): LayerHandle {
+    const handle = { img: new Image(), loaded: false, failed: false };
+    handle.img.onload = () => {
+      handle.loaded = true;
+      handle.failed = false;
     };
-    img.src = `/${src}`;
-    return img;
+    handle.img.onerror = () => {
+      handle.loaded = false;
+      handle.failed = true;
+    };
+    handle.img.src = `/${this.base}/${file}`;
+    return handle;
   }
 
-  private getLayer(name: ArenaLayer): HTMLImageElement | null {
+  private getLayer(name: ArenaV3Layer): HTMLImageElement | null {
     const layer = this.layers[name];
-    if (!layer.loaded || !layer.img.complete) return null;
+    if (!layer.loaded || !layer.img.complete || layer.img.naturalWidth <= 0) return null;
     return layer.img;
   }
 
-  /** Number of arena layers currently available for rendering. */
+  /** Number of v3 layers currently available for rendering. */
   get loadedCount(): number {
-    return (Object.keys(this.layers) as ArenaLayer[]).filter((name) => this.layers[name].loaded).length;
+    return ARENA_V3_LAYER_NAMES.reduce(
+      (total, name) => total + (this.getLayer(name) ? 1 : 0),
+      0,
+    );
+  }
+
+  get complete(): boolean {
+    return this.loadedCount === ARENA_V3_LAYER_NAMES.length;
+  }
+
+  get failedLayers(): readonly ArenaV3Layer[] {
+    return ARENA_V3_LAYER_NAMES.filter((name) => this.layers[name].failed);
+  }
+
+  private sceneCrop(width: number, height: number): SourceRect {
+    return coverSourceRect(
+      ArenaArtwork.SCENE_WIDTH,
+      ArenaArtwork.SCENE_HEIGHT,
+      width,
+      height,
+    );
+  }
+
+  /** Draw a transparent layer in the same virtual coordinates as the backdrop. */
+  private drawSceneLayer(
+    ctx: CanvasRenderingContext2D,
+    img: HTMLImageElement,
+    width: number,
+    height: number,
+    sceneY: number,
+  ): void {
+    const crop = this.sceneCrop(width, height);
+    const scale = width / crop.sw;
+    const x = -crop.sx * scale;
+    const y = (sceneY - crop.sy) * scale;
+    ctx.drawImage(img, x, y, ArenaArtwork.SCENE_WIDTH * scale, img.naturalHeight * scale);
   }
 
   drawBackdrop(ctx: CanvasRenderingContext2D, width: number, height: number): boolean {
     const img = this.getLayer('backdrop');
     if (!img) return false;
-
-    const crop = coverSourceRect(img.naturalWidth, img.naturalHeight, width, height);
-    ctx.save();
+    const crop = this.sceneCrop(width, height);
     ctx.drawImage(img, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);
-    ctx.restore();
     return true;
   }
 
-  drawCourtFloor(
+  drawCrowdFar(ctx: CanvasRenderingContext2D, width: number, height: number): boolean {
+    const img = this.getLayer('crowdFar');
+    if (!img) return false;
+    // The first visible spectator row in the transparent sheet aligns with the
+    // first seating deck at scene y ~= 590.
+    this.drawSceneLayer(ctx, img, width, height, 345);
+    return true;
+  }
+
+  drawLedMid(ctx: CanvasRenderingContext2D, width: number, height: number): boolean {
+    const img = this.getLayer('ledMid');
+    if (!img) return false;
+    this.drawSceneLayer(ctx, img, width, height, 760);
+    return true;
+  }
+
+  drawForeground(ctx: CanvasRenderingContext2D, width: number, height: number): boolean {
+    const img = this.getLayer('foreground');
+    if (!img) return false;
+    this.drawSceneLayer(ctx, img, width, height, ArenaArtwork.SCENE_HEIGHT - 512);
+    return true;
+  }
+
+  /**
+   * Map the authored floor texture to the camera's affine world projection.
+   * Image x follows court length, image y follows far-to-near court width.
+   */
+  drawArenaFloor(
     ctx: CanvasRenderingContext2D,
     cam: Camera,
     halfWidth: number,
@@ -109,50 +186,37 @@ export class ArenaArtwork {
     const img = this.getLayer('floor');
     if (!img) return false;
 
-    const points = [
-      cam.projectFloor(-halfWidth, -halfLength),
-      cam.projectFloor(halfWidth, -halfLength),
-      cam.projectFloor(halfWidth, halfLength),
-      cam.projectFloor(-halfWidth, halfLength),
-    ];
-    const minX = Math.min(...points.map((p) => p.x));
-    const maxX = Math.max(...points.map((p) => p.x));
-    const minY = Math.min(...points.map((p) => p.y));
-    const maxY = Math.max(...points.map((p) => p.y));
-    const width = Math.max(1, maxX - minX);
-    const height = Math.max(1, maxY - minY);
+    const farLeft = cam.projectFloor(halfWidth, -halfLength);
+    const farRight = cam.projectFloor(halfWidth, halfLength);
+    const nearLeft = cam.projectFloor(-halfWidth, -halfLength);
+    const nearRight = cam.projectFloor(-halfWidth, halfLength);
+
+    const a = (farRight.x - farLeft.x) / img.naturalWidth;
+    const b = (farRight.y - farLeft.y) / img.naturalWidth;
+    const c = (nearLeft.x - farLeft.x) / img.naturalHeight;
+    const d = (nearLeft.y - farLeft.y) / img.naturalHeight;
 
     ctx.save();
     ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    ctx.lineTo(points[1].x, points[1].y);
-    ctx.lineTo(points[2].x, points[2].y);
-    ctx.lineTo(points[3].x, points[3].y);
+    ctx.moveTo(farLeft.x, farLeft.y);
+    ctx.lineTo(farRight.x, farRight.y);
+    ctx.lineTo(nearRight.x, nearRight.y);
+    ctx.lineTo(nearLeft.x, nearLeft.y);
     ctx.closePath();
     ctx.clip();
-    ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, minX, minY, width, height);
+    ctx.transform(a, b, c, d, farLeft.x, farLeft.y);
+    ctx.drawImage(img, 0, 0);
     ctx.restore();
-
     return true;
   }
 
-  drawNet(
+  /** Compatibility alias for callers predating the five-layer arena. */
+  drawCourtFloor(
     ctx: CanvasRenderingContext2D,
-    centreX: number,
-    top: number,
-    bottom: number,
-    worldUnitPixels: number,
+    cam: Camera,
+    halfWidth: number,
+    halfLength: number,
   ): boolean {
-    const img = this.getLayer('net');
-    if (!img) return false;
-
-    const width = Math.max(8, worldUnitPixels * 0.78);
-    const height = Math.max(1, Math.abs(bottom - top));
-    const x = centreX - width / 2;
-    const y = Math.min(top, bottom);
-    ctx.save();
-    ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, x, y, width, height);
-    ctx.restore();
-    return true;
+    return this.drawArenaFloor(ctx, cam, halfWidth, halfLength);
   }
 }

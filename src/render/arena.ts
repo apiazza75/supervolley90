@@ -13,6 +13,11 @@ const LINE = 'rgba(255,255,255,0.94)';
 const COURT_NEAR = '#b85d3a';
 const SURROUND = '#173844';
 
+export interface ArenaDrawable {
+  depth: number;
+  draw: () => void;
+}
+
 interface Spectator {
   /** Seat position: x is the depth into the stand, y runs along it. */
   x: number;
@@ -104,22 +109,54 @@ export class Arena {
   drawBackground(ctx: CanvasRenderingContext2D, cam: Camera, time: number): void {
     const { viewWidth: w, viewHeight: h } = cam;
 
-    const illustrated = this.artwork.drawBackdrop(ctx, w, h);
-    if (!illustrated) {
-      // Flat procedural fallback: always available when an asset is absent.
-      ctx.fillStyle = '#10182b';
-      ctx.fillRect(0, 0, w, h);
-      this.drawCrowd(ctx, cam, time);
-      this.drawRoof(ctx, cam);
+    if (this.artwork.complete) {
+      // Recovery V3 is one authored composition.  Returning here is deliberate:
+      // no legacy crowd, roof, barrier or ribbon may be painted over these layers.
+      this.artwork.drawBackdrop(ctx, w, h);
+      this.artwork.drawCrowdFar(ctx, w, h);
+      this.artwork.drawLedMid(ctx, w, h);
+      this.drawShafts(ctx, cam, time);
+      this.drawFloor(ctx, cam);
+      return;
     }
 
-    // Dynamic light still belongs to the game and sits over either backdrop.
+    if (!import.meta.env.DEV) {
+      // A release with incomplete art must be visibly broken and fail visual QA,
+      // rather than silently shipping the legacy arena again.
+      ctx.fillStyle = '#07101f';
+      ctx.fillRect(0, 0, w, h);
+      ctx.save();
+      ctx.fillStyle = '#ff8f8f';
+      ctx.font = '700 15px ui-monospace, monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(
+        `ARENA V3 INCOMPLETE — ${this.artwork.loadedCount}/5 layers`,
+        24,
+        38,
+      );
+      const failed = this.artwork.failedLayers.join(', ');
+      if (failed) ctx.fillText(`failed: ${failed}`, 24, 60);
+      ctx.restore();
+      return;
+    }
+
+    // Development-only fallback: useful while an artist is regenerating files.
+    ctx.fillStyle = '#10182b';
+    ctx.fillRect(0, 0, w, h);
+    this.drawCrowd(ctx, cam, time);
+    this.drawRoof(ctx, cam);
     this.drawShafts(ctx, cam, time);
-    if (!illustrated) this.drawBarrier(ctx, cam);
+    this.drawBarrier(ctx, cam);
     this.drawFloor(ctx, cam);
-    if (!illustrated) this.drawRibbon(ctx, cam, time);
+    this.drawRibbon(ctx, cam, time);
   }
 
+  /** Near camera/rail silhouettes, always after players and particles. */
+  drawForeground(ctx: CanvasRenderingContext2D, cam: Camera): void {
+    if (this.artwork.complete) {
+      this.artwork.drawForeground(ctx, cam.viewWidth, cam.viewHeight);
+    }
+  }
   /**
    * The stand. Each spectator is a head, hair and a pair of shoulders — three
    * shapes, but enough that the block reads as people rather than confetti,
@@ -254,9 +291,9 @@ export class Arena {
       const sway = Math.sin(time * 0.5 + i) * 6;
       const spread = w * 0.085;
       const grad = ctx.createLinearGradient(0, top, 0, floorY);
-      grad.addColorStop(0, 'rgba(255,244,214,0.1)');
-      grad.addColorStop(0.55, 'rgba(255,240,206,0.035)');
-      grad.addColorStop(1, 'rgba(255,236,196,0)');
+      grad.addColorStop(0, 'rgba(126,232,255,0.11)');
+      grad.addColorStop(0.55, 'rgba(103,210,238,0.04)');
+      grad.addColorStop(1, 'rgba(73,180,214,0)');
       ctx.fillStyle = grad;
       ctx.beginPath();
       ctx.moveTo(cx - 26, top);
@@ -346,38 +383,38 @@ export class Arena {
     const outX = STAND_FRONT - 0.3;
     const outY = COURT_HALF_LENGTH + 9;
 
-    fillQuad(ctx, cam, [[-outX, -outY], [outX, -outY], [outX, outY], [-outX, outY]], SURROUND);
-
-    fillQuad(
-      ctx,
-      cam,
-      [
-        [-COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
-        [COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
-        [COURT_HALF_WIDTH, 0],
-        [-COURT_HALF_WIDTH, 0],
-      ],
-      COURT_NEAR,
-    );
-    fillQuad(
-      ctx,
-      cam,
-      [
-        [-COURT_HALF_WIDTH, 0],
-        [COURT_HALF_WIDTH, 0],
-        [COURT_HALF_WIDTH, COURT_HALF_LENGTH],
-        [-COURT_HALF_WIDTH, COURT_HALF_LENGTH],
-      ],
-      COURT_NEAR,
-    );
-
-    if (!this.artwork.drawCourtFloor(ctx, cam, COURT_HALF_WIDTH, COURT_HALF_LENGTH)) {
+    if (this.artwork.complete) {
+      // The 2048 x 1024 texture contains both free zone and regulation court.
+      this.artwork.drawArenaFloor(ctx, cam, outX, outY);
+    } else {
+      fillQuad(ctx, cam, [[-outX, -outY], [outX, -outY], [outX, outY], [-outX, outY]], SURROUND);
+      fillQuad(
+        ctx,
+        cam,
+        [
+          [-COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
+          [COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
+          [COURT_HALF_WIDTH, 0],
+          [-COURT_HALF_WIDTH, 0],
+        ],
+        COURT_NEAR,
+      );
+      fillQuad(
+        ctx,
+        cam,
+        [
+          [-COURT_HALF_WIDTH, 0],
+          [COURT_HALF_WIDTH, 0],
+          [COURT_HALF_WIDTH, COURT_HALF_LENGTH],
+          [-COURT_HALF_WIDTH, COURT_HALF_LENGTH],
+        ],
+        COURT_NEAR,
+      );
       this.drawGrain(ctx, cam, outX, outY);
     }
+
     this.drawLightPools(ctx, cam, outX, outY);
     this.drawLines(ctx, cam);
-    // A restrained cyan edge joins the floor to the same visual language as
-    // the scoreboard and arena ribbons. It sits outside the regulation line.
     ctx.save();
     ctx.strokeStyle = 'rgba(73,220,255,0.24)';
     ctx.lineWidth = Math.max(1, cam.projectFloor(0, 0).scale * 1.6);
@@ -390,7 +427,6 @@ export class Arena {
     ]);
     ctx.restore();
   }
-
   /**
    * Wood.
    *
@@ -473,9 +509,9 @@ export class Arena {
       const cx = lerp(left, right, (i + 0.5) / 5);
       const cy = top + height * 0.45;
       const pool = ctx.createRadialGradient(cx, cy, 1, cx, cy, height * 1.5);
-      pool.addColorStop(0, 'rgba(255,238,200,0.13)');
-      pool.addColorStop(0.5, 'rgba(255,238,200,0.05)');
-      pool.addColorStop(1, 'rgba(255,238,200,0)');
+      pool.addColorStop(0, 'rgba(126,232,255,0.13)');
+      pool.addColorStop(0.5, 'rgba(86,197,225,0.055)');
+      pool.addColorStop(1, 'rgba(73,180,214,0)');
       ctx.fillStyle = pool;
       ctx.beginPath();
       ctx.ellipse(cx, cy, height * 1.5, height * 0.62, 0, 0, Math.PI * 2);
@@ -511,133 +547,178 @@ export class Arena {
    * so the four real corners can be projected directly: one-metre mesh, bright
    * top tape, separate posts and antennas, all in the same geometry as the court.
    */
-  drawNet(ctx: CanvasRenderingContext2D, cam: Camera): void {
+  /**
+   * Net pieces that can be interleaved with bodies by camera depth.
+   *
+   * The four regulation corners are projected once.  Twenty-four narrow strips
+   * interpolate inside that quadrilateral; each receives its own world-depth,
+   * so far-side players pass in front of the far mesh while the near mesh can
+   * correctly pass in front of near-side players.
+   */
+  netDrawables(ctx: CanvasRenderingContext2D, cam: Camera): ArenaDrawable[] {
     const W = COURT_HALF_WIDTH;
     const bottomZ = NET_HEIGHT - 1.0;
     const farTop = cam.project(W, 0, NET_HEIGHT);
     const nearTop = cam.project(-W, 0, NET_HEIGHT);
     const farBottom = cam.project(W, 0, bottomZ);
     const nearBottom = cam.project(-W, 0, bottomZ);
-    const u = cam.projectFloor(0, 0).scale * 42;
-
-    const netX = (farTop.x + nearTop.x) / 2;
-    const netTop = Math.min(farTop.y, nearTop.y);
-    const netBottom = Math.max(farBottom.y, nearBottom.y);
-    const drawnNet = this.artwork.drawNet(ctx, netX, netTop, netBottom, u);
-    if (drawnNet) return;
-
     const lerpPoint = (
       a: { x: number; y: number },
       b: { x: number; y: number },
       t: number,
     ): { x: number; y: number } => ({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) });
 
+    const out: ArenaDrawable[] = [];
+    const columns = 24;
+    for (let i = 0; i < columns; i++) {
+      const t0 = i / columns;
+      const t1 = (i + 1) / columns;
+      const x0 = lerp(W, -W, t0);
+      const x1 = lerp(W, -W, t1);
+      const top0 = lerpPoint(farTop, nearTop, t0);
+      const top1 = lerpPoint(farTop, nearTop, t1);
+      const bottom0 = lerpPoint(farBottom, nearBottom, t0);
+      const bottom1 = lerpPoint(farBottom, nearBottom, t1);
+      const depth = cam.project((x0 + x1) / 2, 0, NET_HEIGHT / 2).depth;
+      out.push({
+        depth,
+        draw: () => this.drawNetStrip(ctx, cam, top0, top1, bottom0, bottom1, i === columns - 1),
+      });
+    }
+
+    for (const x of [W + 0.55, -W - 0.55]) {
+      const depth = cam.project(x, 0, NET_HEIGHT / 2).depth;
+      out.push({ depth, draw: () => this.drawNetPost(ctx, cam, x) });
+    }
+    for (const x of [W, -W]) {
+      const depth = cam.project(x, 0, (NET_HEIGHT + ANTENNA_HEIGHT) / 2).depth;
+      out.push({ depth, draw: () => this.drawAntenna(ctx, cam, x) });
+    }
+    return out;
+  }
+
+  /** Compatibility path for tests/tools that render the net by itself. */
+  drawNet(ctx: CanvasRenderingContext2D, cam: Camera): void {
+    const pieces = this.netDrawables(ctx, cam).sort((a, b) => b.depth - a.depth);
+    for (const piece of pieces) piece.draw();
+  }
+
+  private drawNetStrip(
+    ctx: CanvasRenderingContext2D,
+    cam: Camera,
+    top0: { x: number; y: number },
+    top1: { x: number; y: number },
+    bottom0: { x: number; y: number },
+    bottom1: { x: number; y: number },
+    closeNearEdge: boolean,
+  ): void {
+    const u = cam.projectFloor(0, 0).scale * 42;
+    const point = (
+      top: { x: number; y: number },
+      bottom: { x: number; y: number },
+      t: number,
+    ): { x: number; y: number } => ({ x: lerp(top.x, bottom.x, t), y: lerp(top.y, bottom.y, t) });
+
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-
-    // A very soft shadow behind the mesh separates it from bodies without
-    // turning it into an opaque wall.
     ctx.beginPath();
-    ctx.moveTo(farTop.x, farTop.y);
-    ctx.lineTo(nearTop.x, nearTop.y);
-    ctx.lineTo(nearBottom.x, nearBottom.y);
-    ctx.lineTo(farBottom.x, farBottom.y);
+    ctx.moveTo(top0.x, top0.y);
+    ctx.lineTo(top1.x, top1.y);
+    ctx.lineTo(bottom1.x, bottom1.y);
+    ctx.lineTo(bottom0.x, bottom0.y);
     ctx.closePath();
-    ctx.fillStyle = 'rgba(8,14,26,0.16)';
+    ctx.fillStyle = 'rgba(8,14,26,0.13)';
     ctx.fill();
 
-    // Mesh: vertical cords across court width and horizontal cords down the
-    // one-metre band. Both sets are interpolated inside the projected quad.
     ctx.strokeStyle = 'rgba(218,231,248,0.58)';
     ctx.lineWidth = Math.max(0.75, u * 0.018);
-    const columns = 18;
-    for (let i = 0; i <= columns; i++) {
-      const t = i / columns;
-      const top = lerpPoint(farTop, nearTop, t);
-      const bottom = lerpPoint(farBottom, nearBottom, t);
-      ctx.beginPath();
-      ctx.moveTo(top.x, top.y);
-      ctx.lineTo(bottom.x, bottom.y);
-      ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(top0.x, top0.y);
+    ctx.lineTo(bottom0.x, bottom0.y);
+    if (closeNearEdge) {
+      ctx.moveTo(top1.x, top1.y);
+      ctx.lineTo(bottom1.x, bottom1.y);
     }
-    const rows = 9;
-    for (let i = 1; i <= rows; i++) {
-      const t = i / rows;
-      const far = lerpPoint(farTop, farBottom, t);
-      const near = lerpPoint(nearTop, nearBottom, t);
+    ctx.stroke();
+    for (let row = 1; row <= 9; row++) {
+      const a = point(top0, bottom0, row / 9);
+      const b = point(top1, bottom1, row / 9);
       ctx.beginPath();
-      ctx.moveTo(far.x, far.y);
-      ctx.lineTo(near.x, near.y);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
       ctx.stroke();
     }
 
-    // Top and bottom tapes, with a cool rim light along the top edge.
     ctx.strokeStyle = 'rgba(12,20,38,0.72)';
     ctx.lineWidth = Math.max(6, u * 0.15);
     ctx.beginPath();
-    ctx.moveTo(farTop.x, farTop.y + 1);
-    ctx.lineTo(nearTop.x, nearTop.y + 1);
+    ctx.moveTo(top0.x, top0.y + 1);
+    ctx.lineTo(top1.x, top1.y + 1);
     ctx.stroke();
     ctx.strokeStyle = '#f7fbff';
     ctx.lineWidth = Math.max(4, u * 0.1);
     ctx.beginPath();
-    ctx.moveTo(farTop.x, farTop.y);
-    ctx.lineTo(nearTop.x, nearTop.y);
+    ctx.moveTo(top0.x, top0.y);
+    ctx.lineTo(top1.x, top1.y);
     ctx.stroke();
     ctx.strokeStyle = 'rgba(230,240,252,0.72)';
     ctx.lineWidth = Math.max(2, u * 0.045);
     ctx.beginPath();
-    ctx.moveTo(farBottom.x, farBottom.y);
-    ctx.lineTo(nearBottom.x, nearBottom.y);
+    ctx.moveTo(bottom0.x, bottom0.y);
+    ctx.lineTo(bottom1.x, bottom1.y);
     ctx.stroke();
+    ctx.restore();
+  }
 
-    // Posts and padded bases sit just outside the sidelines. Far first, near
-    // last, so the latter correctly overlaps the mesh in this camera angle.
-    for (const x of [W + 0.55, -W - 0.55]) {
-      const foot = cam.project(x, 0, 0);
-      const top = cam.project(x, 0, NET_HEIGHT + 0.38);
-      const padTop = cam.project(x, 0, 1.25);
-      const postWidth = Math.max(5, u * 0.11);
-      ctx.strokeStyle = 'rgba(14,22,38,0.8)';
-      ctx.lineWidth = postWidth + 4;
-      ctx.beginPath();
-      ctx.moveTo(foot.x, foot.y);
-      ctx.lineTo(top.x, top.y);
-      ctx.stroke();
-      const grad = ctx.createLinearGradient(foot.x - postWidth, 0, foot.x + postWidth, 0);
-      grad.addColorStop(0, '#1c426f');
-      grad.addColorStop(0.5, '#2f7ac0');
-      grad.addColorStop(1, '#102846');
-      ctx.strokeStyle = grad;
-      ctx.lineWidth = postWidth;
-      ctx.beginPath();
-      ctx.moveTo(foot.x, foot.y);
-      ctx.lineTo(padTop.x, padTop.y);
-      ctx.stroke();
-      ctx.strokeStyle = '#d9e5f3';
-      ctx.lineWidth = Math.max(2, u * 0.04);
-      ctx.beginPath();
-      ctx.moveTo(padTop.x, padTop.y);
-      ctx.lineTo(top.x, top.y);
-      ctx.stroke();
-    }
+  private drawNetPost(ctx: CanvasRenderingContext2D, cam: Camera, x: number): void {
+    const u = cam.projectFloor(0, 0).scale * 42;
+    const foot = cam.project(x, 0, 0);
+    const top = cam.project(x, 0, NET_HEIGHT + 0.38);
+    const padTop = cam.project(x, 0, 1.25);
+    const postWidth = Math.max(5, u * 0.11);
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(14,22,38,0.8)';
+    ctx.lineWidth = postWidth + 4;
+    ctx.beginPath();
+    ctx.moveTo(foot.x, foot.y);
+    ctx.lineTo(top.x, top.y);
+    ctx.stroke();
+    const grad = ctx.createLinearGradient(foot.x - postWidth, 0, foot.x + postWidth, 0);
+    grad.addColorStop(0, '#12324f');
+    grad.addColorStop(0.5, '#2b8bb4');
+    grad.addColorStop(1, '#0c2138');
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = postWidth;
+    ctx.beginPath();
+    ctx.moveTo(foot.x, foot.y);
+    ctx.lineTo(padTop.x, padTop.y);
+    ctx.stroke();
+    ctx.strokeStyle = '#d9e5f3';
+    ctx.lineWidth = Math.max(2, u * 0.04);
+    ctx.beginPath();
+    ctx.moveTo(padTop.x, padTop.y);
+    ctx.lineTo(top.x, top.y);
+    ctx.stroke();
+    ctx.restore();
+  }
 
-    // Red/white antennas extend above the tape at the court sidelines.
-    for (const x of [W, -W]) {
-      const from = cam.project(x, 0, NET_HEIGHT);
-      const to = cam.project(x, 0, ANTENNA_HEIGHT);
-      const segments = 6;
-      for (let i = 0; i < segments; i++) {
-        const a = lerpPoint(from, to, i / segments);
-        const b = lerpPoint(from, to, (i + 1) / segments);
-        ctx.strokeStyle = i % 2 === 0 ? '#ff3f55' : '#ffffff';
-        ctx.lineWidth = Math.max(2.5, u * 0.055);
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-      }
+  private drawAntenna(ctx: CanvasRenderingContext2D, cam: Camera, x: number): void {
+    const u = cam.projectFloor(0, 0).scale * 42;
+    const from = cam.project(x, 0, NET_HEIGHT);
+    const to = cam.project(x, 0, ANTENNA_HEIGHT);
+    ctx.save();
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 6; i++) {
+      const a = i / 6;
+      const b = (i + 1) / 6;
+      ctx.strokeStyle = i % 2 === 0 ? '#ff3f55' : '#ffffff';
+      ctx.lineWidth = Math.max(2.5, u * 0.055);
+      ctx.beginPath();
+      ctx.moveTo(lerp(from.x, to.x, a), lerp(from.y, to.y, a));
+      ctx.lineTo(lerp(from.x, to.x, b), lerp(from.y, to.y, b));
+      ctx.stroke();
     }
     ctx.restore();
   }
