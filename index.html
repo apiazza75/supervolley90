@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Super Volley 90</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23ffd873'/%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #070a16;
+        /* The game is fully keyboard/gamepad driven; suppress the OS gestures
+           that would otherwise fire on stray trackpad input. */
+        overscroll-behavior: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #game {
+        display: block;
+        width: 100%;
+        height: 100%;
+        /* Nearest-neighbour would fight the vector art; keep it smooth. */
+        image-rendering: auto;
+      }
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        font: 600 14px system-ui, -apple-system, sans-serif;
+        color: #7d8bb0;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <div id="boot">loading…</div>
+    <script type="module">
+      import './src/main.ts';
+      document.getElementById('boot')?.remove();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Super Volley 90 — sliced frame inspector</title>
+    <style>body { margin: 0; background: #101520; } canvas { display: none; }</style>
+  </head>
+  <body>
+    <canvas id="out"></canvas>
+    <script type="module">
+      import { loadSheets, drawFrame } from '/src/render/sprites.ts';
+
+      const sheets = await loadSheets();
+      const canvas = document.getElementById('out');
+
+      // A contact sheet of what the loader ACTUALLY produced: every frame on a
+      // loud background, each with its floor line drawn across it. Anything
+      // still stuck to the art — plank, frame number, ball, border — shows up
+      // against the magenta, and a figure whose feet miss the line is obvious.
+      window.__contact = (action, kit) => {
+        const sheet = sheets[action];
+        if (!sheet) return null;
+        const cell = 180;
+        canvas.width = cell * 6;
+        canvas.height = cell * 4;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ff00c8';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        for (let i = 0; i < 24; i++) {
+          const x = (i % 6) * cell;
+          const y = ((i / 6) | 0) * cell;
+          ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+          ctx.strokeRect(x + 0.5, y + 0.5, cell - 1, cell - 1);
+          const floor = y + cell - 16;
+          ctx.strokeStyle = '#00ff88';
+          ctx.beginPath();
+          ctx.moveTo(x, floor + 0.5);
+          ctx.lineTo(x + cell, floor + 0.5);
+          ctx.stroke();
+          drawFrame(ctx, sheet, i, x + cell / 2, floor, cell * 0.62, 1, kit || undefined);
+          ctx.fillStyle = '#000';
+          ctx.font = '600 12px system-ui, sans-serif';
+          ctx.fillText(String(i + 1), x + 5, y + 15);
+        }
+        return canvas.toDataURL('image/png');
+      };
+      window.__loaded = Object.keys(sheets);
+    </script>
+  </body>
+</html>
