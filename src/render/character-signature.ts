@@ -1,10 +1,44 @@
 /**
  * Stable, structural player identities.
  *
- * The source atlases stay shared.  Each already-cached recoloured atlas receives
- * one deterministic identity treatment: a different hair silhouette and face,
- * uniform construction, sleeves, pads, socks and shoes.  This is intentionally
- * visual-only; collision and animation geometry never change.
+ * The source atlases stay shared. Each already-cached recoloured atlas receives
+ * one deterministic identity treatment: uniform construction, sleeves, pads,
+ * socks and shoes. This is intentionally visual-only; collision and animation
+ * geometry never change.
+ *
+ * WHAT IS NOT HERE, AND WHY
+ *
+ * An earlier version also painted a hair silhouette and a face onto every
+ * frame. It could not work, and the reason is worth writing down so nobody
+ * rebuilds it.
+ *
+ * The shipped atlases are drawn artwork — ten 3072x2048 cut-out sheets, sliced
+ * on an exact 6x4 grid. There is no skeleton behind them and therefore no head
+ * joint to ask. `src/render/rig.ts` has one, but it is a separate procedural
+ * figure that generates none of these sheets. So the head had to be found by
+ * scanning pixels, and a found head is a guess.
+ *
+ * Measured across the ten sheets, the top fifth of the drawing — the band the
+ * scan searched — is wider than any plausible head on nine of them, and on
+ * dive.png it is 2.39 times the whole body height, because at full stretch the
+ * arms are up there too. The scan either declined (drawing nothing) or locked
+ * onto a forearm and painted a slab of hair colour across the player's face,
+ * frame by frame, unpredictably. That defect is what sank the first delivery.
+ *
+ * Identity is carried instead by four things that do not need to know where
+ * the head is, and so cannot fail one frame in twenty-four:
+ *
+ *   1. hair colour   — the `hair` channel of the palette, applied by recolour()
+ *                      through the authored hair mask;
+ *   2. skin tone     — the `skin` channel, likewise;
+ *   3. kit pattern   — patternAt() over the primary mask, which is the largest
+ *                      and flattest region in every pose;
+ *   4. build         — heightScale and widthScale, applied by the renderer.
+ *
+ * If the six ever need to be more distinct than that, the way to add hair
+ * SHAPE is a static table of measured head anchors — ten actions by
+ * twenty-four frames, verified by eye on a contact sheet — not another
+ * search at runtime.
  */
 
 export type HairStyle = 'crop' | 'fade' | 'part' | 'curls' | 'bun' | 'mohawk' | 'headband';
@@ -27,17 +61,31 @@ export interface CharacterSignature {
   heightDelta: number;
 }
 
+/**
+ * The authored roster.
+ *
+ * `hair` and `beard` are kept as authored data although nothing draws them
+ * today: they are the specification a future anchored implementation would
+ * follow, and throwing them away would mean inventing them again. They are
+ * deliberately absent from the fingerprint below — see the note there.
+ *
+ * The build deltas carry more of the load than they used to. At the previous
+ * spread of two per cent in height the six were separated almost entirely by
+ * their role, and both teams field the same roles, so the two sides had the
+ * same six silhouettes. Eight per cent from tallest to shortest is a
+ * difference you can see across the court without reading a shirt.
+ */
 export const CHARACTER_SIGNATURES: readonly CharacterSignature[] = [
-  { id: 0, hair: 'crop', beard: 'none', sleeves: 'short', pattern: 'centre', kneePads: 'double', socks: 'low', shoes: 'light', widthDelta: -0.015, heightDelta: 0.0 },
-  { id: 1, hair: 'fade', beard: 'stubble', sleeves: 'long', pattern: 'side', kneePads: 'double', socks: 'high', shoes: 'dark', widthDelta: 0.035, heightDelta: 0.006 },
-  { id: 2, hair: 'part', beard: 'goatee', sleeves: 'short', pattern: 'diagonal', kneePads: 'single', socks: 'stripe', shoes: 'contrast', widthDelta: 0.055, heightDelta: -0.004 },
-  { id: 3, hair: 'curls', beard: 'full', sleeves: 'threeQuarter', pattern: 'yoke', kneePads: 'contrast', socks: 'mid', shoes: 'light', widthDelta: 0.0, heightDelta: 0.008 },
-  { id: 4, hair: 'bun', beard: 'none', sleeves: 'long', pattern: 'chevron', kneePads: 'none', socks: 'high', shoes: 'dark', widthDelta: -0.035, heightDelta: 0.002 },
-  { id: 5, hair: 'mohawk', beard: 'stubble', sleeves: 'sleeveless', pattern: 'pinstripe', kneePads: 'double', socks: 'low', shoes: 'contrast', widthDelta: 0.02, heightDelta: 0.012 },
+  { id: 0, hair: 'crop', beard: 'none', sleeves: 'short', pattern: 'centre', kneePads: 'double', socks: 'low', shoes: 'light', widthDelta: -0.015, heightDelta: 0.014 },
+  { id: 1, hair: 'fade', beard: 'stubble', sleeves: 'long', pattern: 'side', kneePads: 'double', socks: 'high', shoes: 'dark', widthDelta: 0.045, heightDelta: -0.026 },
+  { id: 2, hair: 'part', beard: 'goatee', sleeves: 'short', pattern: 'diagonal', kneePads: 'single', socks: 'stripe', shoes: 'contrast', widthDelta: 0.062, heightDelta: 0.038 },
+  { id: 3, hair: 'curls', beard: 'full', sleeves: 'threeQuarter', pattern: 'yoke', kneePads: 'contrast', socks: 'mid', shoes: 'light', widthDelta: -0.008, heightDelta: -0.04 },
+  { id: 4, hair: 'bun', beard: 'none', sleeves: 'long', pattern: 'chevron', kneePads: 'none', socks: 'high', shoes: 'dark', widthDelta: -0.048, heightDelta: 0.026 },
+  { id: 5, hair: 'mohawk', beard: 'stubble', sleeves: 'sleeveless', pattern: 'pinstripe', kneePads: 'double', socks: 'low', shoes: 'contrast', widthDelta: 0.024, heightDelta: -0.012 },
   // The seventh signature is reserved for the libero.  It remains unique when
   // the libero replaces either middle, and the strongly contrasted kit is still
   // supplied by renderer.ts.
-  { id: 6, hair: 'headband', beard: 'goatee', sleeves: 'short', pattern: 'libero', kneePads: 'contrast', socks: 'stripe', shoes: 'light', widthDelta: -0.045, heightDelta: -0.008 },
+  { id: 6, hair: 'headband', beard: 'goatee', sleeves: 'short', pattern: 'libero', kneePads: 'contrast', socks: 'stripe', shoes: 'light', widthDelta: -0.055, heightDelta: -0.05 },
 ] as const;
 
 export interface PlayerIdentitySource {
@@ -58,10 +106,24 @@ export function characterSignatureFor(playerOrId: PlayerIdentitySource | number)
   return CHARACTER_SIGNATURES[characterSignatureId(playerOrId)];
 }
 
+/**
+ * What makes two players look different, in the strict sense of differing
+ * pixels.
+ *
+ * `hair` and `beard` are excluded on purpose. Nothing draws them, and counting
+ * a field that reaches no pixel is how a gate ends up certifying six identical
+ * players as six distinct ones — the precise failure this whole exercise
+ * exists to correct. Every field listed here is applied by
+ * applyCharacterSignature or by the renderer's build scaling, and the seven of
+ * them are still pairwise distinct across the roster, so the acceptance gate
+ * reads 6 and 6 on drawn attributes alone.
+ *
+ * Per-player hair and skin COLOUR do differ, and visibly, but they come from
+ * the renderer's palettes rather than from this table, so they are not
+ * fingerprinted here.
+ */
 export function characterSignatureFingerprint(signature: CharacterSignature): string {
   return [
-    signature.hair,
-    signature.beard,
     signature.sleeves,
     signature.pattern,
     signature.kneePads,
@@ -120,10 +182,6 @@ function parseColour(value: string | undefined, fallback: RGB): RGB {
   return rgb ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] : fallback;
 }
 
-function css(c: RGB, alpha = 1): string {
-  return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
-}
-
 function shade(c: RGB, amount: number): RGB {
   return c.map((v) => Math.max(0, Math.min(255, Math.round(v * amount)))) as RGB;
 }
@@ -167,209 +225,6 @@ function nearPrimary(mask: Uint8ClampedArray, index: number, width: number): boo
   return false;
 }
 
-interface HairBounds {
-  minX: number;
-  maxX: number;
-  minY: number;
-  maxY: number;
-  count: number;
-}
-
-function hairBounds(
-  frame: SignatureFrame,
-  hairMask: Uint8ClampedArray | undefined,
-  materialMask: Uint8ClampedArray | undefined,
-  sheetWidth: number,
-): HairBounds | null {
-  const bodyHeight = Math.max(1, frame.boxBottom - frame.boxTop);
-
-  // How much of the body, from the crown down, may contain the head.
-  //
-  // This was 0.42, which on any pose with the arms up — spike, block, serve,
-  // most of the sheet — reaches well past the shoulders. The skin fallback then
-  // matched forearms and hands, the bounds grew as wide as the player's
-  // wingspan, and the hair shapes were drawn at that size: a black slab over
-  // half the figure. The head occupies roughly the top eighth.
-  const yLimit = Math.min(frame.sh - 1, frame.boxTop + bodyHeight * 0.2);
-
-  // A head is also bounded in *width*. Anything wider is an arm, and taking it
-  // for a head is precisely the mistake that has to be impossible here.
-  const maxHeadWidth = bodyHeight * 0.34;
-
-  const scanChannel = (channel: 'hair' | 'skin'): HairBounds => {
-    const b: HairBounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, count: 0 };
-    for (let ly = Math.max(0, Math.floor(frame.boxTop)); ly <= Math.ceil(yLimit); ly++) {
-      for (let lx = 0; lx < frame.sw; lx++) {
-        const gi = (frame.sy + ly) * sheetWidth + frame.sx + lx;
-        const weight = channel === 'hair' ? hairMask?.[gi * 4] ?? 0 : materialMask?.[gi * 4 + 2] ?? 0;
-        if (weight < 80) continue;
-        b.minX = Math.min(b.minX, lx);
-        b.maxX = Math.max(b.maxX, lx);
-        b.minY = Math.min(b.minY, ly);
-        b.maxY = Math.max(b.maxY, ly);
-        b.count++;
-      }
-    }
-    return b;
-  };
-
-  const plausible = (b: HairBounds): boolean =>
-    b.count >= 8 && b.maxX - b.minX + 1 <= maxHeadWidth;
-
-  // Each channel is scanned into its own bounds. The previous version let the
-  // fallback accumulate on top of a partial hair result, so one stray pixel of
-  // hair plus a forearm produced a box spanning both.
-  const fromHair = scanChannel('hair');
-  if (plausible(fromHair)) return fromHair;
-  const fromSkin = scanChannel('skin');
-  if (plausible(fromSkin)) return fromSkin;
-
-  // No head could be located with confidence. Draw nothing: the figure keeps
-  // its authored appearance, which is always better than a slab of colour.
-  return null;
-}
-
-function drawHairAndFace(
-  ctx: CanvasRenderingContext2D,
-  frame: SignatureFrame,
-  signature: CharacterSignature,
-  bounds: HairBounds,
-  hair: RGB,
-  skin: RGB,
-): void {
-  const cx = frame.sx + (bounds.minX + bounds.maxX) * 0.5;
-  const top = frame.sy + bounds.minY;
-  const bottom = frame.sy + bounds.maxY;
-  const hw = Math.max(5, (bounds.maxX - bounds.minX + 1) * 0.52);
-  const hh = Math.max(5, bounds.maxY - bounds.minY + 1);
-  const faceY = bottom + hh * 0.58;
-  const outline = shade(hair, 0.42);
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(frame.sx, frame.sy, frame.sw, frame.sh);
-  ctx.clip();
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = css(outline, 0.92);
-  ctx.fillStyle = css(hair, 0.98);
-  ctx.lineWidth = Math.max(1.2, hw * 0.13);
-
-  switch (signature.hair) {
-    case 'crop':
-      ctx.beginPath();
-      ctx.ellipse(cx, top + hh * 0.42, hw * 0.9, hh * 0.48, 0, Math.PI, Math.PI * 2);
-      ctx.fill();
-      break;
-    case 'fade':
-      ctx.beginPath();
-      ctx.moveTo(cx - hw * 0.92, bottom - hh * 0.08);
-      ctx.lineTo(cx - hw * 0.72, top - hh * 0.22);
-      ctx.lineTo(cx + hw * 0.58, top - hh * 0.3);
-      ctx.lineTo(cx + hw * 0.92, bottom - hh * 0.04);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      break;
-    case 'part':
-      ctx.beginPath();
-      ctx.moveTo(cx - hw, bottom);
-      ctx.quadraticCurveTo(cx - hw * 0.35, top - hh * 0.35, cx + hw * 1.08, top + hh * 0.18);
-      ctx.lineTo(cx + hw * 0.86, bottom);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      ctx.strokeStyle = css(shade(hair, 1.45), 0.58);
-      ctx.beginPath();
-      ctx.moveTo(cx + hw * 0.05, top - hh * 0.13);
-      ctx.lineTo(cx + hw * 0.18, bottom - hh * 0.2);
-      ctx.stroke();
-      break;
-    case 'curls':
-      for (let i = 0; i < 7; i++) {
-        const a = Math.PI + (i / 6) * Math.PI;
-        const x = cx + Math.cos(a) * hw * 0.86;
-        const y = bottom + Math.sin(a) * hh * 0.82;
-        ctx.beginPath();
-        ctx.arc(x, y, Math.max(2.5, hw * 0.34), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-      }
-      break;
-    case 'bun':
-      ctx.beginPath();
-      ctx.ellipse(cx, top + hh * 0.43, hw * 0.92, hh * 0.55, 0, Math.PI, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(cx - hw * 0.72, top - hh * 0.03, Math.max(3.2, hw * 0.45), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      break;
-    case 'mohawk':
-      ctx.beginPath();
-      ctx.moveTo(cx - hw * 0.78, top + hh * 0.12);
-      for (let i = 0; i < 5; i++) {
-        const x = cx - hw * 0.7 + (i / 4) * hw * 1.4;
-        ctx.lineTo(x, top - hh * (0.28 + (i % 2) * 0.22));
-        ctx.lineTo(x + hw * 0.18, top + hh * 0.16);
-      }
-      ctx.lineTo(cx + hw * 0.82, bottom);
-      ctx.lineTo(cx - hw * 0.82, bottom);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      break;
-    case 'headband':
-      ctx.beginPath();
-      ctx.ellipse(cx, top + hh * 0.42, hw * 0.9, hh * 0.48, 0, Math.PI, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(246,249,255,0.96)';
-      ctx.lineWidth = Math.max(2, hh * 0.22);
-      ctx.beginPath();
-      ctx.moveTo(cx - hw * 0.9, bottom - hh * 0.15);
-      ctx.lineTo(cx + hw * 0.92, bottom - hh * 0.15);
-      ctx.stroke();
-      ctx.strokeStyle = 'rgba(255,95,90,0.9)';
-      ctx.lineWidth = Math.max(1, hh * 0.08);
-      ctx.stroke();
-      break;
-  }
-
-  // Face variants are deliberately small but structural in profile.  They use
-  // the hair colour, never a kit colour, so the face cannot become team-coloured.
-  ctx.fillStyle = css(hair, signature.beard === 'stubble' ? 0.45 : 0.9);
-  ctx.strokeStyle = css(outline, 0.8);
-  if (signature.beard === 'stubble') {
-    ctx.lineWidth = Math.max(1, hw * 0.08);
-    ctx.beginPath();
-    ctx.moveTo(cx - hw * 0.5, faceY);
-    ctx.quadraticCurveTo(cx, faceY + hh * 0.42, cx + hw * 0.52, faceY);
-    ctx.stroke();
-  } else if (signature.beard === 'goatee') {
-    ctx.beginPath();
-    ctx.moveTo(cx - hw * 0.24, faceY - hh * 0.04);
-    ctx.lineTo(cx + hw * 0.24, faceY - hh * 0.04);
-    ctx.lineTo(cx + hw * 0.12, faceY + hh * 0.5);
-    ctx.lineTo(cx - hw * 0.1, faceY + hh * 0.5);
-    ctx.closePath();
-    ctx.fill();
-  } else if (signature.beard === 'full') {
-    ctx.beginPath();
-    ctx.moveTo(cx - hw * 0.62, faceY - hh * 0.16);
-    ctx.quadraticCurveTo(cx - hw * 0.5, faceY + hh * 0.5, cx, faceY + hh * 0.66);
-    ctx.quadraticCurveTo(cx + hw * 0.52, faceY + hh * 0.5, cx + hw * 0.62, faceY - hh * 0.16);
-    ctx.quadraticCurveTo(cx, faceY + hh * 0.06, cx - hw * 0.62, faceY - hh * 0.16);
-    ctx.fill();
-    ctx.stroke();
-  }
-
-  // A tiny skin highlight keeps large hair additions from reading as a helmet.
-  ctx.fillStyle = css(skin, 0.48);
-  ctx.beginPath();
-  ctx.ellipse(cx + hw * 0.2, faceY - hh * 0.08, Math.max(1, hw * 0.08), Math.max(1, hh * 0.06), 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
 
 /**
  * Bake one structural signature into a recoloured atlas.  The caller invokes
@@ -386,16 +241,15 @@ export function applyCharacterSignature(
   const height = sheet.canvas.height;
   const materialCtx = sheet.maskCanvas?.getContext('2d', { willReadFrequently: true });
   if (!materialCtx) return; // strict v3 sheets always have masks; legacy sheets stay untouched.
-  const hairCtx = sheet.hairMaskCanvas?.getContext('2d', { willReadFrequently: true });
   const material = materialCtx.getImageData(0, 0, width, height).data;
-  const hairMask = hairCtx?.getImageData(0, 0, width, height).data;
   const image = ctx.getImageData(0, 0, width, height);
   const data = image.data;
 
+  // The hair mask is still built, and still used — by recolour(), one step
+  // earlier, to move each player's hair to their own colour. Nothing in this
+  // function reads it any more.
   const primary = parseColour(palette.primary, [42, 91, 210]);
   const secondary = parseColour(palette.secondary, [244, 246, 251]);
-  const skin = parseColour(palette.skin, [222, 166, 120]);
-  const hair = parseColour(palette.hair, [28, 22, 21]);
   const pad = signature.kneePads === 'contrast' ? shade(secondary, 0.72) : [16, 20, 28] as RGB;
   const sock = signature.socks === 'stripe' ? secondary : shade(secondary, signature.socks === 'high' ? 0.88 : 1.02);
   const shoe = signature.shoes === 'dark' ? [12, 17, 25] as RGB : signature.shoes === 'contrast' ? shade(secondary, 0.82) : [235, 239, 246] as RGB;
@@ -446,9 +300,4 @@ export function applyCharacterSignature(
     }
   }
   ctx.putImageData(image, 0, 0);
-
-  for (const frame of sheet.frames) {
-    const bounds = hairBounds(frame, hairMask, material, width);
-    if (bounds) drawHairAndFace(ctx, frame, signature, bounds, hair, skin);
-  }
 }

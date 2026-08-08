@@ -1,7 +1,13 @@
 # Recovery V3 — esito dell'integrazione
 
+> **Aggiornamento.** I tre difetti descritti qui sotto sono stati corretti: l'overlay sulla testa è
+> stato rimosso, il pavimento è tornato procedurale con la texture in composito, e i cinque layer
+> dell'arena sono stati ridisegnati sulle bande che la camera produce davvero. Il piano è
+> `docs/PIANO-V4.md`, l'esito con le misure è `docs/PIANO-V4-ESITO.md`. Questo documento resta come
+> registro di cosa era rotto e come lo si è isolato.
+
 Questo branch contiene il pacchetto Recovery V3 applicato al branch di consegna, più una
-correzione, **e non è consegnabile così com'è**. Serve a rendere ispezionabile ciò che è stato
+correzione, **e non era consegnabile così com'era**. Serve a rendere ispezionabile ciò che è stato
 verificato, senza toccare `claude/continue-codex-chatgpt-work-2zwryo`, che resta verde.
 
 Base: `75e4546` (branch di consegna, CI verde su tutti e quattro i job).

@@ -939,10 +939,34 @@ function kitFor(p: Player, colors: [string, string]): [string, string] {
 const SKIN_PALETTE = ['#f0c29b', '#e4b184', '#c98b5a', '#a96d42', '#8b572f', '#6d4128'];
 const HAIR_PALETTE = ['#1b1514', '#3a2418', '#0d1118', '#5a321d', '#28212a', '#7a5934'];
 
+/**
+ * Which entry of a six-colour palette a player gets.
+ *
+ * The stride has to be coprime with the palette length or the sequence
+ * repeats before the roster runs out. Hair was indexed with `id * 3 + 2`, and
+ * three shares a factor with six: the six players of a side received hair
+ * colours 2, 5, 2, 5, 2, 5 — two tints between them, on the axis that most
+ * obviously tells one athlete from another.
+ *
+ * The strides in use are 5 for skin and 1 for hair. Both are coprime with six
+ * so each visits all six entries, and being different from each other the two
+ * axes do not move in lockstep: the pairing of tone and hair varies down the
+ * roster instead of repeating.
+ */
+function paletteIndex(id: number, stride: number, offset: number, length: number): number {
+  return Math.abs(id * stride + offset) % length;
+}
+
 /** Stable visual variation without changing collision or gameplay geometry. */
 function spriteStyleFor(p: Player, colors: [string, string]): SpriteRenderStyle {
   const kit = kitFor(p, colors);
   const signature = characterSignatureFor(p.id);
+  // The same reduction characterSignatureId() applies, for the same reason.
+  // Replay copies carry the live id plus a thousand, and every identity
+  // derived from the raw id therefore changed the moment a replay started: the
+  // skin tone, the hair colour and the build jitter all moved, so a player was
+  // one person during the rally and a different one watching it back.
+  const roster = Math.abs(Math.trunc(p.id)) % 100;
   const roleHeight: Record<Player['role'], number> = {
     setter: 0.98,
     outside: 1,
@@ -957,13 +981,13 @@ function spriteStyleFor(p: Player, colors: [string, string]): SpriteRenderStyle 
     middle: 1.02,
     libero: 0.94,
   };
-  const jitter = (((p.id * 37) % 7) - 3) * 0.008;
+  const jitter = (((roster * 37) % 7) - 3) * 0.008;
   return {
     palette: {
       primary: kit[0],
       secondary: kit[1],
-      skin: SKIN_PALETTE[Math.abs(p.id * 5 + (p.side === 'home' ? 1 : 3)) % SKIN_PALETTE.length],
-      hair: HAIR_PALETTE[Math.abs(p.id * 3 + 2) % HAIR_PALETTE.length],
+      skin: SKIN_PALETTE[paletteIndex(roster, 5, p.side === 'home' ? 1 : 3, SKIN_PALETTE.length)],
+      hair: HAIR_PALETTE[paletteIndex(roster, 1, p.side === 'home' ? 2 : 5, HAIR_PALETTE.length)],
       signature: signature.id,
     },
     heightScale: roleHeight[p.role] + jitter + signature.heightDelta,

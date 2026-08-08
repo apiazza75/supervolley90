@@ -153,16 +153,23 @@ export class ArenaArtwork {
   drawCrowdFar(ctx: CanvasRenderingContext2D, width: number, height: number): boolean {
     const img = this.getLayer('crowdFar');
     if (!img) return false;
-    // The first visible spectator row in the transparent sheet aligns with the
-    // first seating deck at scene y ~= 590.
-    this.drawSceneLayer(ctx, img, width, height, 345);
+    // The stand fills the gap between the fascia and the far edge of the
+    // projected floor, which the camera puts at screen y 299 — scene y 598.
+    //
+    // This was 345, with the sheet's first spectator row 245 pixels down it:
+    // the crowd therefore began at scene 590 and the court was drawn over the
+    // whole of it. Every spectator was rendered, and none was ever visible.
+    this.drawSceneLayer(ctx, img, width, height, 400);
     return true;
   }
 
   drawLedMid(ctx: CanvasRenderingContext2D, width: number, height: number): boolean {
     const img = this.getLayer('ledMid');
     if (!img) return false;
-    this.drawSceneLayer(ctx, img, width, height, 760);
+    // Barrier and ribbon sit at the foot of the stand, so the boards land just
+    // above the floor's far edge and the court starts behind them. At the
+    // previous 760 the entire strip was behind the court and never appeared.
+    this.drawSceneLayer(ctx, img, width, height, 520);
     return true;
   }
 
@@ -174,10 +181,34 @@ export class ArenaArtwork {
   }
 
   /**
-   * Map the authored floor texture to the camera's affine world projection.
+   * The one knob for dialling the floor texture back.
+   *
+   * It sits at full strength because the strength is authored into the sheet
+   * instead: `floor.png` is built on mid grey, and `soft-light` leaves a pixel
+   * untouched wherever the source is exactly 50% grey, so only the deviations
+   * drawn into the sheet reach the screen at all. Measured off the committed
+   * file, those deviations arrive as a mean shift of about 7 levels out of 255
+   * — wear and sheen on the planks, not a repaint of the court.
+   *
+   * The V3 asset was a painted court instead, and at any strength worth having
+   * it brought its own perspective with it.
+   */
+  private static readonly FLOOR_GRAIN_ALPHA = 1;
+
+  /**
+   * Lay the authored floor texture over the drawn parquet as grain and sheen.
+   *
+   * Composited, not substituted. `Arena.drawGrain()` builds the planks by
+   * sampling the camera's own floor projection, so its seams are in
+   * perspective by construction; a bitmap can only be in the perspective it
+   * was drawn in. The V3 asset was a painted court, drawn over this same
+   * quadrilateral in place of the planks, and it laid a lattice across the
+   * free zone at an angle the camera never produces. The sheet is a grey
+   * texture now, and it arrives as texture and nothing else.
+   *
    * Image x follows court length, image y follows far-to-near court width.
    */
-  drawArenaFloor(
+  drawFloorGrain(
     ctx: CanvasRenderingContext2D,
     cam: Camera,
     halfWidth: number,
@@ -204,19 +235,11 @@ export class ArenaArtwork {
     ctx.lineTo(nearLeft.x, nearLeft.y);
     ctx.closePath();
     ctx.clip();
+    ctx.globalCompositeOperation = 'soft-light';
+    ctx.globalAlpha = ArenaArtwork.FLOOR_GRAIN_ALPHA;
     ctx.transform(a, b, c, d, farLeft.x, farLeft.y);
     ctx.drawImage(img, 0, 0);
     ctx.restore();
     return true;
-  }
-
-  /** Compatibility alias for callers predating the five-layer arena. */
-  drawCourtFloor(
-    ctx: CanvasRenderingContext2D,
-    cam: Camera,
-    halfWidth: number,
-    halfLength: number,
-  ): boolean {
-    return this.drawArenaFloor(ctx, cam, halfWidth, halfLength);
   }
 }

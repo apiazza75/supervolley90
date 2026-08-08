@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Super Volley 90 — arena v3 layer maker</title>
+    <style>body { margin: 0; background: #0b0f1a; } canvas { display: none; }</style>
+  </head>
+  <body>
+    <canvas id="layer"></canvas>
+    <script type="module">
+      import { renderLayer, ARENA_V3_LAYERS } from '/src/dev/arena-v3-art.ts';
+      const canvas = document.getElementById('layer');
+      // Raw RGBA bytes rather than a data URL: the asset validator requires
+      // opaque layers to be PNG colour type 2, and a canvas can only export
+      // type 6. The encoding happens in the tool, in node.
+      window.__renderLayer = (name) => {
+        const data = renderLayer(canvas, name);
+        let binary = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < data.length; i += chunk) {
+          binary += String.fromCharCode.apply(null, data.subarray(i, i + chunk));
+        }
+        return btoa(binary);
+      };
+      window.__layers = ARENA_V3_LAYERS.map((l) => ({
+        name: l.name,
+        width: l.width,
+        height: l.height,
+        colourType: l.colourType,
+      }));
+    </script>
+  </body>
+</html>

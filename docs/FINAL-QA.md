@@ -88,9 +88,27 @@ that produced it.
 
 Honest limits, so this file does not repeat its own history:
 
-- Character identity is still colour and scale variation over a single silhouette. There
-  are not six structurally distinct signatures per team.
-- The arena is the existing three-asset setup, not a five-layer v3 system, and the net is
-  not rebuilt from projected post geometry.
+- Character identity is colour, kit construction and build over a single authored
+  silhouette. Six signatures per team differ in sleeves, kit pattern, knee pads, socks,
+  shoes and body scale, and each player has their own hair and skin tone — but the head
+  and its hair SHAPE are the artwork's, identical for everyone. Adding hair shape means
+  a static table of measured head anchors, ten actions by twenty-four frames; searching
+  for the head at runtime was tried and is documented in `src/render/character-signature.ts`
+  as something not to rebuild.
+- The arena is the five-layer v3 system, drawn by `npm run arena:v3` from
+  `src/dev/arena-v3-art.ts`, and the net is rebuilt from projected post geometry.
+- `distinctCharacterSignatures` counts only fields that are drawn. It was counting hair
+  and beard style as well, which nothing draws; a gate that counts an attribute reaching
+  no pixel is exactly the kind of check this file exists to warn about.
+- The arena layers are composed against the 16:9 band layout the visual QA runs at. Other
+  aspect ratios still cover-crop the scene as before; that has not been re-verified by eye.
 - Super-move and impact effects are unchanged.
 - Nothing here measures whether the game is *fun*, which remains a matter for playing it.
+
+## Order of the checks
+
+`npm run build` has to run BEFORE `npm run visual:qa:v3`, which is the order CI uses. The
+build writes `public/build-info.json`, the visual QA fetches it, and the dev server answers
+a missing path with `index.html` — so without the build the run dies parsing `<!doctype`
+as JSON, several minutes in and for a reason that has nothing to do with the change under
+test.

@@ -383,35 +383,40 @@ export class Arena {
     const outX = STAND_FRONT - 0.3;
     const outY = COURT_HALF_LENGTH + 9;
 
-    if (this.artwork.complete) {
-      // The 2048 x 1024 texture contains both free zone and regulation court.
-      this.artwork.drawArenaFloor(ctx, cam, outX, outY);
-    } else {
-      fillQuad(ctx, cam, [[-outX, -outY], [outX, -outY], [outX, outY], [-outX, outY]], SURROUND);
-      fillQuad(
-        ctx,
-        cam,
-        [
-          [-COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
-          [COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
-          [COURT_HALF_WIDTH, 0],
-          [-COURT_HALF_WIDTH, 0],
-        ],
-        COURT_NEAR,
-      );
-      fillQuad(
-        ctx,
-        cam,
-        [
-          [-COURT_HALF_WIDTH, 0],
-          [COURT_HALF_WIDTH, 0],
-          [COURT_HALF_WIDTH, COURT_HALF_LENGTH],
-          [-COURT_HALF_WIDTH, COURT_HALF_LENGTH],
-        ],
-        COURT_NEAR,
-      );
-      this.drawGrain(ctx, cam, outX, outY);
-    }
+    // The playing surface is drawn, never photographed.
+    //
+    // drawGrain() lays its planks by sampling cam.projectFloor() seam by seam,
+    // so the floor is in the camera's perspective by construction rather than
+    // by tuning. A bitmap stretched over the same quadrilateral can only be in
+    // the perspective it was drawn in, and when the two disagree the court
+    // stops looking like a court: the v3 texture put a lattice across the free
+    // zone at an angle the camera never produces. So the quads and the planks
+    // are unconditional, and the authored texture composites over them.
+    fillQuad(ctx, cam, [[-outX, -outY], [outX, -outY], [outX, outY], [-outX, outY]], SURROUND);
+    fillQuad(
+      ctx,
+      cam,
+      [
+        [-COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
+        [COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
+        [COURT_HALF_WIDTH, 0],
+        [-COURT_HALF_WIDTH, 0],
+      ],
+      COURT_NEAR,
+    );
+    fillQuad(
+      ctx,
+      cam,
+      [
+        [-COURT_HALF_WIDTH, 0],
+        [COURT_HALF_WIDTH, 0],
+        [COURT_HALF_WIDTH, COURT_HALF_LENGTH],
+        [-COURT_HALF_WIDTH, COURT_HALF_LENGTH],
+      ],
+      COURT_NEAR,
+    );
+    this.drawGrain(ctx, cam, outX, outY);
+    this.artwork.drawFloorGrain(ctx, cam, outX, outY);
 
     this.drawLightPools(ctx, cam, outX, outY);
     this.drawLines(ctx, cam);

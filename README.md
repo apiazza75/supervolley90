@@ -197,7 +197,21 @@ npm run trace -- --seconds 20       # step-by-step rally trace
 npm run shots -- shots/             # drive the real game in Chromium, capture frames
 npm run e2e:input                   # press the actual arrow keys, assert the player moves
 npm run shots:overhaul out/           # menu, jump serve, block and team-identity visual QA
+npm run arena:v3                    # redraw the five arena layers into public/arena/v3
+npm run assets:check                # sizes and colour types of every shipped PNG
+npm run visual:qa:v3                # 19 screenshots and 5 videos, from real play
 ```
+
+`arena:v3` regenerates the arena art from `src/dev/arena-v3-art.ts` rather than
+from a painting program, because the layers have to line up with a projection
+rather than with each other. The camera is an orthographic side elevation, so
+every band on screen — roof, fascia, stand, barrier, floor, HUD — is a number
+that falls out of `src/render/camera.ts`, and the drawing code computes those
+numbers instead of guessing them. The first version of these layers was painted
+against a 2560x1440 canvas with no such reference: the floor arrived in a
+perspective the camera never produces, the backdrop put a scoreboard where the
+HUD's own scoreboard goes, and the crowd was drawn 590 pixels down a scene whose
+court starts at 598, so all four rows of it were rendered and then covered.
 
 `e2e:input` exists because the input mapping once rotated 90 degrees when the
 camera changed and nothing noticed: simulation correct, renderer correct, every
