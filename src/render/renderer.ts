@@ -2,10 +2,11 @@ import { Ball } from '../core/ball';
 import { Vec3, clamp } from '../core/math3';
 import { Player } from '../core/player';
 import { Rng } from '../core/rng';
-import { BALL_RADIUS, GAME_SPEED, NET_HEIGHT, isInsideCourt } from '../core/rules';
+import { BALL_RADIUS, GAME_SPEED, isInsideCourt } from '../core/rules';
 import { GameEvent, World } from '../core/world';
 import { Arena } from './arena';
 import { Camera } from './camera';
+import { characterSignatureFor } from './character-signature';
 import { Effects } from './fx';
 import { Officials } from './officials';
 import { drawActiveRing, drawPlayer, drawPlayerShadow, shade } from './players';
@@ -16,7 +17,7 @@ import {
   type SpriteRenderStyle,
 } from './sprite-figure';
 import { type SheetSet, loadSheets } from './sprites';
-import { INTRO as REPLAY_INTRO, type ReplayFrame } from '../game/replay';
+import { type ReplayFrame } from '../game/replay';
 
 /** Interpolated view of a rally, so rendering is smooth between sim steps. */
 export interface RenderState {
@@ -313,8 +314,7 @@ export class Renderer {
         },
       });
     }
-    const netProj = cam.project(0, 0, NET_HEIGHT / 2);
-    drawables.push({ depth: netProj.depth, draw: () => this.arena.drawNet(ctx, cam) });
+    drawables.push(...this.arena.netDrawables(ctx, cam));
     drawables.sort((a, b) => b.depth - a.depth);
     for (const d of drawables) d.draw();
 
@@ -322,91 +322,10 @@ export class Renderer {
 
     const ballPos = { x: frame.ball.x, y: frame.ball.y, z: frame.ball.z };
     this.drawBall({ pos: ballPos, vel: { x: 0, y: 0, z: 0 }, roll: frame.ball.roll } as Ball);
+    this.arena.drawForeground(ctx, cam);
     this.drawVignette(ctx, cam);
-
-    // Broadcast furniture. A replay has to announce itself: played straight,
-    // it just looks like the game stuttering and repeating itself.
-    const w = cam.viewWidth;
-    const h = cam.viewHeight;
-    const grow = clamp(age / 0.18, 0, 1);
-    const bar = h * 0.09 * grow;
-    ctx.save();
-
-    // Letterbox bars use the same technical rails as the live HUD.
-    const topGrad = ctx.createLinearGradient(0, 0, 0, bar);
-    topGrad.addColorStop(0, 'rgba(2,5,13,0.98)');
-    topGrad.addColorStop(1, 'rgba(8,15,29,0.92)');
-    ctx.fillStyle = topGrad;
-    ctx.fillRect(0, 0, w, bar);
-    ctx.fillRect(0, h - bar, w, bar);
-    ctx.fillStyle = '#49dcff';
-    ctx.fillRect(0, Math.max(0, bar - 3), w * 0.52, 3);
-    ctx.fillStyle = '#ff5f5a';
-    ctx.fillRect(w * 0.52, Math.max(0, bar - 3), w * 0.48, 3);
-    ctx.fillStyle = '#ffd35c';
-    ctx.fillRect(0, h - bar, w, 2);
-
-    // Opening card: a centred cut-corner broadcast plate, not a full-width slab.
-    if (age < REPLAY_INTRO + 0.35) {
-      const k = clamp((REPLAY_INTRO + 0.35 - age) / 0.35, 0, 1);
-      const cardW = Math.min(720, w * 0.68);
-      const cardH = 132;
-      const x = w / 2 - cardW / 2;
-      const y = h / 2 - cardH / 2;
-      ctx.globalAlpha = k;
-      cutPanel(ctx, x, y, cardW, cardH, 24);
-      const card = ctx.createLinearGradient(x, y, x + cardW, y + cardH);
-      card.addColorStop(0, 'rgba(12,27,49,0.97)');
-      card.addColorStop(0.5, 'rgba(4,9,21,0.98)');
-      card.addColorStop(1, 'rgba(31,16,29,0.97)');
-      ctx.fillStyle = card;
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(73,220,255,0.78)';
-      ctx.lineWidth = 2.5;
-      ctx.stroke();
-      ctx.fillStyle = '#ffd35c';
-      ctx.fillRect(x + 50, y, cardW - 100, 4);
-      ctx.save();
-      ctx.translate(w / 2, h / 2 - 9);
-      ctx.transform(1, 0, -0.12, 1, 0, 0);
-      ctx.textAlign = 'center';
-      const pop = 1 + (1 - clamp(age / 0.2, 0, 1)) * 0.36;
-      ctx.font = `950 ${Math.round(50 * pop)}px "Arial Black", "Inter", system-ui, sans-serif`;
-      ctx.lineWidth = 8;
-      ctx.lineJoin = 'round';
-      ctx.strokeStyle = 'rgba(3,7,17,0.98)';
-      ctx.strokeText('INSTANT REPLAY', 0, 0);
-      ctx.fillStyle = '#f4f7ff';
-      ctx.fillText('INSTANT REPLAY', 0, 0);
-      ctx.restore();
-      ctx.font = '900 15px "Arial Narrow", "Inter", system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = '#ffd35c';
-      ctx.fillText(label, w / 2, h / 2 + 39);
-      ctx.globalAlpha = 1;
-    }
-
-    if (bar > 18) {
-      ctx.textBaseline = 'middle';
-      ctx.textAlign = 'left';
-      const indicator = 6 + Math.sin(time * 9) * 1.5;
-      ctx.save();
-      ctx.translate(30, bar / 2);
-      ctx.rotate(Math.PI / 4);
-      ctx.fillStyle = '#ff5f5a';
-      ctx.fillRect(-indicator, -indicator, indicator * 2, indicator * 2);
-      ctx.restore();
-      ctx.font = '950 19px "Arial Black", "Inter", system-ui, sans-serif';
-      ctx.fillStyle = '#f4f7ff';
-      ctx.fillText(`REPLAY  //  ${label}`, 52, bar / 2);
-      ctx.textAlign = 'right';
-      ctx.font = '900 11px "Arial Narrow", "Inter", system-ui, sans-serif';
-      ctx.fillStyle = `rgba(220,235,252,${0.55 + 0.35 * Math.sin(time * 5)})`;
-      ctx.fillText('ANY KEY  //  SKIP', w - 28, bar / 2);
-    }
-    ctx.restore();
+    this.effects.drawReplayTransition(ctx, cam.viewWidth, cam.viewHeight, age, label);
   }
-
   /**
    * Draw one frame.
    *
@@ -513,8 +432,7 @@ export class Renderer {
       }
     }
 
-    const netProj = cam.project(0, 0, NET_HEIGHT / 2);
-    drawables.push({ depth: netProj.depth, draw: () => this.arena.drawNet(ctx, cam) });
+    drawables.push(...this.arena.netDrawables(ctx, cam));
 
     const ballProj = cam.projectVec(world.ball.pos);
     const hot = world.playCue?.ready === true || world.serveStrikeReady;
@@ -527,6 +445,7 @@ export class Renderer {
     this.officials.drawNear(ctx, cam);
 
     this.effects.draw(ctx, cam);
+    this.arena.drawForeground(ctx, cam);
     this.drawVignette(ctx, cam);
     this.drawTimingCue(world, state.time);
     this.drawPowerCoach(world, state.time, state.jumpLabel ?? 'SHIFT');
@@ -724,6 +643,7 @@ export class Renderer {
       ctx,
       this.camera,
       this.powerTrail > 0 ? 'rgba(255,140,50,0.95)' : 'rgba(255,236,180,0.9)',
+      this.powerTrail > 0,
     );
 
     ctx.save();
@@ -738,34 +658,10 @@ export class Renderer {
     ctx.rotate(-angle);
 
     if (this.powerTrail > 0) {
-      // A live Lethal Maneuver burns: fire ball with a halo, so it reads even
-      // against the crowd. This is the only time the ball glows.
-      const halo = ctx.createRadialGradient(0, 0, r, 0, 0, r * 3.2);
-      halo.addColorStop(0, 'rgba(255,150,60,0.55)');
-      halo.addColorStop(1, 'rgba(255,80,30,0)');
-      ctx.fillStyle = halo;
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 3.2, 0, Math.PI * 2);
-      ctx.fill();
-      const fire = ctx.createRadialGradient(-r * 0.35, -r * 0.4, r * 0.1, 0, 0, r);
-      fire.addColorStop(0, '#ffffff');
-      fire.addColorStop(0.55, '#ffb040');
-      fire.addColorStop(1, '#e04a12');
-      ctx.fillStyle = fire;
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(120,40,5,0.7)';
-      ctx.lineWidth = Math.max(0.8, r * 0.12);
-      for (let i = 0; i < 3; i++) {
-        ctx.beginPath();
-        ctx.ellipse(0, 0, r * 0.92, r * 0.32, ball.roll + (i * Math.PI) / 3, 0, Math.PI * 2);
-        ctx.stroke();
-      }
+      this.effects.drawPowerBall(ctx, r, ball.roll);
       ctx.restore();
       return;
     }
-
     // A real volleyball's panels: three parallel stripes wrapping the ball,
     // white / blue / yellow, rotating with the spin. Overlapping ellipses at
     // three different angles — the previous attempt — draw a rosette, not a
@@ -936,16 +832,8 @@ export class Renderer {
     if (team?.powerReady && world.phase === 'rally') {
       const p = team.active;
       if (p.specialArmed) {
-        // Armed: the player burns until the strike lands.
         const body = cam.project(p.pos.x, p.pos.y, p.height + 0.9);
-        const r = (46 + Math.sin(time * 12) * 7) * body.scale;
-        const halo = ctx.createRadialGradient(body.x, body.y, r * 0.2, body.x, body.y, r);
-        halo.addColorStop(0, 'rgba(255,170,70,0.5)');
-        halo.addColorStop(1, 'rgba(255,90,30,0)');
-        ctx.fillStyle = halo;
-        ctx.beginPath();
-        ctx.arc(body.x, body.y, r, 0, Math.PI * 2);
-        ctx.fill();
+        this.effects.drawPowerAura(ctx, body.x, body.y, body.scale, time);
       } else if (p.airborne) {
         // The window is open right now: name the button, loudly.
         const s = cam.project(p.pos.x, p.pos.y, p.height + 2.35);
@@ -1051,9 +939,34 @@ function kitFor(p: Player, colors: [string, string]): [string, string] {
 const SKIN_PALETTE = ['#f0c29b', '#e4b184', '#c98b5a', '#a96d42', '#8b572f', '#6d4128'];
 const HAIR_PALETTE = ['#1b1514', '#3a2418', '#0d1118', '#5a321d', '#28212a', '#7a5934'];
 
+/**
+ * Which entry of a six-colour palette a player gets.
+ *
+ * The stride has to be coprime with the palette length or the sequence
+ * repeats before the roster runs out. Hair was indexed with `id * 3 + 2`, and
+ * three shares a factor with six: the six players of a side received hair
+ * colours 2, 5, 2, 5, 2, 5 — two tints between them, on the axis that most
+ * obviously tells one athlete from another.
+ *
+ * The strides in use are 5 for skin and 1 for hair. Both are coprime with six
+ * so each visits all six entries, and being different from each other the two
+ * axes do not move in lockstep: the pairing of tone and hair varies down the
+ * roster instead of repeating.
+ */
+function paletteIndex(id: number, stride: number, offset: number, length: number): number {
+  return Math.abs(id * stride + offset) % length;
+}
+
 /** Stable visual variation without changing collision or gameplay geometry. */
 function spriteStyleFor(p: Player, colors: [string, string]): SpriteRenderStyle {
   const kit = kitFor(p, colors);
+  const signature = characterSignatureFor(p.id);
+  // The same reduction characterSignatureId() applies, for the same reason.
+  // Replay copies carry the live id plus a thousand, and every identity
+  // derived from the raw id therefore changed the moment a replay started: the
+  // skin tone, the hair colour and the build jitter all moved, so a player was
+  // one person during the rally and a different one watching it back.
+  const roster = Math.abs(Math.trunc(p.id)) % 100;
   const roleHeight: Record<Player['role'], number> = {
     setter: 0.98,
     outside: 1,
@@ -1068,22 +981,19 @@ function spriteStyleFor(p: Player, colors: [string, string]): SpriteRenderStyle 
     middle: 1.02,
     libero: 0.94,
   };
-  const jitter = (((p.id * 37) % 7) - 3) * 0.008;
+  const jitter = (((roster * 37) % 7) - 3) * 0.008;
   return {
     palette: {
       primary: kit[0],
       secondary: kit[1],
-      // Skin and hair use explicit material masks, never the uniform hue.
-      // A stable id palette gives twelve readable individuals without changing
-      // collision or animation geometry.
-      skin: SKIN_PALETTE[Math.abs(p.id * 5 + (p.side === 'home' ? 1 : 3)) % SKIN_PALETTE.length],
-      hair: HAIR_PALETTE[Math.abs(p.id * 3 + 2) % HAIR_PALETTE.length],
+      skin: SKIN_PALETTE[paletteIndex(roster, 5, p.side === 'home' ? 1 : 3, SKIN_PALETTE.length)],
+      hair: HAIR_PALETTE[paletteIndex(roster, 1, p.side === 'home' ? 2 : 5, HAIR_PALETTE.length)],
+      signature: signature.id,
     },
-    heightScale: roleHeight[p.role] + jitter,
-    widthScale: roleWidth[p.role] - jitter * 0.5,
+    heightScale: roleHeight[p.role] + jitter + signature.heightDelta,
+    widthScale: roleWidth[p.role] - jitter * 0.5 + signature.widthDelta,
   };
 }
-
 const SPIKE_CALLS = ['KILLER SPIKE', 'THUNDER HIT', 'ROLLING SMASH', 'BLAZE SPIKE'];
 
 const POINT_LABEL: Record<string, string> = {

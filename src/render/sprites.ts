@@ -1,3 +1,5 @@
+import { applyCharacterSignature } from './character-signature';
+
 /**
  * Sprite sheets.
  *
@@ -134,6 +136,8 @@ export interface SpritePalette {
   skin?: string;
   /** Optional per-player hair tone. */
   hair?: string;
+  /** Stable structural identity baked into the recoloured sheet. */
+  signature?: number;
 }
 
 export interface Sheet {
@@ -236,7 +240,13 @@ const CHANNEL_SOURCE_LIGHTNESS = [0.31, 0.7, 0.55, 0.16] as const;
 const CHANNEL_TONE_RANGE = [0.9, 0.62, 0.7, 0.5] as const;
 
 function paletteKey(palette: SpritePalette): string {
-  return [palette.primary, palette.secondary ?? '', palette.skin ?? '', palette.hair ?? ''].join('|');
+  return [
+    palette.primary,
+    palette.secondary ?? '',
+    palette.skin ?? '',
+    palette.hair ?? '',
+    palette.signature ?? '',
+  ].join('|');
 }
 
 /**
@@ -333,6 +343,7 @@ function recolour(sheet: Sheet, palette: SpritePalette): HTMLCanvasElement {
   }
 
   ctx.putImageData(img, 0, 0);
+  applyCharacterSignature(ctx, sheet, palette);
   sheet.variants.set(cacheKey, out);
   return out;
 }

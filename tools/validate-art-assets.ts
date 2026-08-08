@@ -21,12 +21,7 @@ function pngInfo(path: string): PngInfo {
   };
 }
 
-function expectPng(
-  path: string,
-  width: number,
-  height: number,
-  colourType?: number,
-): void {
+function expectPng(path: string, width: number, height: number, colourType?: number): void {
   const info = pngInfo(path);
   if (info.width !== width || info.height !== height) {
     throw new Error(`${path}: expected ${width}x${height}, got ${info.width}x${info.height}`);
@@ -50,9 +45,13 @@ const sprites = [
   'jumpServe',
   'celebrate',
 ];
-for (const name of sprites) {
-  expectPng(`public/sprites/${name}.png`, 3072, 2048, 6);
-}
-expectPng('public/arena/arena-back.png', 2560, 900);
-expectPng('public/arena/arena-floor.png', 1024, 512);
-expectPng('public/arena/net.png', 512, 512, 6);
+for (const name of sprites) expectPng(`public/sprites/${name}.png`, 3072, 2048, 6);
+
+// Recovery V3: these five authored layers are the release arena. Transparent
+// layers are required to be RGBA (PNG colour type 6); backdrop and floor are
+// intentionally opaque RGB (type 2), avoiding needless alpha memory.
+expectPng('public/arena/v3/backdrop.png', 2560, 1440, 2);
+expectPng('public/arena/v3/crowd-far.png', 2560, 900, 6);
+expectPng('public/arena/v3/led-mid.png', 2560, 512, 6);
+expectPng('public/arena/v3/floor.png', 2048, 1024, 2);
+expectPng('public/arena/v3/foreground.png', 2560, 512, 6);

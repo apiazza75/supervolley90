@@ -24,6 +24,7 @@
     "anims": "tsx tools/anim-sheet.ts",
     "rig": "tsx tools/rig-sheet.ts",
     "sheets": "tsx tools/make-sheets.ts",
+    "arena:v3": "tsx tools/make-arena-v3.ts",
     "frames": "tsx tools/dump-frames.ts",
     "measure:sheet": "tsx tools/measure-sheet.ts",
     "assets:check": "tsx tools/validate-art-assets.ts",

@@ -16,6 +16,19 @@
 import { chromium } from 'playwright';
 import { preview } from 'vite';
 
+import { ARENA_V3_LAYER_NAMES } from '../src/render/arena-art';
+
+/**
+ * How many arena assets the bundle has to load.
+ *
+ * Read from the layer list rather than written down. This was the literal 3 of
+ * the pre-V3 arena and stayed there when the arena became five layers, so the
+ * check failed on a correct build and said "expected 3, got 5" — a number out
+ * of date, reported as a defect. Deriving it means the next change to the
+ * arena cannot leave this behind again.
+ */
+const EXPECTED_ARENA_ASSETS = ARENA_V3_LAYER_NAMES.length;
+
 async function main(): Promise<void> {
   const server = await preview({ preview: { port: 5188, strictPort: true } });
 
@@ -45,16 +58,16 @@ async function main(): Promise<void> {
   type AssetCounts = { sprites: number; masks: number; arena: number };
   const rawAssets = await page
     .waitForFunction(
-      () => {
+      (wantArena: number) => {
         const renderer = (window as unknown as {
           __sv90?: { renderer?: { spriteCount: number; maskedSpriteCount: number; arenaAssetCount: number } };
         }).__sv90?.renderer;
         if (!renderer) return false;
-        return renderer.spriteCount >= 10 && renderer.maskedSpriteCount >= 10 && renderer.arenaAssetCount >= 3
+        return renderer.spriteCount >= 10 && renderer.maskedSpriteCount >= 10 && renderer.arenaAssetCount >= wantArena
           ? { sprites: renderer.spriteCount, masks: renderer.maskedSpriteCount, arena: renderer.arenaAssetCount }
           : false;
       },
-      undefined,
+      EXPECTED_ARENA_ASSETS,
       { timeout: 30000 },
     )
     .then((h) => h.jsonValue())
@@ -68,12 +81,16 @@ async function main(): Promise<void> {
   const failures: string[] = [];
   if (assets.sprites !== 10) failures.push(`expected 10 sprite sheets in the built bundle, got ${assets.sprites}`);
   if (assets.masks !== 10) failures.push(`expected 10 material masks in the built bundle, got ${assets.masks}`);
-  if (assets.arena !== 3) failures.push(`expected 3 arena assets in the built bundle, got ${assets.arena}`);
+  if (assets.arena !== EXPECTED_ARENA_ASSETS) {
+    failures.push(
+      `expected ${EXPECTED_ARENA_ASSETS} arena assets in the built bundle, got ${assets.arena}`,
+    );
+  }
   for (const p of problems) failures.push(p);
 
   console.log(`sprite sheets loaded from the build: ${assets.sprites}/10`);
   console.log(`material masks loaded from the build: ${assets.masks}/10`);
-  console.log(`arena assets loaded from the build: ${assets.arena}/3`);
+  console.log(`arena assets loaded from the build: ${assets.arena}/${EXPECTED_ARENA_ASSETS}`);
   for (const f of failures) console.log(`FAIL  ${f}`);
   if (!failures.length) console.log('build check passed');
 

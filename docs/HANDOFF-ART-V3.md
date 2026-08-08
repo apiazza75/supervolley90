@@ -1,5 +1,22 @@
 # Handoff — lavori artistici rimasti (Recovery V3)
 
+> **Correzioni, aggiunte dopo l'esecuzione dei lavori.** Due affermazioni di questo documento sono
+> risultate false quando sono state verificate eseguendo invece che leggendo. Restano qui sotto nel
+> loro contesto originale, ma non vanno seguite:
+>
+> 1. **§3.1 dice che gli sprite sono «generati proceduralmente» da `npm run sheets`.** Non lo sono.
+>    `src/dev/make-sheets.ts` produce fogli placeholder 1456×1080 da `drawPlayer`; i fogli spediti
+>    sono dieci PNG disegnati, 3072×2048 RGBA, già ritagliati su trasparenza, e `npm run sheets` li
+>    **sovrascriverebbe con dei placeholder**. `src/render/rig.ts` è una figura procedurale separata,
+>    con keyframe per il solo `SPIKE`, importata unicamente da `src/dev/rig-sheet.ts`. Conseguenza:
+>    non esiste un giunto della testa da interrogare. Vedi `docs/PIANO-V4.md` §1.1 e
+>    `docs/PIANO-V4-ESITO.md` §1.
+> 2. **§5 elenca `npm run build` per ultimo.** Va eseguito **prima** di `npm run visual:qa:v3`, come
+>    fa la CI: il build genera `public/build-info.json`, che è in `.gitignore`, e senza quel file il
+>    visual QA fallisce dopo diversi minuti leggendo `index.html` al posto del JSON.
+>
+> Lo stato dei quattro lavori di §3 è riassunto in `docs/PIANO-V4-ESITO.md`.
+
 Documento per chi prosegue il lavoro. Descrive **cosa è già fatto e va protetto**, **cosa resta**,
 e **come si verifica**. Scritto per essere autosufficiente: non serve la conversazione precedente.
 
