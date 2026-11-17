@@ -1,5 +1,7 @@
 # Super Volley 90
 
+La versione attuale include 1 vs 1 locale, comandi touch e due controller, regole e durata dei set configurabili, alzate variate, muro a due e progressione con divise, nazionali, palloni, parquet e abilità. [Guida rapida in italiano](docs/GIOCARE.md) · [Abilità e sblocchi](docs/PROGRESSIONE-E-CONTENUTI.md).
+
 Arcade 6-on-6 volleyball for macOS, built in the spirit of the early-90s coin-ops
 — a side-on court with the net down the middle, two buttons, a landing marker on
 the floor, and rallies that resolve in a few loud seconds.

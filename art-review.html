@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Super Volley 90 · Animazioni manga</title>
+    <style>
+      *{box-sizing:border-box}body{margin:0;background:#0b1422;color:#e5edf5;font:15px system-ui,sans-serif}main{max-width:1320px;margin:auto;padding:28px}h1{margin:0 0 8px;font-size:26px}p{color:#abb9ca;line-height:1.5}a{color:#7ccaf2}header{display:flex;justify-content:space-between;align-items:center;gap:20px}nav{display:flex;align-items:center;flex-wrap:wrap;gap:18px;margin:24px 0}button,select{font:inherit;border:1px solid #526478;border-radius:6px;padding:9px 14px;color:#e5edf5;background:#1b2b3e;cursor:pointer}input{vertical-align:middle}#grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}article{background:#142334;border:1px solid #2d4053;border-radius:8px;overflow:hidden}h2{font-size:16px;margin:16px 16px 0}canvas{display:block;width:100%;height:auto}output{display:block;padding:0 16px 15px;color:#a7b5c5;font-variant-numeric:tabular-nums;font-size:12px}#status{color:#e1c57d}@media(max-width:1000px){#grid{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:700px){#grid{grid-template-columns:repeat(2,minmax(0,1fr))}main{padding:16px}header{display:block}}
+    </style>
+  </head>
+  <body>
+    <main>
+      <header><div><h1>Le animazioni manga</h1><p>Disegni caricati dal gioco, ingranditi per controllare pose, proporzioni e continuità.</p></div><a href="/">Apri la partita →</a></header>
+      <nav aria-label="Controlli animazioni">
+        <button id="play">Pausa</button>
+        <label>Velocità <select id="speed"><option value=".5">½ rallentata</option><option value="1" selected>Normale</option><option value="2">2×</option></select></label>
+        <label>Fotogramma <input id="frame" type="range" min="0" max="35" value="0" /></label>
+        <label>Sfondo <select id="background"><option value="#203a45">Verde campo</option><option value="#bb7b50">Parquet</option><option value="#080b11">Scuro</option></select></label>
+      </nav>
+      <p id="status" role="status">Caricamento delle illustrazioni…</p>
+      <section id="grid" aria-label="Sequenze dei giocatori"></section>
+      <details id="art-details" hidden>
+        <summary>Dettagli sui disegni e sui raccordi</summary>
+        <p id="art-notes"></p>
+      </details>
+    </main>
+    <script type="module" src="/src/dev/art-review.ts"></script>
+  </body>
+</html>

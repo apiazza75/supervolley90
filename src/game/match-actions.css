@@ -1,0 +1,7 @@
+.match-actions { position: fixed; z-index: 25; left: 50%; bottom: max(18px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; justify-content: center; flex-wrap: wrap; gap: 12px; width: min(680px, 88vw); font: 700 14px system-ui, sans-serif; text-align: center; }
+.match-actions[hidden] { display: none; }
+.match-actions button { min-height: 46px; padding: 10px 20px; border: 1px solid #49dcff; border-radius: 8px; background: #0a1930; color: #f4f7ff; font: inherit; cursor: pointer; touch-action: manipulation; }
+.match-actions button:first-child { background: #ffd35c; color: #07101c; border-color: #ffd35c; }
+.match-actions button:focus-visible { outline: 3px solid white; outline-offset: 3px; }
+.match-actions p { flex: 1 1 100%; margin: 0; padding: 8px; border-radius: 6px; background: rgba(3,8,20,.95); color: #f4f7ff; }
+@media (max-height: 460px) { .match-actions { bottom: 10px; gap: 6px; } .match-actions p { font-size: 12px; } }

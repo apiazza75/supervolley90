@@ -12,6 +12,8 @@ export interface BuildInfo {
   shortCommit: string;
   runId: string;
   builtAt: string;
+  sourceHash?: string;
+  dirty?: boolean;
 }
 
 const UNKNOWN: BuildInfo = {
@@ -45,5 +47,7 @@ export const buildInfo = (): BuildInfo => current;
 /** The one-line stamp drawn in the menu and on the pause screen. */
 export const buildStamp = (): string => {
   const b = current;
-  return `BUILD ${b.shortCommit} · RUN ${b.runId}`;
+  return b.dirty && b.sourceHash
+    ? `BUILD LOCALE ${b.sourceHash.slice(0, 8)} · BASE ${b.shortCommit}`
+    : `BUILD ${b.shortCommit} · RUN ${b.runId}`;
 };

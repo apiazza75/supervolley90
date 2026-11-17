@@ -9,13 +9,16 @@
  *   npx tsx tools/serve-lab.ts [attempts]
  */
 import { COURT_HALF_LENGTH, COURT_HALF_WIDTH, PLAYER_REACH } from '../src/core/rules';
+import { predictLanding } from '../src/core/ball';
+import { NEUTRAL_AIM, type Aim } from '../src/core/contact';
 import { World, idleCommand } from '../src/core/world';
 import { TEAMS } from '../src/game/teams';
+import { pathToFileURL } from 'node:url';
 
 const DT = 1 / 120;
 const ATTEMPTS = Number(process.argv[2] ?? 50);
 
-interface Outcome {
+export interface Outcome {
   /** Seconds between the toss tap and the strike tap. */
   delay: number;
   /** How long the first tap was held down. */
@@ -43,7 +46,26 @@ interface Outcome {
   landY: number;
 }
 
-function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
+export interface ServeLabSummary {
+  attempts: number;
+  served: number;
+  jumped: number;
+  landingSpreadX: number;
+  landingSpreadY: number;
+  speedSpread: number;
+  jumpServeMeanSpeed: number;
+  standingServeMeanSpeed: number;
+  inLandings: number;
+}
+
+const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+
+const sd = (xs: number[]): number => {
+  const m = mean(xs);
+  return Math.sqrt(mean(xs.map((v) => (v - m) * (v - m))));
+};
+
+export function attempt(seed: number, delay: number, holdSeconds: number, aim: Aim = NEUTRAL_AIM): Outcome {
   const w = new World({
     seed,
     home: TEAMS[0],
@@ -85,6 +107,7 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
 
   for (let i = 0; i < 120 * 10; i++) {
     const cmd = idleCommand();
+    cmd.aim = { ...aim };
     // A tap is a press held for a couple of steps, exactly as a keyboard
     // delivers it, and released — that release is what tosses the ball.
     // A human tap lasts a tenth of a second or two, not one frame. Modelling
@@ -116,8 +139,12 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
       const servedFromY = server.pos.y;
       const launchSpeed = Math.hypot(w.ball.vel.x, w.ball.vel.y, w.ball.vel.z);
       let crossTime = 0;
-      let landX = 0;
-      let landY = 0;
+      // Measure the serve's physical trajectory before a receiver changes it.
+      // A disciplined reception line meets many different serves at the same
+      // depth; its contact position is not the served ball's landing position.
+      const landingPrediction = predictLanding(w.ball);
+      const landX = landingPrediction.valid ? landingPrediction.point.x : w.ball.pos.x;
+      const landY = landingPrediction.valid ? landingPrediction.point.y : w.ball.pos.y;
       // Follow it. "The serve fired" is not the same as "the serve worked":
       // a ball that drops back into your own court, or into the back of a
       // team-mate, is a serve you could not play, and only watching where it
@@ -142,11 +169,13 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
         for (const ev of w.drainEvents()) {
           if (ev.type === 'contact' && ev.side === 'away') {
             landing = 'in';
-            // Where the receiver met it: the proxy for the serve's trajectory.
-            landX = w.ball.pos.x;
-            landY = w.ball.pos.y;
           }
-          else if (ev.type === 'contact' && ev.side === 'home' && ev.playerId !== server.id)
+          else if (
+            !crossed &&
+            ev.type === 'contact' &&
+            ev.side === 'home' &&
+            ev.playerId !== server.id
+          )
             landing = 'hit a team-mate';
           else if (ev.type === 'point') {
             if (ev.reason === 'serveFault') {
@@ -206,6 +235,42 @@ function attempt(seed: number, delay: number, holdSeconds: number): Outcome {
     crossTime: 0,
     landX: 0,
     landY: 0,
+  };
+}
+
+export function runServeSweep(attempts = ATTEMPTS): Outcome[] {
+  const results: Outcome[] = [];
+  for (let i = 0; i < attempts; i++) {
+    // Sweep the second tap across the whole plausible range, with the seed
+    // varying too so this is not one lucky rally repeated.
+    const delay = 0.05 + (i / (attempts - 1)) * 1.35;
+    // Sweep the tap length too: 40 ms to 340 ms covers everything from a
+    // flick to a deliberate press.
+    const hold = 0.04 + (i % 8) * 0.115;
+    // The same stick target SHOULD stay repeatable. Check player-controlled
+    // placement by deliberately sweeping left/centre/right and short/deep,
+    // independently of timing, instead of rewarding random receiver movement.
+    const aim = { x: [-.6, 0, .6][i % 3], depth: [-.25, .35, .85][Math.floor(i / 3) % 3] };
+    results.push(attempt(11 + i * 7, delay, hold, aim));
+  }
+  return results;
+}
+
+export function summarizeServeSweep(results: Outcome[]): ServeLabSummary {
+  const served = results.filter((r) => r.served);
+  const jumped = served.filter((r) => r.jump && r.liftAtHit > 0.25);
+  const ground = served.filter((r) => !(r.jump && r.liftAtHit > 0.25));
+  const landed = served.filter((r) => r.landY !== 0);
+  return {
+    attempts: results.length,
+    served: served.length,
+    jumped: jumped.length,
+    landingSpreadX: sd(landed.map((r) => r.landX)),
+    landingSpreadY: sd(landed.map((r) => r.landY)),
+    speedSpread: sd(served.map((r) => r.launchSpeed)),
+    jumpServeMeanSpeed: mean(jumped.map((r) => r.launchSpeed)),
+    standingServeMeanSpeed: mean(ground.map((r) => r.launchSpeed)),
+    inLandings: served.filter((r) => r.landing === 'in').length,
   };
 }
 
@@ -272,16 +337,7 @@ function aiServes(): void {
 }
 
 function main(): void {
-  const results: Outcome[] = [];
-  for (let i = 0; i < ATTEMPTS; i++) {
-    // Sweep the second tap across the whole plausible range, with the seed
-    // varying too so this is not one lucky rally repeated.
-    const delay = 0.05 + (i / (ATTEMPTS - 1)) * 1.35;
-    // Sweep the tap length too: 40 ms to 340 ms covers everything from a
-    // flick to a deliberate press.
-    const hold = 0.04 + (i % 8) * 0.115;
-    results.push(attempt(11 + i * 7, delay, hold));
-  }
+  const results = runServeSweep(ATTEMPTS);
 
   const served = results.filter((r) => r.served);
   const jumped = served.filter((r) => r.jump && r.liftAtHit > 0.25);
@@ -301,7 +357,6 @@ function main(): void {
   // actually produce a different ball?
   const air = served.filter((r) => r.jump && r.liftAtHit > 0.25);
   const ground = served.filter((r) => !(r.jump && r.liftAtHit > 0.25));
-  const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
   console.log(
     `jump serve:     ${air.length} at ${mean(air.map((r) => r.launchSpeed)).toFixed(1)} m/s, ` +
       `${mean(air.map((r) => r.crossTime)).toFixed(2)} s to cross the net`,
@@ -331,10 +386,6 @@ function main(): void {
 
   // Trajectory variety: identical serves are the mark of a canned animation.
   const landed = served.filter((r) => r.landY !== 0);
-  const sd = (xs: number[]): number => {
-    const m = mean(xs);
-    return Math.sqrt(mean(xs.map((v) => (v - m) * (v - m))));
-  };
   console.log(
     `landing spread: x ±${sd(landed.map((r) => r.landX)).toFixed(2)} m, ` +
       `y ±${sd(landed.map((r) => r.landY)).toFixed(2)} m, ` +
@@ -387,5 +438,7 @@ function main(): void {
   }
 }
 
-main();
-aiServes();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+  aiServes();
+}

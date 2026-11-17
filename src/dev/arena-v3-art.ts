@@ -70,6 +70,27 @@ const SEAT_SHIRTS = [
 const SEAT_SKINS = ['#f2c6a0', '#dfa877', '#c08553', '#94602f', '#6b4324'];
 const SEAT_HAIRS = ['#241a16', '#0f0d10', '#54341c', '#7d5326', '#332520', '#8d8d95'];
 
+function shadeHex(hex: string, factor: number): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return hex;
+  const n = Number.parseInt(m[1], 16);
+  const r = Math.max(0, Math.min(255, Math.round(((n >> 16) & 255) * factor)));
+  const g = Math.max(0, Math.min(255, Math.round(((n >> 8) & 255) * factor)));
+  const b = Math.max(0, Math.min(255, Math.round((n & 255) * factor)));
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+}
+
+export const ARENA_V3_ART_CONTRACT = {
+  crowdSpectators: 'manga-profile-busts',
+  crowdHeadPrimitive: 'profile-head-with-hair-and-face-lines',
+  crowdBodyPartsPerSpectator: 22,
+  crowdComposition: 'dense-layered-manga-stand-with-small-readable-busts',
+  crowdMinBustScale: 1.22,
+  crowdMaxSpectatorsPerRow: 38,
+  crowdRows: 5,
+  crowdDetail: 'hair-face-collar-arm-ink-lines',
+} as const;
+
 /**
  * How strongly a shape at scene x competes with the HUD scoreboard.
  *
@@ -251,6 +272,180 @@ function drawLightBank(ctx: CanvasRenderingContext2D, x: number, y: number, stre
   ctx.restore();
 }
 
+function drawSpectatorBust(
+  ctx: CanvasRenderingContext2D,
+  rng: Rng,
+  cx: number,
+  cy: number,
+  s: number,
+  alpha: number,
+): void {
+  const shirt = SEAT_SHIRTS[rng.int(0, SEAT_SHIRTS.length)];
+  const skin = SEAT_SKINS[rng.int(0, SEAT_SKINS.length)];
+  const hair = SEAT_HAIRS[rng.int(0, SEAT_HAIRS.length)];
+  const trim = rng.chance(0.5) ? `rgba(${GOLD},0.58)` : `rgba(${CYAN},0.52)`;
+  const lean = rng.spread(0.1);
+  const headW = s * rng.range(15.6, 18.2);
+  const headH = s * rng.range(20.8, 24.0);
+  const torsoW = s * rng.range(38, 48);
+  const torsoH = s * rng.range(42, 54);
+  const shoulderY = cy + headH * 0.64;
+  const bodyY = shoulderY + s * 7.2;
+  const sleeve = shadeHex(shirt, 0.74);
+  const outline = 'rgba(2,5,12,0.76)';
+  const facing = rng.chance(0.5) ? -1 : 1;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  // Seat shadow behind the person, so empty seats and bodies do not read as
+  // a grid of dots.
+  ctx.fillStyle = 'rgba(5,10,18,0.34)';
+  ctx.beginPath();
+  ctx.ellipse(cx, bodyY + torsoH * 0.64, torsoW * 0.62, torsoH * 0.28, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Neck, placed before the shirt so it tucks behind the collar.
+  ctx.fillStyle = skin;
+  ctx.beginPath();
+  ctx.roundRect(cx - s * 3.2, shoulderY - s * 1.8, s * 6.4, s * 11.2, s * 1.6);
+  ctx.fill();
+  ctx.lineWidth = Math.max(1.2, s * 0.72);
+  ctx.strokeStyle = outline;
+  ctx.stroke();
+
+  // Forearms and sleeves first. These are angled with visible hands; otherwise
+  // the crowd collapses back into round coloured markers at runtime scale.
+  ctx.strokeStyle = sleeve;
+  ctx.lineWidth = Math.max(3.6, s * 4.5);
+  ctx.beginPath();
+  ctx.moveTo(cx - torsoW * 0.44, bodyY + torsoH * 0.2);
+  ctx.quadraticCurveTo(
+    cx - torsoW * 0.56,
+    bodyY + torsoH * 0.4,
+    cx - torsoW * rng.range(0.66, 0.78),
+    bodyY + torsoH * rng.range(0.55, 0.74),
+  );
+  ctx.moveTo(cx + torsoW * 0.44, bodyY + torsoH * 0.2);
+  ctx.quadraticCurveTo(
+    cx + torsoW * 0.56,
+    bodyY + torsoH * 0.4,
+    cx + torsoW * rng.range(0.66, 0.78),
+    bodyY + torsoH * rng.range(0.55, 0.74),
+  );
+  ctx.stroke();
+  ctx.strokeStyle = skin;
+  ctx.lineWidth = Math.max(2.2, s * 2.6);
+  ctx.beginPath();
+  ctx.moveTo(cx - torsoW * 0.66, bodyY + torsoH * 0.58);
+  ctx.lineTo(cx - torsoW * 0.78, bodyY + torsoH * 0.78);
+  ctx.moveTo(cx + torsoW * 0.66, bodyY + torsoH * 0.58);
+  ctx.lineTo(cx + torsoW * 0.78, bodyY + torsoH * 0.78);
+  ctx.stroke();
+
+  // Shoulders and torso: angular jacket/bust silhouette, not a loose circle.
+  ctx.fillStyle = shirt;
+  ctx.beginPath();
+  ctx.moveTo(cx - torsoW * 0.62, bodyY + torsoH * 0.86);
+  ctx.lineTo(cx - torsoW * 0.58, bodyY + torsoH * 0.26);
+  ctx.quadraticCurveTo(cx - torsoW * 0.5, bodyY + torsoH * 0.02, cx - torsoW * 0.28, bodyY - torsoH * 0.08);
+  ctx.lineTo(cx - torsoW * 0.08, bodyY + torsoH * 0.03);
+  ctx.lineTo(cx + torsoW * 0.08, bodyY + torsoH * 0.03);
+  ctx.quadraticCurveTo(cx + torsoW * 0.5, bodyY + torsoH * 0.02, cx + torsoW * 0.58, bodyY + torsoH * 0.26);
+  ctx.lineTo(cx + torsoW * 0.62, bodyY + torsoH * 0.86);
+  ctx.lineTo(cx + torsoW * 0.28, bodyY + torsoH * 0.96);
+  ctx.quadraticCurveTo(cx, bodyY + torsoH * 1.02, cx - torsoW * 0.28, bodyY + torsoH * 0.96);
+  ctx.closePath();
+  ctx.fill();
+  ctx.lineWidth = Math.max(1.5, s * 0.95);
+  ctx.strokeStyle = outline;
+  ctx.stroke();
+
+  // Collar/neck breaks the single-colour blob at the scale the game displays.
+  ctx.fillStyle = 'rgba(4,7,12,0.3)';
+  ctx.beginPath();
+  ctx.moveTo(cx - s * 8.6, bodyY + s * 1.0);
+  ctx.lineTo(cx - s * 2.2, bodyY + s * 9.6);
+  ctx.lineTo(cx, bodyY + s * 5.0);
+  ctx.lineTo(cx + s * 2.2, bodyY + s * 9.6);
+  ctx.lineTo(cx + s * 8.6, bodyY + s * 1.0);
+  ctx.lineTo(cx + s * 3.8, bodyY + s * 1.7);
+  ctx.lineTo(cx, bodyY + s * 6.4);
+  ctx.lineTo(cx - s * 3.8, bodyY + s * 1.7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = trim;
+  ctx.lineWidth = Math.max(1.2, s * 0.78);
+  ctx.beginPath();
+  ctx.moveTo(cx - torsoW * 0.28, bodyY + torsoH * 0.42);
+  ctx.lineTo(cx + torsoW * 0.28, bodyY + torsoH * 0.42);
+  ctx.moveTo(cx - torsoW * 0.18, bodyY + torsoH * 0.58);
+  ctx.lineTo(cx + torsoW * 0.18, bodyY + torsoH * 0.58);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(4,8,14,0.32)';
+  ctx.lineWidth = Math.max(1.1, s * 0.68);
+  ctx.beginPath();
+  ctx.moveTo(cx - torsoW * 0.34, bodyY + torsoH * 0.22);
+  ctx.lineTo(cx - torsoW * 0.22, bodyY + torsoH * 0.86);
+  ctx.moveTo(cx + torsoW * 0.34, bodyY + torsoH * 0.22);
+  ctx.lineTo(cx + torsoW * 0.22, bodyY + torsoH * 0.86);
+  ctx.stroke();
+
+  // Head and hair are ellipses/paths. Avoiding a circle arc here is deliberate:
+  // in the generated 1280px view, dot heads were the main thing that made the
+  // stand look like a debug scatter plot.
+  ctx.translate(cx, cy);
+  ctx.rotate(lean);
+  ctx.scale(facing, 1);
+  ctx.fillStyle = skin;
+  ctx.beginPath();
+  ctx.moveTo(-headW * 0.34, -headH * 0.22);
+  ctx.bezierCurveTo(-headW * 0.42, -headH * 0.54, headW * 0.15, -headH * 0.58, headW * 0.38, -headH * 0.22);
+  ctx.bezierCurveTo(headW * 0.54, headH * 0.08, headW * 0.28, headH * 0.42, -headW * 0.08, headH * 0.38);
+  ctx.bezierCurveTo(-headW * 0.36, headH * 0.32, -headW * 0.48, headH * 0.05, -headW * 0.34, -headH * 0.22);
+  ctx.closePath();
+  ctx.fill();
+  ctx.lineWidth = Math.max(1.2, s * 0.82);
+  ctx.strokeStyle = outline;
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(28,18,16,0.72)';
+  ctx.lineWidth = Math.max(1.0, s * 0.78);
+  ctx.beginPath();
+  ctx.moveTo(headW * 0.04, -headH * 0.08);
+  ctx.lineTo(headW * 0.24, -headH * 0.1);
+  ctx.moveTo(headW * 0.15, headH * 0.0);
+  ctx.quadraticCurveTo(headW * 0.36, headH * 0.08, headW * 0.23, headH * 0.19);
+  ctx.moveTo(-headW * 0.1, headH * 0.22);
+  ctx.quadraticCurveTo(headW * 0.08, headH * 0.32, headW * 0.28, headH * 0.22);
+  ctx.stroke();
+
+  ctx.fillStyle = hair;
+  ctx.beginPath();
+  ctx.moveTo(-headW * 0.54, -headH * 0.18);
+  ctx.bezierCurveTo(-headW * 0.42, -headH * 0.68, headW * 0.08, -headH * 0.78, headW * 0.48, -headH * 0.34);
+  ctx.lineTo(headW * 0.36, -headH * 0.06);
+  ctx.lineTo(headW * 0.18, -headH * 0.2);
+  ctx.lineTo(headW * 0.08, headH * 0.16);
+  ctx.lineTo(-headW * 0.14, headH * 0.12);
+  ctx.bezierCurveTo(-headW * 0.38, headH * 0.06, -headW * 0.48, -headH * 0.02, -headW * 0.54, -headH * 0.18);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = outline;
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(230,238,248,0.12)';
+  ctx.lineWidth = Math.max(0.9, s * 0.52);
+  ctx.beginPath();
+  ctx.moveTo(-headW * 0.22, -headH * 0.38);
+  ctx.quadraticCurveTo(headW * 0.02, -headH * 0.52, headW * 0.28, -headH * 0.32);
+  ctx.moveTo(-headW * 0.1, -headH * 0.28);
+  ctx.quadraticCurveTo(headW * 0.04, -headH * 0.34, headW * 0.2, -headH * 0.22);
+  ctx.stroke();
+  ctx.restore();
+}
+
 /* ---------------------------------------------------------------- crowd-far */
 
 /**
@@ -265,55 +460,47 @@ function drawCrowdFar(ctx: CanvasRenderingContext2D): void {
   const rng = new Rng(0x7c11);
   const W = SCENE_WIDTH;
 
-  // Row 0 is furthest and smallest. Each row sits on its own step.
-  //
-  // The first three are sized to the slot that actually exists. Anchored at
-  // scene 400, the barrier lands at screen y 264 and the court's far edge at
-  // 299, so the crowd has sixty-four screen pixels above the boards — 128 in
-  // scene units. Rows four and five run on below that: they are covered by the
-  // barrier over the court, and show in the wedges left and right of it, which
-  // is where a stand carries on.
+  // Five receding rows: the old art used a handful of huge busts, which read
+  // like repeated debug icons in the live game. These rows keep manga heads,
+  // shoulders and ink marks, but scale them down and interleave them densely so
+  // the stand reads as a crowd first and individual spectators second.
   const rows = [
-    { y: 6, scale: 0.58, alpha: 0.5 },
-    { y: 46, scale: 0.68, alpha: 0.62 },
-    { y: 90, scale: 0.78, alpha: 0.72 },
-    { y: 142, scale: 0.9, alpha: 0.78 },
-    { y: 204, scale: 1.02, alpha: 0.82 },
+    { y: -54, scale: 1.22, alpha: 0.58, phase: 0 },
+    { y: -12, scale: 1.42, alpha: 0.72, phase: 0.48 },
+    { y: 38, scale: 1.64, alpha: 0.86, phase: 0.16 },
+    { y: 96, scale: 1.86, alpha: 0.92, phase: 0.68 },
+    { y: 164, scale: 2.08, alpha: 0.98, phase: 0.32 },
   ];
 
   for (const row of rows) {
     // The step the row sits on.
     ctx.fillStyle = `rgba(11,23,38,${0.55 + row.alpha * 0.3})`;
-    ctx.fillRect(0, row.y - 6, W, 62 * row.scale);
+    ctx.fillRect(0, row.y - 12, W, 42 + 40 * row.scale);
     ctx.fillStyle = 'rgba(140,178,222,0.07)';
     ctx.fillRect(0, row.y - 6, W, 3);
 
-    const step = 34 * row.scale;
-    for (let x = -20; x < W + 20; x += step) {
-      if (rng.chance(0.09)) continue; // empty seats
-      const cx = x + rng.spread(4);
-      const cy = row.y + 28 * row.scale + rng.spread(3);
-      const r = 9.5 * row.scale;
-      ctx.globalAlpha = row.alpha;
-
-      ctx.fillStyle = SEAT_SHIRTS[rng.int(0, SEAT_SHIRTS.length)];
-      ctx.beginPath();
-      ctx.ellipse(cx, cy + r * 1.5, r * 1.8, r * 1.35, 0, Math.PI, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = SEAT_SKINS[rng.int(0, SEAT_SKINS.length)];
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = SEAT_HAIRS[rng.int(0, SEAT_HAIRS.length)];
-      ctx.beginPath();
-      ctx.arc(cx, cy - r * 0.17, r * 0.97, Math.PI * 1.02, Math.PI * 1.98);
-      ctx.closePath();
-      ctx.fill();
-      ctx.globalAlpha = 1;
+    const step = 58 * row.scale;
+    for (let x = -60 + row.phase * step; x < W + 60; x += step) {
+      if (rng.chance(0.07)) continue; // empty seats and aisle breaks
+      const cx = x + rng.spread(7.5 * row.scale);
+      const cy = row.y + 28 * row.scale + rng.spread(3.6 * row.scale);
+      drawSpectatorBust(ctx, rng, cx, cy, row.scale, row.alpha);
     }
   }
+
+  // Soft aisle shadows break the perfect rows and reduce the "same stamp
+  // repeated" feeling without hiding the silhouettes.
+  ctx.save();
+  ctx.globalCompositeOperation = 'multiply';
+  for (const x of [310, 734, 1240, 1795, 2220]) {
+    const g = ctx.createLinearGradient(x - 34, 0, x + 34, 0);
+    g.addColorStop(0, 'rgba(8,14,24,0)');
+    g.addColorStop(0.5, 'rgba(8,14,24,0.28)');
+    g.addColorStop(1, 'rgba(8,14,24,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x - 34, -70, 68, 350);
+  }
+  ctx.restore();
 
   // Two flags, one per side, so the stand has an allegiance. Kept inside the
   // visible slot rather than above it, where the fascia would clip them.
@@ -335,11 +522,11 @@ function drawCrowdFar(ctx: CanvasRenderingContext2D): void {
 
   // Fade the bottom of the bank away, so the rows that continue behind the
   // court do not end on a hard edge in the wedges beside it.
-  const fade = ctx.createLinearGradient(0, 262, 0, 340);
+  const fade = ctx.createLinearGradient(0, 310, 0, 396);
   fade.addColorStop(0, 'rgba(6,12,22,0)');
   fade.addColorStop(1, 'rgba(6,12,22,0.92)');
   ctx.fillStyle = fade;
-  ctx.fillRect(0, 262, W, 78);
+  ctx.fillRect(0, 310, W, 86);
 }
 
 /* ------------------------------------------------------------------ led-mid */
@@ -350,25 +537,27 @@ function drawCrowdFar(ctx: CanvasRenderingContext2D): void {
  * Anchored at scene 520, so its base lands on the far edge of the projected
  * floor at screen y 299 and the court appears to start behind it. Dim on
  * purpose: a ribbon board is scenery at the edge of the eye, and at full
- * strength it pulls attention off the ball.
+ * strength it pulls attention off the ball. It must also stay translucent
+ * enough that the illustrated spectators behind it still read as busts; a
+ * near-opaque fascia turns them back into dot heads in the live canvas.
  */
 function drawLedMid(ctx: CanvasRenderingContext2D): void {
   const W = SCENE_WIDTH;
 
   // Boards.
-  ctx.fillStyle = 'rgba(15,27,47,0.96)';
+  ctx.fillStyle = 'rgba(15,27,47,0.54)';
   ctx.fillRect(0, 8, W, 46);
-  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  ctx.fillStyle = 'rgba(255,255,255,0.09)';
   ctx.fillRect(0, 8, W, 12);
   const panels = 18;
   const step = W / panels;
   for (let i = 0; i < panels; i++) {
-    ctx.fillStyle = i % 2 ? `rgba(90,140,220,0.13)` : `rgba(${GOLD},0.1)`;
+    ctx.fillStyle = i % 2 ? `rgba(90,140,220,0.2)` : `rgba(${GOLD},0.16)`;
     ctx.fillRect(i * step + step * 0.09, 16, step * 0.82, 30);
   }
 
   // The ribbon: a dark strip of lit cells.
-  ctx.fillStyle = '#070a14';
+  ctx.fillStyle = 'rgba(7,10,20,0.72)';
   ctx.fillRect(0, 54, W, 30);
   const cell = 26;
   for (let i = 0; i * cell < W; i++) {
@@ -389,7 +578,7 @@ function drawLedMid(ctx: CanvasRenderingContext2D): void {
 
   // Kick plate, fading out where the floor takes over.
   const base = ctx.createLinearGradient(0, 84, 0, 118);
-  base.addColorStop(0, 'rgba(5,10,18,0.9)');
+  base.addColorStop(0, 'rgba(5,10,18,0.42)');
   base.addColorStop(1, 'rgba(5,10,18,0)');
   ctx.fillStyle = base;
   ctx.fillRect(0, 84, W, 34);

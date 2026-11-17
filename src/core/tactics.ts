@@ -70,6 +70,143 @@ const lane = (x: number): number => clamp(x, -COURT_HALF_WIDTH + 0.5, COURT_HALF
  */
 const frontLane = (slot: number): number => (slot === 4 ? LEFT : slot === 3 ? MIDDLE : RIGHT);
 
+/** Three named passers, stable for the rotation; the setter is released. */
+export function servePassers(players: readonly Player[]): number[] {
+  const dir = attackDir(players[0].side);
+  const priority = (p: Player): number => p.role === 'libero' ? 0 : p.role === 'outside' ? 1 : 2;
+  return players.filter(p => p.role !== 'setter' && !(p.role === 'middle' && isFrontRow(p.rotationSlot)))
+    .sort((a, b) => priority(a) - priority(b) || a.id - b.id).slice(0, 3)
+    .sort((a, b) => a.home.x * dir - b.home.x * dir || a.id - b.id).map(p => p.id);
+}
+
+/** Assign distinct specialist lanes AFTER the serve, not three copies of a role spot. */
+function specialistLanes(players: readonly Player[], front: boolean): Map<number, number> {
+  const rank = (p: Player): number => p.role === 'outside' ? 0
+    : p.role === 'middle' || p.role === 'libero' ? 1 : 2;
+  const row = players.filter(p => isFrontRow(p.rotationSlot) === front)
+    .sort((a, b) => rank(a) - rank(b) || a.id - b.id);
+  return new Map(row.map((p, i) => [p.id, [LEFT, MIDDLE, RIGHT][i]]));
+}
+
+/** Weighted ordered fit: preserve the passers' lanes while respecting rotation. */
+function orderedRow(xs: number[], weights: number[]): number[] {
+  const gap = 0.65;
+  const pools: { from: number; to: number; weight: number; sum: number }[] = [];
+  xs.forEach((x, i) => {
+    pools.push({ from: i, to: i, weight: weights[i], sum: (x - i * gap) * weights[i] });
+    while (pools.length > 1) {
+      const right = pools.at(-1)!, left = pools.at(-2)!;
+      if (left.sum / left.weight <= right.sum / right.weight) break;
+      pools.splice(-2, 2, { from: left.from, to: right.to, weight: left.weight + right.weight, sum: left.sum + right.sum });
+    }
+  });
+  const out = xs.slice();
+  for (const pool of pools) for (let i = pool.from; i <= pool.to; i++) {
+    out[i] = clamp(pool.sum / pool.weight, -3.9, 3.9 - (xs.length - 1) * gap) + i * gap;
+  }
+  return out;
+}
+
+/** Set up BEFORE the whistle. No penetration or switches until the serve is struck. */
+export function serveFormation(players: readonly Player[], serving: boolean): Map<number, Vec3> {
+  const side = players[0].side, dir = attackDir(side);
+  const passers = servePassers(players);
+  const positions = new Map<number, Vec3>();
+  for (const p of players) {
+    const front = isFrontRow(p.rotationSlot), index = passers.indexOf(p.id);
+    const x = frontLane(p.rotationSlot === 5 ? 4 : p.rotationSlot === 6 ? 3 : p.rotationSlot);
+    if (serving) positions.set(p.id, spot(side, x, front ? 0.95 : p.rotationSlot === 6 ? 6.8 : 6.1));
+    else if (index >= 0) positions.set(p.id, spot(side, [LEFT, MIDDLE, RIGHT][index], index === 1 ? 6.9 : 6.2));
+    else positions.set(p.id, spot(side, x, front ? 1.35 : p.role === 'setter' ? 2.1 : 4.8));
+  }
+  if (!serving) {
+    for (const slots of [[4, 3, 2], [5, 6, 1]]) {
+      const row = slots.map(slot => players.find(p => p.rotationSlot === slot)!);
+      const xs = orderedRow(row.map(p => positions.get(p.id)!.x * dir), row.map(p => passers.includes(p.id) ? 12 : 1));
+      row.forEach((p, i) => { positions.get(p.id)!.x = xs[i] * dir; });
+    }
+    for (const [frontSlot, backSlot] of [[4, 5], [3, 6], [2, 1]]) {
+      const front = players.find(p => p.rotationSlot === frontSlot)!;
+      const back = players.find(p => p.rotationSlot === backSlot)!;
+      const depth = Math.max(Math.abs(positions.get(back.id)!.y), Math.abs(positions.get(front.id)!.y) + 0.85);
+      positions.get(back.id)!.y = -dir * Math.min(8.1, depth);
+    }
+  }
+  return positions;
+}
+
+export function attackerLane(p: Player): number {
+  return p.role === 'middle' ? 0 : p.role === 'opposite' ? HITTER_PIN : -HITTER_PIN;
+}
+
+/** 5-1 transition: one setter, one selected hitter, distinct cover lanes. */
+export function attackFormation(players: readonly Player[], attackerId: number, attackX: number, _touches: number): Map<number, Vec3> {
+  const side = players[0].side, dir = attackDir(side), hitX = clamp(attackX * dir, LEFT, RIGHT);
+  const front = specialistLanes(players, true), back = specialistLanes(players, false);
+  const backAttack = !front.has(attackerId);
+  const positions = new Map<number, Vec3>();
+  const frontCover = players.filter(p => front.has(p.id) && p.id !== attackerId && p.role !== 'setter')
+    .sort((a, b) => Math.abs(front.get(a.id)! - hitX) - Math.abs(front.get(b.id)! - hitX));
+  for (const p of players) {
+    if (p.role === 'setter') positions.set(p.id, spot(side, SETTER_X, SETTER_Y));
+    else if (p.id === attackerId) positions.set(p.id, spot(side, attackerLane(p), 3.7));
+    else if (front.has(p.id)) {
+      const coverIndex = frontCover.findIndex(q => q.id === p.id);
+      // The named receiver owns the first ball; the other front-row players
+      // can clear the planned hitter's route during its flight. Waiting for
+      // the pass contact left only a quick set's fraction of a second to move
+      // several metres, so those bodies were still under the eventual jump.
+      // A pipe has three front-row teammates available. Keep all three in
+      // distinct lanes ahead of its route; the former two-cover template sent
+      // two to the same destination and pulled the middle through the jump.
+      positions.set(p.id, backAttack ? spot(side, front.get(p.id)!, front.get(p.id) === 0 ? 1.0 : 1.45)
+        : coverIndex === 0 ? spot(side, hitX * 0.42, 3.05)
+          : spot(side, hitX >= 0 ? LEFT + 0.5 : RIGHT - 0.5, 4.25));
+    } else {
+      const ownLane = back.get(p.id)!;
+      positions.set(p.id, spot(side, lane(ownLane + hitX * 0.08), ownLane === 0 ? 6.8 : 5.75));
+    }
+  }
+  return positions;
+}
+
+/** Keep a cover destination behind and clear of the planned landing lane.
+ * This is a tactical floor position, never a screen-space sprite displacement.
+ * Adding (radius - distance) to depth fails when starting IN FRONT of the
+ * hitter: it can move a setter even closer to the landing point. Solve the
+ * required back depth using the already-assigned lateral lane instead.
+ */
+export function clearAttackLanding(side: Side, target: Vec3, attack: Vec3, radius = 1.95): Vec3 {
+  const cover = legalSpot(side, target), dir = attackDir(side);
+  const lateral = Math.abs(cover.x - attack.x);
+  if (lateral >= radius) return cover;
+  const behind = Math.sqrt(radius * radius - lateral * lateral);
+  const depth = Math.max(-dir * cover.y, -dir * attack.y + behind);
+  return legalSpot(side, v3(cover.x, -dir * depth, 0));
+}
+
+/** Read the set with the block; the back row keeps three distinct responsibilities. */
+export function defenceFormation(players: readonly Player[], threatX = 0, blockers: number[] = []): Map<number, Vec3> {
+  const side = players[0].side, dir = attackDir(side), tx = clamp(threatX * dir, LEFT, RIGHT);
+  const front = specialistLanes(players, true), back = specialistLanes(players, false);
+  const tipCover = players.filter(p => front.has(p.id) && !blockers.includes(p.id))
+    .sort((a, b) => Math.abs(front.get(a.id)! + tx) - Math.abs(front.get(b.id)! + tx));
+  return new Map(players.map(p => {
+    const index = blockers.indexOf(p.id);
+    let position: Vec3;
+    if (index >= 0) position = spot(side, lane(tx + (index === 0 ? 0 : tx > 0 ? -0.9 : 0.9)), 0.8);
+    else if (front.has(p.id)) position = !blockers.length ? spot(side, front.get(p.id)!, 0.95)
+      : tipCover[0]?.id === p.id ? spot(side, lane(-tx * 0.5), 3.3)
+        : spot(side, front.get(p.id)! * 0.8, 4.35);
+    else {
+      const ownLane = back.get(p.id)!;
+      const behindBlock = ownLane !== 0 && (ownLane > 0) === (tx > 0);
+      position = spot(side, lane(ownLane + tx * 0.12), ownLane === 0 ? 7.2 : behindBlock ? 6.7 : 5.9);
+    }
+    return [p.id, position];
+  }));
+}
+
 /**
  * Serve reception: the three-passer W.
  *
@@ -127,9 +264,11 @@ export function attackSpot(p: Player, attacker: Player | null, ballX: number): V
   // Where the swing is coming from, in our own frame of reference.
   const hitX = clamp((attacker ? attacker.pos.x : ballX) * dir, LEFT, RIGHT);
 
-  // The other front-row player covers the inside shoulder of the hitter; the
-  // back row keeps its three lanes and only leans towards the swing.
-  if (front) return spot(side, lane(hitX + (hitX > 0 ? -1.7 : 1.7)), 2.7);
+  // The other front-row player covers the inside shoulder of the hitter, but
+  // from a full step deeper. At 2.7 m this body drew almost underneath a real
+  // spike in the side-on camera, so the viewer still read the play as "several
+  // attackers on the ball" even when only one hitter had the attack job.
+  if (front) return spot(side, lane(hitX + (hitX > 0 ? -2.05 : 2.05)), 4.7);
   if (p.role === 'middle' || p.role === 'libero') {
     return spot(side, lane(MIDDLE + hitX * 0.15), 6.6);
   }

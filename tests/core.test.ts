@@ -12,11 +12,34 @@ import {
   setTarget,
 } from '../src/core/rules';
 import { Team } from '../src/core/team';
-import { World } from '../src/core/world';
+import { World, idleCommand, type Command } from '../src/core/world';
 import { TEAMS } from '../src/game/teams';
+import { runServeSweep, summarizeServeSweep } from '../tools/serve-lab';
 
 const makeWorld = (seed = 42) =>
   new World({ home: TEAMS[0], away: TEAMS[1], seed, difficulty: 1, humanControlsHome: false });
+
+const aggressiveHumanCommand = (world: World, step: number): Command => {
+  const cmd = idleCommand();
+  cmd.aim = { x: 0, depth: 0.4 };
+  if (world.phase === 'serve') {
+    // A playable human serve is an edge, not a level held forever: tap to toss,
+    // then tap again on the timing cue. Holding the button down for simulated
+    // minutes used to rely on the eight-second auto-whistle, which is exactly
+    // the behaviour the game must not have.
+    if (world.serveTossInFlight) {
+      cmd.actionPressed = world.serveStrikeReady;
+      cmd.actionHeld = world.serveStrikeReady;
+    } else {
+      cmd.actionPressed = step % 30 === 0;
+      cmd.actionHeld = step % 30 === 0;
+    }
+    return cmd;
+  }
+  cmd.actionPressed = true;
+  cmd.actionHeld = true;
+  return cmd;
+};
 
 describe('Rng', () => {
   it('is deterministic for a given seed', () => {
@@ -61,6 +84,19 @@ describe('scoring rules', () => {
 });
 
 describe('rotation', () => {
+  it('moves every rotation holder through the regulation clockwise order', () => {
+    const team = new Team('home', TEAMS[0], new Rng(1), 0);
+    const holders = team.squad.filter((p) => p.role !== 'libero');
+    const before = new Map(holders.map((p) => [p.id, p.rotationSlot]));
+    team.rotate();
+    for (const p of holders) {
+      const old = before.get(p.id) as number;
+      const expected = old === 1 ? 6 : old - 1;
+      expect(p.rotationSlot).toBe(expected);
+    }
+    expect(team.server.id).toBe(holders.find((p) => before.get(p.id) === 2)?.id);
+  });
+
   it('cycles all six slots and returns to the start', () => {
     const team = new Team('home', TEAMS[0], new Rng(1), 0);
     const initial = team.players.map((p) => p.rotationSlot);
@@ -77,6 +113,22 @@ describe('rotation', () => {
     }
   });
 
+  it('reports libero substitutions across a full rotation cycle', () => {
+    const team = new Team('home', TEAMS[0], new Rng(1), 0);
+    const changes = [];
+    for (let i = 0; i < 6; i++) {
+      const report = team.rotate();
+      if (report.liberoChange) changes.push(report.liberoChange);
+    }
+    expect(changes.some((c) => c.entered)).toBe(true);
+    expect(changes.some((c) => !c.entered)).toBe(true);
+    for (const c of changes) {
+      expect(c.name).toBeTruthy();
+      expect(c.slot).toBeGreaterThanOrEqual(1);
+      expect(c.slot).toBeLessThanOrEqual(6);
+    }
+  });
+
   it('gives every player a distinct slot', () => {
     const team = new Team('away', TEAMS[1], new Rng(9), 100);
     for (let i = 0; i < 6; i++) {
@@ -84,6 +136,54 @@ describe('rotation', () => {
       expect(slots).toEqual([1, 2, 3, 4, 5, 6]);
       team.rotate();
     }
+  });
+
+  it('announces and visibly delays a side-out rotation instead of teleporting it', () => {
+    const world = makeWorld(31);
+    const away = world.away;
+    const before = new Map(away.squad.map((p) => [p.id, p.rotationSlot]));
+    const score = world as unknown as {
+      awardPoint(side: 'home' | 'away', reason: 'out'): void;
+    };
+    score.awardPoint('away', 'out');
+    expect(world.rotatingSide).toBe('away');
+    for (const p of away.squad) expect(p.rotationSlot).toBe(before.get(p.id));
+
+    for (let i = 0; i < 120 * 1.7; i++) world.step(null);
+    const events = world.drainEvents();
+    expect(events.some((ev) => ev.type === 'rotation' && ev.side === 'away')).toBe(true);
+    for (const p of away.squad.filter((p) => p.role !== 'libero')) {
+      const old = before.get(p.id) as number;
+      expect(p.rotationSlot).toBe(old === 1 ? 6 : old - 1);
+    }
+  });
+
+  it('emits a libero-change event when delayed rotation changes the substitution', () => {
+    const world = makeWorld(31);
+    const away = world.away;
+    const first = away.rotate();
+    expect(first.liberoChange).toBeUndefined();
+
+    const internals = world as unknown as {
+      pendingRotationSide: 'away';
+      rotationApplied: boolean;
+    };
+    world.phase = 'dead';
+    world.phaseTimer = 1.7;
+    internals.pendingRotationSide = 'away';
+    internals.rotationApplied = false;
+
+    world.step(null);
+    const change = world
+      .drainEvents()
+      .find((ev) => ev.type === 'liberoChange' && ev.side === 'away');
+    expect(change).toMatchObject({
+      type: 'liberoChange',
+      side: 'away',
+      name: expect.any(String),
+      entered: false,
+      slot: expect.any(Number),
+    });
   });
 });
 
@@ -174,6 +274,120 @@ describe('arc solvers', () => {
 });
 
 describe('match simulation', () => {
+  it('keeps a human server in ready stance until the player presses serve', () => {
+    const world = new World({
+      home: TEAMS[0],
+      away: TEAMS[1],
+      seed: 78,
+      difficulty: 1,
+      humanControlsHome: true,
+    });
+    const server = world.home.server;
+
+    for (let i = 0; i < 180; i++) {
+      world.step(idleCommand());
+      world.drainEvents();
+    }
+
+    expect(world.phase).toBe('serve');
+    expect(world.serveTossInFlight).toBe(false);
+    expect(world.ball.frozen).toBe(true);
+    expect(server.anim).toBe('ready');
+    expect(server.presentation.action).toBe('none');
+  });
+
+  it('does not auto-serve for the human after the old eight-second whistle timeout', () => {
+    const world = new World({
+      home: TEAMS[0],
+      away: TEAMS[1],
+      seed: 79,
+      difficulty: 1,
+      humanControlsHome: true,
+    });
+    const server = world.home.server;
+    const contacts: string[] = [];
+
+    for (let i = 0; i < 120 * 10; i++) {
+      world.step(idleCommand());
+      for (const ev of world.drainEvents()) {
+        if (ev.type === 'contact') contacts.push(ev.kind);
+      }
+    }
+
+    expect(world.phase).toBe('serve');
+    expect(world.serveTossInFlight).toBe(false);
+    expect(world.ball.frozen).toBe(true);
+    expect(server.anim).toBe('ready');
+    expect(server.presentation.action).toBe('none');
+    expect(contacts).not.toContain('serve');
+  });
+
+  it('turns a loaded human serve into a visible run-up and airborne contact', () => {
+    const world = new World({
+      home: TEAMS[0],
+      away: TEAMS[1],
+      seed: 77,
+      difficulty: 1,
+      humanControlsHome: true,
+    });
+    const server = world.home.server;
+    const readyY = server.pos.y;
+    let holdMinY = server.pos.y;
+    let holdMaxY = server.pos.y;
+    let runMinY = server.pos.y;
+    let runMaxY = server.pos.y;
+    let contact: { airborne: boolean; height: number } | null = null;
+
+    // Load long enough to choose the jump serve. The server must stay still
+    // while the ball is still in hand; the run-up starts only after release.
+    for (let i = 0; i < 66; i++) {
+      const cmd = idleCommand();
+      cmd.actionHeld = true;
+      cmd.actionPressed = i === 0;
+      world.step(cmd);
+      holdMinY = Math.min(holdMinY, server.pos.y);
+      holdMaxY = Math.max(holdMaxY, server.pos.y);
+      world.drainEvents();
+    }
+    world.step(idleCommand()); // release: toss and reverse into the approach
+
+    for (let i = 0; i < 240 && !contact; i++) {
+      const cmd = idleCommand();
+      if (world.serveStrikeReady) cmd.actionPressed = true;
+      world.step(cmd);
+      runMinY = Math.min(runMinY, server.pos.y);
+      runMaxY = Math.max(runMaxY, server.pos.y);
+      for (const ev of world.drainEvents()) {
+        if (ev.type === 'contact' && ev.kind === 'serve' && ev.playerId === server.id) {
+          contact = { airborne: ev.airborne, height: ev.height };
+        }
+      }
+    }
+
+    expect(holdMinY).toBeCloseTo(readyY, 2);
+    expect(holdMaxY).toBeCloseTo(readyY, 2);
+    expect(runMaxY - runMinY).toBeGreaterThanOrEqual(1.0);
+    expect(server.lastApproachDistance).toBeGreaterThanOrEqual(1.2);
+    expect(contact).toMatchObject({ airborne: true });
+    expect(contact?.height ?? 0).toBeGreaterThan(0.5);
+  });
+
+  it('varies jump-serve trajectories instead of landing every serve in one corridor', () => {
+    const results = runServeSweep(32);
+    const summary = summarizeServeSweep(results);
+
+    expect(summary.served).toBeGreaterThanOrEqual(24);
+    expect(summary.jumped).toBeGreaterThanOrEqual(10);
+    expect(summary.inLandings).toBeGreaterThanOrEqual(20);
+    // The user-visible failure is a canned serve: same lane, same depth, same
+    // pace. Gate all three dimensions so variety cannot be faked by only
+    // changing speed while the ball keeps landing in one place.
+    expect(summary.landingSpreadX).toBeGreaterThanOrEqual(0.75);
+    expect(summary.landingSpreadY).toBeGreaterThanOrEqual(0.9);
+    expect(summary.speedSpread).toBeGreaterThanOrEqual(2.0);
+    expect(summary.jumpServeMeanSpeed).toBeGreaterThan(summary.standingServeMeanSpeed + 2.5);
+  });
+
   it('completes a full match within a sane number of steps', () => {
     const world = makeWorld(3);
     let steps = 0;
@@ -336,6 +550,224 @@ describe('match simulation', () => {
     expect(inTheNet / (samples * 12)).toBeLessThan(0.02);
   });
 
+  it('lets the human call a coordinated two-player block at the net', () => {
+    const world = new World({
+      home: TEAMS[0],
+      away: TEAMS[1],
+      seed: 21,
+      difficulty: 1,
+      humanControlsHome: true,
+    });
+    world.phase = 'rally';
+    world.possession = 'away';
+    world.ball.frozen = false;
+    world.ball.grounded = false;
+    world.ball.pos = v3(0.25, 1.5, NET_HEIGHT + 0.9);
+    world.ball.vel = v3(0, -1, -0.2);
+
+    const blockers = world.home.frontRow();
+    const caller = blockers[1];
+    const mate = blockers[0];
+    world.home.activeId = caller.id;
+    caller.pos = v3(0.05, -0.72, 0);
+    mate.pos = v3(0.95, -0.82, 0);
+    // Closer in X, but not at the tape: this body must not suppress the valid
+    // two-man block with the mate already beside the caller.
+    blockers[2].pos = v3(0.18, -4.2, 0);
+    for (const p of blockers) {
+      p.height = 0;
+      p.vertVel = 0;
+      p.downTime = 0;
+      p.lockout = 0;
+    }
+
+    world.step({
+      ...idleCommand(),
+      actionPressed: true,
+      actionHeld: true,
+    });
+    world.step(idleCommand());
+
+    const attempts = world
+      .drainEvents()
+      .filter((ev): ev is { type: 'blockAttempt'; side: 'home'; playerId: number; height: number } => {
+        return ev.type === 'blockAttempt' && ev.side === 'home';
+      })
+      .map((ev) => ev.playerId);
+
+    expect(new Set(attempts)).toEqual(new Set([caller.id, mate.id]));
+    expect(caller.airborne).toBe(true);
+    expect(mate.airborne).toBe(true);
+    expect(caller.presentation.action).toBe('block');
+    expect(mate.presentation.action).toBe('block');
+  });
+
+  it('treats the jump button as a manual block call at the tape', () => {
+    const world = new World({
+      home: TEAMS[0],
+      away: TEAMS[1],
+      seed: 22,
+      difficulty: 1,
+      humanControlsHome: true,
+    });
+    world.phase = 'rally';
+    world.possession = 'away';
+    world.ball.frozen = false;
+    world.ball.grounded = false;
+    world.ball.pos = v3(0.35, 1.4, NET_HEIGHT + 0.7);
+    world.ball.vel = v3(0, -1, -0.2);
+
+    const blockers = world.home.frontRow();
+    const caller = blockers[1];
+    const mate = blockers[0];
+    world.home.activeId = caller.id;
+    // Deliberately inside the action-button block window but outside the old
+    // jump-button-only 2.2 m gate.
+    caller.pos = v3(0.05, -2.32, 0);
+    mate.pos = v3(0.88, -2.28, 0);
+    for (const p of blockers) {
+      p.height = 0;
+      p.vertVel = 0;
+      p.downTime = 0;
+      p.lockout = 0;
+    }
+
+    world.step({
+      ...idleCommand(),
+      jumpPressed: true,
+    });
+    world.step(idleCommand());
+
+    const attempts = world
+      .drainEvents()
+      .filter((ev): ev is { type: 'blockAttempt'; side: 'home'; playerId: number; height: number } => {
+        return ev.type === 'blockAttempt' && ev.side === 'home';
+      })
+      .map((ev) => ev.playerId);
+
+    expect(new Set(attempts)).toEqual(new Set([caller.id, mate.id]));
+    expect(caller.presentation.action).toBe('block');
+    expect(mate.presentation.action).toBe('block');
+  });
+
+  it('switches human control to the net blocker before a manual block jump', () => {
+    const world = new World({
+      home: TEAMS[0],
+      away: TEAMS[1],
+      seed: 24,
+      difficulty: 1,
+      humanControlsHome: true,
+    });
+    world.phase = 'rally';
+    world.possession = 'away';
+    world.ball.frozen = false;
+    world.ball.grounded = false;
+    world.ball.pos = v3(0.12, 1.35, NET_HEIGHT + 0.95);
+    world.ball.vel = v3(0, -0.7, -0.2);
+
+    const blockers = world.home.frontRow();
+    const caller = blockers[1];
+    const mate = blockers[0];
+    const backRow = world.home.players.find((p) => !world.home.isFrontRow(p));
+    expect(backRow).toBeDefined();
+    world.home.activeId = backRow!.id;
+
+    caller.pos = v3(0.04, -0.72, 0);
+    mate.pos = v3(0.82, -0.78, 0);
+    blockers[2].pos = v3(3.4, -0.75, 0);
+    for (const p of world.home.players) {
+      p.height = 0;
+      p.vertVel = 0;
+      p.downTime = 0;
+      p.lockout = 0;
+    }
+
+    // The first frame selects the correct human-controlled blocker for the
+    // visible threat. The player can then press jump on the next frame and the
+    // input goes to the body standing at the tape, not a back-row defender.
+    world.step(idleCommand());
+    expect(world.home.activeId).toBe(caller.id);
+
+    world.step({
+      ...idleCommand(),
+      jumpPressed: true,
+    });
+    world.step(idleCommand());
+
+    const attempts = world
+      .drainEvents()
+      .filter((ev): ev is { type: 'blockAttempt'; side: 'home'; playerId: number; height: number } => {
+        return ev.type === 'blockAttempt' && ev.side === 'home';
+      })
+      .map((ev) => ev.playerId);
+
+    expect(new Set(attempts)).toEqual(new Set([caller.id, mate.id]));
+    expect(caller.presentation.action).toBe('block');
+    expect(mate.presentation.action).toBe('block');
+  });
+
+  it('times an AI double block from a stable read instead of jumping on the first cue frame', () => {
+    const world = new World({
+      home: TEAMS[0],
+      away: TEAMS[1],
+      seed: 23,
+      difficulty: 1,
+      humanControlsHome: false,
+    });
+    world.phase = 'rally';
+    world.possession = 'away';
+    world.touches = 2; // A real set, not the opponent's first pass or serve.
+    world.ball.frozen = false;
+    world.ball.grounded = false;
+    world.ball.pos = v3(0.05, 1.15, NET_HEIGHT + 1.1);
+    world.ball.vel = v3(0, -0.6, -0.35);
+
+    const blockers = world.home.frontRow();
+    const left = blockers[0];
+    const middle = blockers[1];
+    const far = blockers[2];
+    left.pos = v3(-0.72, -0.7, 0);
+    middle.pos = v3(0.08, -0.7, 0);
+    far.pos = v3(3.65, -0.7, 0);
+    for (const p of blockers) {
+      p.height = 0;
+      p.vertVel = 0;
+      p.downTime = 0;
+      p.lockout = 0;
+      p.vel = v3();
+    }
+
+    // First frame reads the cue and arms the decision; it must not look like a
+    // random instant jump the moment the ball happens to be high.
+    world.step(null);
+    expect(world.drainEvents().filter((ev) => ev.type === 'blockAttempt')).toHaveLength(0);
+    expect(blockers.some((p) => p.airborne)).toBe(false);
+
+    const attemptsByFrame: number[][] = [];
+    const firstAttemptFrame = new Map<number, number>();
+    for (let i = 0; i < 10; i++) {
+      world.step(null);
+      const ids = world
+        .drainEvents()
+        .filter((ev): ev is { type: 'blockAttempt'; side: 'home'; playerId: number; height: number } => {
+          return ev.type === 'blockAttempt' && ev.side === 'home';
+        })
+        .map((ev) => ev.playerId);
+      for (const id of ids) {
+        if (!firstAttemptFrame.has(id)) firstAttemptFrame.set(id, i);
+      }
+      if (ids.length) attemptsByFrame.push(ids);
+    }
+
+    const attempts = new Set(attemptsByFrame.flat());
+    expect(attempts).toEqual(new Set([middle.id, left.id]));
+    expect(attempts.has(far.id)).toBe(false);
+    expect(Math.abs(firstAttemptFrame.get(middle.id)! - firstAttemptFrame.get(left.id)!)).toBeLessThanOrEqual(4);
+    expect(middle.presentation.action).toBe('block');
+    expect(left.presentation.action).toBe('block');
+    expect(Math.abs(middle.pos.x - left.pos.x)).toBeGreaterThan(0.45);
+  });
+
   it('never leaves the floor to pass, and never blocks a serve', () => {
     // A human mashing the button, which is exactly how the rules got broken:
     // the press-to-jump shortcut fired on any high ball, so trying to pass a
@@ -347,23 +779,16 @@ describe('match simulation', () => {
       difficulty: 1,
       humanControlsHome: true,
     });
-    const mash = () => ({
-      moveX: 0,
-      moveY: 0,
-      actionPressed: true,
-      actionHeld: true,
-      jumpPressed: false,
-      aim: { x: 0, depth: 0.4 },
-    });
-
     let bumps = 0;
     let airborneBumps = 0;
     let serveBlocks = 0;
     const airborne = new Map<number, boolean>();
 
-    for (let i = 0; i < 120 * 60 * 5; i++) {
+    // Six simulated minutes keeps the sample above the evidence floor even
+    // when a more effective block ends a handful of rallies before the dig.
+    for (let i = 0; i < 120 * 60 * 6; i++) {
       const duringServe = world.serveInFlight;
-      world.step(mash());
+      world.step(aggressiveHumanCommand(world, i));
       // Read the bodies AFTER the step: contacts are resolved at the end of it,
       // so a player sampled beforehand may well have landed in between — which
       // is how this test first accused the game of three fouls it never made.
@@ -394,23 +819,17 @@ describe('match simulation', () => {
       difficulty: 1,
       humanControlsHome: true,
     });
-    const mash = () => ({
-      moveX: 0,
-      moveY: 0,
-      actionPressed: true,
-      actionHeld: true,
-      jumpPressed: false,
-      aim: { x: 0, depth: 0.4 },
-    });
-
     let reachOvers = 0;
     let longestRun = 0;
     let run = 0;
     let runSide = '';
     let contacts = 0;
 
-    for (let i = 0; i < 120 * 60 * 6; i++) {
-      world.step(mash());
+    // The longer, readable side-out/rotation pause reduces contacts per wall
+    // clock minute, so sample seven simulated minutes without lowering the
+    // evidence floor for reach-over and fourth-touch rules.
+    for (let i = 0; i < 120 * 60 * 7; i++) {
+      world.step(aggressiveHumanCommand(world, i));
       for (const ev of world.drainEvents()) {
         if (ev.type === 'point') {
           run = 0;

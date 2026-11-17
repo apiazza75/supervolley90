@@ -67,8 +67,6 @@ export class Camera {
   offsetX = 0;
   offsetY = 0;
 
-  private shake = 0;
-  private shakePhase = 0;
   private zoom = 1;
 
   resize(width: number, height: number): void {
@@ -76,8 +74,9 @@ export class Camera {
     this.viewHeight = height;
   }
 
-  addShake(amount: number): void {
-    this.shake = Math.min(30, this.shake + amount);
+  addShake(_amount: number): void {
+    // Keep existing event call sites compatible, but never displace the whole
+    // court. Impact emphasis belongs to local ball/floor FX, not camera jitter.
   }
 
   /** Metres-to-pixels, including the viewport scale and the zoom. */
@@ -94,25 +93,28 @@ export class Camera {
     return this.viewHeight * 0.66;
   }
 
-  follow(ballPos: Vec3, dt: number): void {
+  follow(ballPos: Vec3, dt: number, serverPos?: Vec3): void {
     // Gentle pan only. A 2D game of this kind should keep the whole court in
     // frame; the camera is here to add life, not to chase the ball.
     const targetPan = clamp(ballPos.y * 0.1, -1.2, 1.2);
     const nearNet = 1 - clamp(Math.abs(ballPos.y) / COURT_HALF_LENGTH, 0, 1);
 
     this.panY = smoothDamp(this.panY, targetPan, 2.6, dt);
-    this.zoom = smoothDamp(this.zoom, 1 + nearNet * 0.03, 2.0, dt);
+    // A serve starts beyond the end line. Following only the ball cropped the
+    // serving athlete, especially just after service changed sides and the
+    // pan was still returning from the previous rally. Reserve space for the
+    // WHOLE figure immediately; ease back in only after the serve.
+    const serveExtent = serverPos
+      ? Math.abs((serverPos.y - this.panY) * PIXELS_PER_METRE + serverPos.x * DEPTH_SHEAR)
+      : 0;
+    const serveFit = serveExtent > 0 ? Math.min(1, (640 - 64) / serveExtent) : 1.03;
+    this.zoom = Math.min(
+      serveFit,
+      smoothDamp(this.zoom, Math.min(1 + nearNet * 0.03, serveFit), 2.0, dt),
+    );
 
-    if (this.shake > 0.01) {
-      this.shakePhase += dt * 46;
-      this.offsetX = Math.sin(this.shakePhase) * this.shake;
-      this.offsetY = Math.cos(this.shakePhase * 1.37) * this.shake * 0.55;
-      this.shake *= Math.exp(-7 * dt);
-    } else {
-      this.shake = 0;
-      this.offsetX = 0;
-      this.offsetY = 0;
-    }
+    this.offsetX = 0;
+    this.offsetY = 0;
   }
 
   /** Size multiplier for a point at court-width `wx`. */

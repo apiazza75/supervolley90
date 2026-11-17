@@ -18,7 +18,13 @@ import type { Side } from './rules';
 import { attackDir } from './rules';
 
 /** How the body is travelling across the floor. Independent of any skill. */
-export type Locomotion = 'stand' | 'ready' | 'shuffle' | 'run' | 'approach';
+export type Locomotion = 'stand' | 'ready' | 'walk' | 'shuffle' | 'run' | 'approach';
+
+/** Finish the grounded set's arm extension and recovery before AI coverage. */
+export const SET_GROUND_RECOVERY_TIME = .48;
+
+/** The grounded bagher finishes its weight transfer before AI coverage resumes. */
+export const BUMP_GROUND_RECOVERY_TIME = .45;
 
 /** Which volleyball skill is being executed, if any. */
 export type VolleyballAction =
@@ -75,6 +81,25 @@ export const initialPresentation = (): PresentationState => ({
   sourceJob: 'idle',
 });
 
+/** Off-ball coverage and attack setup stay open to the net while adjusting.
+ * A teammate's pass behind the defender is not an instruction to turn the
+ * whole body away, then immediately turn back. A hitter backing off the net
+ * before the licensed run-up needs the same net-facing footwork. This is a
+ * tactical posture, not a gait threshold: a brief faster lateral correction
+ * must not turn the shoulders away and then back when the run latch expires.
+ * Ball pursuit, licensed approach and committed gestures own their orientation.
+ */
+export function keepsNetReadyPosture(pr: PresentationState, direction?: Readonly<{ x: number; y: number }>): boolean {
+  // A setter crossing the court does not turn his back for a small backwards
+  // component of an otherwise lateral pursuit. A genuine lengthwise chase
+  // remains free to turn; its subsequent set still owns its contact facing.
+  const lateralSet = pr.sourceJob === 'set' && direction !== undefined
+    && Math.abs(direction.x) > Math.abs(direction.y);
+  return pr.action === 'none'
+    && (pr.sourceJob === 'cover' || pr.sourceJob === 'block' || pr.sourceJob === 'attack' || lateralSet)
+    && pr.locomotion !== 'approach';
+}
+
 /**
  * Speed below which a body is making a positional correction rather than
  * travelling. Correcting bodies shuffle; they never run and never approach.
@@ -83,6 +108,30 @@ export const SHUFFLE_SPEED = 0.8;
 
 /** Speed above which an unlicensed body is genuinely running. */
 export const RUN_SPEED_THRESHOLD = 2.35;
+
+/** A speed threshold must not swap two different silhouettes for one tick. */
+export const RUN_GAIT_HYSTERESIS = 0.2;
+export const RUN_GAIT_CONFIRMATION = 0.04;
+export const RUN_GAIT_IMMEDIATE_SPEED = 3.2;
+
+/** Seven grounded compression drawings before an anticipated block takeoff. */
+export const BLOCK_PREPARATION_TIME = 0.10;
+
+/** Presentation-only filtering; never alters the body's velocity or target. */
+export function groundGait(speed: number, previous: Locomotion, runAge: number,
+  dt: number, approaching: boolean): { locomotion: Locomotion; runAge: number } {
+  if (approaching && speed > SHUFFLE_SPEED) return { locomotion: 'approach', runAge: 0 };
+  if (speed < 0.12) return { locomotion: 'ready', runAge: 0 };
+  if (speed < SHUFFLE_SPEED) return { locomotion: 'walk', runAge: 0 };
+  if (previous === 'run') {
+    return { locomotion: speed >= RUN_SPEED_THRESHOLD - RUN_GAIT_HYSTERESIS ? 'run' : 'shuffle', runAge: 0 };
+  }
+  // A clear sprint must not keep walking while a debounce timer catches up.
+  if (speed >= RUN_GAIT_IMMEDIATE_SPEED) return { locomotion: 'run', runAge: 0 };
+  if (speed < RUN_SPEED_THRESHOLD + RUN_GAIT_HYSTERESIS) return { locomotion: 'shuffle', runAge: 0 };
+  const confirmed = Math.min(RUN_GAIT_CONFIRMATION, runAge + Math.max(0, dt));
+  return { locomotion: confirmed + 1e-9 >= RUN_GAIT_CONFIRMATION ? 'run' : 'shuffle', runAge: confirmed };
+}
 
 /**
  * Phases during which the feet are committed and the shoulders are already
@@ -97,6 +146,7 @@ export const FACING_LOCKED_PHASES: ReadonlySet<ActionPhase> = new Set<ActionPhas
   'rise',
   'contact',
   'follow',
+  'land',
 ]);
 
 /**

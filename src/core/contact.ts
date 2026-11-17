@@ -10,12 +10,14 @@ import {
 import { Vec3, v3, clamp, distXY, lerp } from './math3';
 import { Player } from './player';
 import { Rng } from './rng';
+import { SetPlay, setFlightTime } from './set-play';
 import {
   ATTACK_LINE,
   MAGNUS,
   BALL_RADIUS,
   COURT_HALF_LENGTH,
   COURT_HALF_WIDTH,
+  DIVE_EXTENSION_TIME,
 
   NET_HEIGHT,
   PLAYER_RADIUS,
@@ -52,6 +54,11 @@ export interface Aim {
 
 export const NEUTRAL_AIM: Aim = { x: 0, depth: 0.35 };
 
+/** The requested +25% applies to a block's physical hand coverage. */
+export const BLOCK_EFFICACY_MULTIPLIER = 1.25;
+/** Above this quality a deliberate red-cue contact earns the maximum timing reward. */
+export const RED_CONTACT_QUALITY = .86;
+
 /**
  * Horizontal grab radius; diving players stretch further.
  *
@@ -60,14 +67,15 @@ export const NEUTRAL_AIM: Aim = { x: 0, depth: 0.35 };
  * moment, still watched the ball land — which reads as the game being broken
  * rather than hard.
  */
-export function contactRadius(p: Player, ball?: Ball): number {
+export function contactRadius(p: Player, ball?: Ball, reachMultiplier = 1): number {
   // A blocker reaches with two hands over the tape and nothing else: they
   // cover about a shoulder-width either side and no more. Given the general
   // radius they touched roughly every attack, which turns a block from a
   // tactic into a wall and cuts the average rally by a quarter. Hitting past
   // the block has to be possible, or there is no reason to aim.
   const blocking = p.airborne && p.anim === 'block' && Math.abs(p.pos.y) < 1.3;
-  const base = PLAYER_RADIUS + (p.diving ? 1.15 : blocking ? 0.42 : 0.95);
+  const base = (PLAYER_RADIUS + (p.diving ? 1.15 : blocking ? 0.42 : 0.95))
+    * (blocking ? BLOCK_EFFICACY_MULTIPLIER : p.diving ? 1 : 1.1) * reachMultiplier;
   if (!ball) return base;
   // A ball travelling at thirty metres a second cannot be casually scooped
   // from a metre and a half away. Reach shrinks with pace, which is what makes
@@ -85,13 +93,18 @@ export function contactRadius(p: Player, ball?: Ball): number {
 /** Vertical window in which a player can play the ball. */
 export function contactWindow(p: Player): { lo: number; hi: number } {
   const lo = p.height + (p.diving ? -0.25 : 0.02);
-  const hi = p.height + PLAYER_REACH + (p.airborne ? 0.35 : 0.15);
+  const hi = p.height + PLAYER_REACH + (p.airborne ? 0.5 : 0.25);
   return { lo, hi };
 }
 
-export function canReach(p: Player, ball: Ball): boolean {
-  if (p.downTime > 0 && !p.diving) return false;
-  if (distXY(p.pos, ball.pos) > contactRadius(p, ball)) return false;
+export function canReach(p: Player, ball: Ball, reachMultiplier = 1): boolean {
+  if ((p.downTime > 0 && !p.diving) || p.gettingUp > 0) return false;
+  // A dive is not an instant enlarged grab radius. The forearms must finish
+  // extending before they can save the ball; otherwise a first-tick contact
+  // discards the entire push-off/flight drawing sequence. Ball and body keep
+  // moving normally during this brief extension, so a late dive can miss.
+  if (p.diving && p.anim === 'dive' && p.animTime < DIVE_EXTENSION_TIME) return false;
+  if (distXY(p.pos, ball.pos) > contactRadius(p, ball, reachMultiplier)) return false;
   const { lo, hi } = contactWindow(p);
   return ball.pos.z >= lo && ball.pos.z <= hi;
 }
@@ -107,6 +120,12 @@ export function contactQuality(p: Player, ball: Ball): number {
   const vertical = clamp((ball.pos.z - lo) / span, 0, 1);
   const horizontal = 1 - clamp(distXY(p.pos, ball.pos) / contactRadius(p, ball), 0, 1);
   return clamp(0.35 + 0.4 * vertical + 0.35 * horizontal, 0, 1);
+}
+
+/** Reward a deliberate contact on the red cue without rewarding a distant press. */
+export function timingReward(p: Player, ball: Ball): number {
+  if (!canReach(p, ball)) return 0;
+  return clamp((contactQuality(p, ball) - .58) / (RED_CONTACT_QUALITY - .58), 0, 1);
 }
 
 /** Where the hands meet the ball; strikes originate from here. */
@@ -148,6 +167,17 @@ export interface StrikeContext {
   setterTarget?: Vec3;
   /** Attacker position for sets. */
   attackerTarget?: Vec3;
+  /** A committed tactical delivery, chosen before the setter touches the ball. */
+  setPlay?: SetPlay;
+  /** 0..1, awarded by input handling only for a human press on the red cue. */
+  timingBonus?: number;
+  /** Temporary, metered skill effects supplied by the team at a real contact. */
+  modifiers?: {
+    powerMultiplier?: number;
+    errorMultiplier?: number;
+    setTempoMultiplier?: number;
+    controlBonus?: number;
+  };
   /** True when the player has armed a Lethal Maneuver and the gauge is full. */
   special?: boolean;
 }
@@ -155,8 +185,9 @@ export interface StrikeContext {
 /** Scatter added to a target, shrinking with the player's control stat. */
 function scatter(ctx: StrikeContext, base: number): Vec3 {
   const q = contactQuality(ctx.player, ctx.ball);
-  const control = ctx.player.stats.control;
-  const amount = base * (1.35 - control) * (1.25 - 0.5 * q) * (ctx.errorScale ?? 1);
+  const control = clamp(ctx.player.stats.control + (ctx.modifiers?.controlBonus ?? 0), 0, 1);
+  const amount = base * (1.35 - control) * (1.25 - 0.5 * q) * (ctx.errorScale ?? 1)
+    * (ctx.modifiers?.errorMultiplier ?? 1) * (1 - .25 * clamp(ctx.timingBonus ?? 0, 0, 1));
   return v3(ctx.rng.gauss(amount), ctx.rng.gauss(amount), 0);
 }
 
@@ -278,7 +309,7 @@ export function performBump(ctx: StrikeContext): StrikeResult {
   const vel = solveArc(from, target, flight);
   ball.strike(vel, v3(ctx.rng.spread(0.4), 0, 0));
   player.swing = 0.22;
-  player.setAnim(player.diving ? 'dive' : 'bump_contact');
+  player.setAnim(player.diving ? 'dive_contact' : 'bump_contact');
   return { kind: player.diving ? 'save' : 'bump', target, speed: Math.hypot(vel.x, vel.y, vel.z) };
 }
 
@@ -289,14 +320,19 @@ export function performSet(ctx: StrikeContext): StrikeResult {
 
   // The stick steers the set along the net: left pin, middle, right pin.
   const x = clamp(aim.x, -1, 1) * (COURT_HALF_WIDTH - 0.9);
-  const depth = lerp(1.1, 2.4, clamp((1 - aim.depth) / 2, 0, 1));
-  const target = ctx.attackerTarget ?? v3(x, -dir * depth, NET_HEIGHT + 0.95);
-  const s = scatter(ctx, 0.42);
+  const play = ctx.setPlay ?? (aim.depth < -.6 ? 'pipe' : Math.abs(aim.x) < .2 ? 'quick' : aim.x * dir > .45 ? 'back' : 'high');
+  const depth = play === 'pipe' ? ATTACK_LINE + .75 : lerp(1.1, 2.4, clamp((1 - aim.depth) / 2, 0, 1));
+  // Never mutate a plan stored by the team brain: repeated simulation reads
+  // must not accumulate the contact's scatter into the next approach target.
+  const target = ctx.attackerTarget ? { ...ctx.attackerTarget } : v3(x, -dir * depth, NET_HEIGHT + 0.95);
+  const s = scatter(ctx, play === 'quick' ? .25 : .34);
   target.x += s.x;
   target.y += s.y;
+  if (play === 'pipe') target.y = -dir * Math.max(ATTACK_LINE + .45, -dir * target.y);
   target.z = Math.max(NET_HEIGHT + 0.55, target.z);
 
-  const vel = solveArc(from, target, 1.15);
+  const flight = setFlightTime(play, from, target) / clamp(ctx.modifiers?.setTempoMultiplier ?? 1, .78, 1.25);
+  const vel = solveArc(from, target, flight);
   ball.strike(vel, v3());
   player.swing = 0.2;
   player.setAnim('set_contact');
@@ -323,7 +359,7 @@ export function performPowerMove(ctx: StrikeContext): StrikeResult & { move: Pow
   const from = contactPoint(player, ball);
   const dir = attackDir(player.side);
   const move = powerMoveFor(aim);
-  const strength = 0.85 + 0.3 * player.stats.power;
+  const strength = (0.85 + 0.3 * player.stats.power) * (ctx.modifiers?.powerMultiplier ?? 1);
 
   if (move === 'phantom') {
     // Floats up, stalls, then drops almost vertically just past the block.
@@ -389,7 +425,7 @@ export function performPowerMove(ctx: StrikeContext): StrikeResult & { move: Pow
 export function performAttack(ctx: StrikeContext): StrikeResult {
   const { player, ball, aim } = ctx;
   const from = contactPoint(player, ball);
-  const q = contactQuality(player, ball);
+  const q = clamp(contactQuality(player, ball) + clamp(ctx.timingBonus ?? 0, 0, 1) * .1, 0, 1);
 
   // Power is TIMING, not a held button. Meeting the ball at the top of the
   // reach is the hard part and is what should be rewarded; a charge meter on
@@ -407,7 +443,7 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
   // routine swing came out at 33 m/s and 69% of all spikes were at the top of
   // the scale. Full power is now the top sliver of the band, and it is the
   // only thing that sets the pace.
-  const charge = clamp((q - 0.79) / 0.19, 0, 1);
+  const charge = clamp((q - 0.76) / 0.20, 0, 1);
 
   // A tip is what you get when the ball is not above the net line: it drops
   // just behind the block.
@@ -436,7 +472,8 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
   target.x = clamp(target.x + s.x, -COURT_HALF_WIDTH - 0.9, COURT_HALF_WIDTH + 0.9);
   target.y += s.y;
 
-  const power = lerp(16, 29, charge) * (0.88 + 0.24 * player.stats.power);
+  const power = lerp(16, 29, charge) * (0.88 + 0.24 * player.stats.power)
+    * (ctx.modifiers?.powerMultiplier ?? 1);
   // A hitter well above the tape may drive the ball down through it — that is
   // the shot. A hitter barely at net height gets the launch lifted just enough
   // to clear, instead of burying a third of all attacks in the net.
@@ -463,7 +500,8 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
  */
 export function performBlock(ctx: StrikeContext): StrikeResult {
   const { player, ball } = ctx;
-  const q = contactQuality(player, ball);
+  const q = clamp(contactQuality(player, ball) + (ctx.modifiers?.controlBonus ?? 0) * .5
+    + clamp(ctx.timingBonus ?? 0, 0, 1) * .06, 0, 1);
   const dir = attackDir(player.side);
   const incoming = Math.hypot(ball.vel.x, ball.vel.y);
 
@@ -494,8 +532,10 @@ export function performBlock(ctx: StrikeContext): StrikeResult {
 
 /** True when a player standing here is legally allowed to attack above the net. */
 export function canAttackAboveNet(p: Player, frontRow: boolean): boolean {
+  if (p.role === 'libero') return false;
   if (frontRow) return true;
   // Back-row players must take off behind the attack line.
   const dir = attackDir(p.side);
-  return dir > 0 ? p.pos.y < -ATTACK_LINE : p.pos.y > ATTACK_LINE;
+  const takeoffY = p.airborne ? (p.takeoffY ?? p.pos.y) : p.pos.y;
+  return -dir * takeoffY > ATTACK_LINE;
 }

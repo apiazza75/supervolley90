@@ -33,7 +33,11 @@
     "build:info": "tsx tools/build-info.ts",
     "metrics": "tsx tools/gameplay-metrics.ts",
     "visual:qa:v3": "tsx tools/visual-qa-v3.ts",
-    "sprite:qc:v3": "tsx tools/sprite-qc-v3.ts"
+    "sprite:qc:v3": "tsx tools/sprite-qc-v3.ts",
+    "sprite:enrich:manga": "python3 tools/enrich_manga_sprites.py",
+    "sprite:motion": "tsx tools/sprite-motion-qc.ts",
+    "sprite:sanitize:pil": "python3 tools/sanitize_sprites_pil.py",
+    "sprite:qc:pil": "python3 tools/sprite_qc_pil.py"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",

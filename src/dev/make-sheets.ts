@@ -23,8 +23,10 @@ interface Recipe {
   step: (p: Player, dt: number, t: number, span: number) => void;
 }
 
-const RECIPES: Record<SpriteAction, Recipe> = {
+const RECIPES: Record<Exclude<SpriteAction, 'shuffle' | 'backSet' | 'turn' | 'backpedal' | 'runTurn' | 'turnStop' | 'runBrake' | 'jumpServeFollow' | 'spikeFollow'>, Recipe> = {
   idle: { span: 1.6, step: (p, dt) => p.step(dt, 0, 0) },
+  walk: { span: 1.05, step: (p, dt) => p.step(dt, 0, 0.35) },
+  run: { span: 0.64, step: (p, dt) => p.step(dt, 0, 0.75) },
   approach: { span: 0.75, step: (p, dt) => p.step(dt, 0, 1) },
   spike: {
     span: 1.1,
@@ -104,6 +106,7 @@ const RECIPES: Record<SpriteAction, Recipe> = {
 const SIM_DT = 1 / 240;
 
 export function renderSheet(canvas: HTMLCanvasElement, action: SpriteAction): void {
+  if (action === 'shuffle' || action === 'backSet' || action === 'turn' || action === 'backpedal' || action === 'runTurn' || action === 'turnStop' || action === 'runBrake' || action === 'jumpServeFollow' || action === 'spikeFollow') throw new Error('This action requires the authored manga atlas; no procedural substitute.');
   const layout = SHEETS[action];
   const recipe = RECIPES[action];
   canvas.width = W;

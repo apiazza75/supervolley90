@@ -5,13 +5,34 @@ import {
   COURT_HALF_LENGTH,
   COURT_HALF_WIDTH,
   NET_HEIGHT,
+  type Side,
 } from '../core/rules';
+import { COURT_STYLES, type CourtStyle } from '../game/teams';
 import { ArenaArtwork } from './arena-art';
 import { Camera } from './camera';
+import { FloorSurfaceCache } from './floor-surface-cache';
+import { CrowdReactions } from './crowd-reactions';
 
-const LINE = 'rgba(255,255,255,0.94)';
-const COURT_NEAR = '#b85d3a';
-const SURROUND = '#173844';
+const LINE = 'rgba(226,205,158,0.72)';
+const COURT_NEAR = '#c86f3f';
+const SURROUND = '#203d45';
+export const COURT_ART_CONTRACT = {
+  surface: 'single-projected-cel-shaded-parquet',
+  outline: 'warm-dark-inked-court-edge',
+  lineColour: 'warm-cream-not-hard-white',
+  texture: 'authored-manga-parquet-and-teal-surface',
+} as const;
+export const NET_PALETTE = {
+  tape: '#9fc2d4',
+  antennaLight: '#ffdca4',
+} as const;
+export const COURT_LINE_YS = [-ATTACK_LINE, ATTACK_LINE] as const;
+export const COURT_SURFACE_POLYGON = [
+  [-COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
+  [COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
+  [COURT_HALF_WIDTH, COURT_HALF_LENGTH],
+  [-COURT_HALF_WIDTH, COURT_HALF_LENGTH],
+] as const;
 
 export interface ArenaDrawable {
   depth: number;
@@ -67,9 +88,30 @@ export class Arena {
   private excitement = 0;
   /** Optional illustrated layers; procedural drawing remains the fallback. */
   private readonly artwork = new ArenaArtwork();
+  private floorSurface = new FloorSurfaceCache();
+  private readonly reactions = new CrowdReactions();
+  private courtStyle: CourtStyle = COURT_STYLES[0];
+  private preparedSceneryKey = '';
 
   get artAssetCount(): number {
     return this.artwork.loadedCount;
+  }
+
+  get crowdDiagnostics() { return this.reactions.diagnostics; }
+  get courtStyleId(): string { return this.courtStyle.id; }
+
+  setCourtStyle(courtId: string): void {
+    const next = COURT_STYLES.find(style => style.id === courtId) ?? COURT_STYLES[0];
+    if (next === this.courtStyle) return;
+    this.courtStyle = next;
+    // Rebuild only after selection, while the menu can prepare the new floor.
+    // Camera motion and crowd reactions never invalidate this texture.
+    this.floorSurface = new FloorSurfaceCache();
+    this.preparedSceneryKey = '';
+  }
+
+  setTeamColors(home: readonly string[], away: readonly string[]): void {
+    this.reactions.setTeamColors(home, away);
   }
 
   constructor(seed = 4242) {
@@ -98,24 +140,27 @@ export class Arena {
   }
 
   /** Called when something worth cheering happens. */
-  cheer(amount = 1): void {
+  cheer(amount = 1, side?: Side): void {
     this.excitement = Math.min(1, this.excitement + amount);
+    this.reactions.cheer(amount, side);
   }
 
   update(dt: number): void {
     this.excitement = Math.max(0, this.excitement - dt * 0.5);
+    this.reactions.update(dt);
   }
 
   drawBackground(ctx: CanvasRenderingContext2D, cam: Camera, time: number): void {
     const { viewWidth: w, viewHeight: h } = cam;
 
     if (this.artwork.complete) {
-      // Recovery V3 is one authored composition.  Returning here is deliberate:
-      // no legacy crowd, roof, barrier or ribbon may be painted over these layers.
+      // Preserve the authored composition. Small gestures are anchored to its
+      // illustrated hands; the old procedural crowd never covers the artwork.
       this.artwork.drawBackdrop(ctx, w, h);
       this.artwork.drawCrowdFar(ctx, w, h);
-      this.artwork.drawLedMid(ctx, w, h);
-      this.drawShafts(ctx, cam, time);
+      this.reactions.draw(ctx, w, h, time);
+      // The illustrated stand includes its railings, barrier and lighting.
+      // Additional procedural rails/cones would cover its faces and ink work.
       this.drawFloor(ctx, cam);
       return;
     }
@@ -178,21 +223,52 @@ export class Arena {
       const headR = 0.115 * u;
       if (headR < 1.1) continue;
 
-      // Shoulders.
+      // Shoulders and torso. Keep the development fallback in the same visual
+      // language as the authored crowd layer: bust silhouettes, not dot heads.
       ctx.beginPath();
-      ctx.ellipse(p.x, p.y + headR * 1.5, headR * 1.75, headR * 1.3, 0, Math.PI, Math.PI * 2);
+      ctx.moveTo(p.x - headR * 2.35, p.y + headR * 3.1);
+      ctx.bezierCurveTo(
+        p.x - headR * 2.1,
+        p.y + headR * 1.25,
+        p.x - headR * 0.75,
+        p.y + headR * 0.92,
+        p.x,
+        p.y + headR * 1.22,
+      );
+      ctx.bezierCurveTo(
+        p.x + headR * 0.75,
+        p.y + headR * 0.92,
+        p.x + headR * 2.1,
+        p.y + headR * 1.25,
+        p.x + headR * 2.35,
+        p.y + headR * 3.1,
+      );
+      ctx.quadraticCurveTo(p.x, p.y + headR * 3.65, p.x - headR * 2.35, p.y + headR * 3.1);
       ctx.fillStyle = s.shirt;
       ctx.fill();
+      ctx.strokeStyle = 'rgba(2,6,12,0.42)';
+      ctx.lineWidth = Math.max(0.8, headR * 0.16);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(235,230,190,0.25)';
+      ctx.lineWidth = Math.max(0.6, headR * 0.1);
+      ctx.beginPath();
+      ctx.moveTo(p.x - headR * 1.15, p.y + headR * 1.85);
+      ctx.lineTo(p.x + headR * 1.15, p.y + headR * 1.85);
+      ctx.stroke();
 
       // Head.
       ctx.beginPath();
-      ctx.arc(p.x, p.y, headR, 0, Math.PI * 2);
+      ctx.ellipse(p.x, p.y, headR * 0.82, headR * 1.04, 0, 0, Math.PI * 2);
       ctx.fillStyle = s.skin;
       ctx.fill();
+      ctx.strokeStyle = 'rgba(2,6,12,0.42)';
+      ctx.lineWidth = Math.max(0.7, headR * 0.12);
+      ctx.stroke();
 
       // Hair cap.
       ctx.beginPath();
-      ctx.arc(p.x, p.y - headR * 0.16, headR * 0.98, Math.PI * 1.03, Math.PI * 1.97);
+      ctx.ellipse(p.x, p.y - headR * 0.34, headR * 0.88, headR * 0.45, 0, Math.PI, Math.PI * 2);
       ctx.closePath();
       ctx.fillStyle = s.hair;
       ctx.fill();
@@ -379,57 +455,198 @@ export class Arena {
     ctx.restore();
   }
 
+  prepareGround(ctx: CanvasRenderingContext2D, cam: Camera): void {
+    const outX = STAND_FRONT - 0.3, outY = COURT_HALF_LENGTH + 9;
+    this.floorSurface.prepare(ctx, cam, outX, outY, this.artwork.complete,
+      (surface, reference) => this.drawFloorBase(surface, reference, outX, outY));
+  }
+
+  /**
+   * Submit the complete illustrated background before play, once per backing
+   * store. Preparing only the floor leaves the first backdrop/crowd composition
+   * until the first rally frame (a measured ~19 ms stall on Retina/Metal).
+   * The caller MUST paint the opaque menu immediately afterwards in this same
+   * frame. No readback, extra canvas, animation step or lower-resolution art.
+   */
+  prepareSceneryForMenu(ctx: CanvasRenderingContext2D, cam: Camera): void {
+    this.prepareGround(ctx, cam);
+    if (!this.artwork.complete) return;
+    const key = [ctx.canvas.width, ctx.canvas.height, cam.viewWidth, cam.viewHeight,
+      this.floorSurface.diagnostics.generations].join('/');
+    if (this.preparedSceneryKey === key) return;
+    ctx.save();
+    try {
+      this.drawBackground(ctx, cam, 0);
+    } finally {
+      ctx.restore();
+    }
+    this.preparedSceneryKey = key;
+  }
+
   private drawFloor(ctx: CanvasRenderingContext2D, cam: Camera): void {
     const outX = STAND_FRONT - 0.3;
     const outY = COURT_HALF_LENGTH + 9;
 
-    // The playing surface is drawn, never photographed.
-    //
-    // drawGrain() lays its planks by sampling cam.projectFloor() seam by seam,
-    // so the floor is in the camera's perspective by construction rather than
-    // by tuning. A bitmap stretched over the same quadrilateral can only be in
-    // the perspective it was drawn in, and when the two disagree the court
-    // stops looking like a court: the v3 texture put a lattice across the free
-    // zone at an angle the camera never produces. So the quads and the planks
-    // are unconditional, and the authored texture composites over them.
-    fillQuad(ctx, cam, [[-outX, -outY], [outX, -outY], [outX, outY], [-outX, outY]], SURROUND);
-    fillQuad(
-      ctx,
-      cam,
-      [
-        [-COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
-        [COURT_HALF_WIDTH, -COURT_HALF_LENGTH],
-        [COURT_HALF_WIDTH, 0],
-        [-COURT_HALF_WIDTH, 0],
-      ],
-      COURT_NEAR,
-    );
-    fillQuad(
-      ctx,
-      cam,
-      [
-        [-COURT_HALF_WIDTH, 0],
-        [COURT_HALF_WIDTH, 0],
-        [COURT_HALF_WIDTH, COURT_HALF_LENGTH],
-        [-COURT_HALF_WIDTH, COURT_HALF_LENGTH],
-      ],
-      COURT_NEAR,
-    );
-    this.drawGrain(ctx, cam, outX, outY);
-    this.artwork.drawFloorGrain(ctx, cam, outX, outY);
-
-    this.drawLightPools(ctx, cam, outX, outY);
+    if (!this.floorSurface.draw(ctx, cam, outX, outY, this.artwork.complete,
+      (surface, reference) => this.drawFloorBase(surface, reference, outX, outY))) {
+      this.drawFloorBase(ctx, cam, outX, outY);
+    }
+    if (this.artwork.complete) this.drawCourtEdges(ctx, cam);
+    else {
+      this.drawLightPools(ctx, cam, outX, outY);
+      this.drawCourtInk(ctx, cam);
+    }
     this.drawLines(ctx, cam);
+  }
+
+  private drawFloorBase(ctx: CanvasRenderingContext2D, cam: Camera, outX: number, outY: number): void {
+    // Both images are unmarked, top-down materials. Geometry and rule lines
+    // stay in the renderer, so the illustration cannot introduce another court.
+    if (this.artwork.drawFloorMaterials(ctx, cam, outX, outY)) {
+      this.drawFloorTint(ctx, cam, outX, outY);
+      return;
+    }
+
+    // Development fallback while materials load. A release with incomplete
+    // arena art is diagnosed by drawBackground rather than silently using it.
+    fillQuad(ctx, cam, [[-outX, -outY], [outX, -outY], [outX, outY], [-outX, outY]], SURROUND);
+    // One continuous court surface. Splitting the parquet into near/far halves
+    // leaves an anti-aliased seam exactly under the net: even with the explicit
+    // centre line removed, that seam reads as the same "double stripe".
+    fillQuad(ctx, cam, COURT_SURFACE_POLYGON, COURT_NEAR);
+    this.drawGrain(ctx, cam, outX, outY);
+    this.drawFloorTint(ctx, cam, outX, outY);
+  }
+
+  /** Tint the authored grain once in the floor cache, before live rule lines. */
+  private drawFloorTint(ctx: CanvasRenderingContext2D, cam: Camera, outX: number, outY: number): void {
+    const { woodTint, surfaceTint } = this.courtStyle;
+    if (!woodTint && !surfaceTint) return;
+    const trace = (vertices: readonly (readonly [number, number])[]): void => {
+      vertices.forEach(([x, y], i) => {
+        const p = cam.projectFloor(x, y);
+        if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+      });
+      ctx.closePath();
+    };
     ctx.save();
-    ctx.strokeStyle = 'rgba(73,220,255,0.24)';
-    ctx.lineWidth = Math.max(1, cam.projectFloor(0, 0).scale * 1.6);
-    strokePath(ctx, cam, [
-      [-COURT_HALF_WIDTH - 0.24, -COURT_HALF_LENGTH - 0.24],
-      [COURT_HALF_WIDTH + 0.24, -COURT_HALF_LENGTH - 0.24],
-      [COURT_HALF_WIDTH + 0.24, COURT_HALF_LENGTH + 0.24],
-      [-COURT_HALF_WIDTH - 0.24, COURT_HALF_LENGTH + 0.24],
-      [-COURT_HALF_WIDTH - 0.24, -COURT_HALF_LENGTH - 0.24],
-    ]);
+    if (surfaceTint) {
+      ctx.beginPath();
+      trace([[-outX, -outY], [outX, -outY], [outX, outY], [-outX, outY]]);
+      trace(COURT_SURFACE_POLYGON);
+      ctx.fillStyle = surfaceTint;
+      ctx.globalCompositeOperation = 'color'; ctx.globalAlpha = 0.82; ctx.fill('evenodd');
+      ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 0.14; ctx.fill('evenodd');
+    }
+    if (woodTint) {
+      ctx.beginPath(); trace(COURT_SURFACE_POLYGON);
+      ctx.fillStyle = woodTint;
+      ctx.globalCompositeOperation = 'color'; ctx.globalAlpha = 0.88; ctx.fill();
+      ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 0.2; ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * Manga/cel-shaded finish over the projected court.
+   *
+   * The court already has correct perspective and rule geometry. This pass is
+   * not geometry; it gives the parquet the same illustrated outline language as
+   * the players: warm dark edge ink, sideline shadow and non-white highlights.
+   */
+  private drawCourtInk(ctx: CanvasRenderingContext2D, cam: Camera): void {
+    const pts = COURT_SURFACE_POLYGON.map(([x, y]) => cam.projectFloor(x, y));
+    ctx.save();
+
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    });
+    ctx.closePath();
+    ctx.clip();
+
+    const minX = Math.min(...pts.map((p) => p.x));
+    const maxX = Math.max(...pts.map((p) => p.x));
+    const minY = Math.min(...pts.map((p) => p.y));
+    const maxY = Math.max(...pts.map((p) => p.y));
+
+    // Warm cel bands: subtle, broad, and clipped to the court so they cannot
+    // become extra rule lines.
+    const sideShade = ctx.createLinearGradient(minX, minY, maxX, maxY);
+    sideShade.addColorStop(0, 'rgba(95,36,18,0.18)');
+    sideShade.addColorStop(0.24, 'rgba(255,188,104,0.05)');
+    sideShade.addColorStop(0.58, 'rgba(255,222,152,0.08)');
+    sideShade.addColorStop(1, 'rgba(84,28,16,0.16)');
+    ctx.fillStyle = sideShade;
+    ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
+
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = 'rgba(70,24,13,0.13)';
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    ctx.lineTo(pts[1].x, pts[1].y);
+    ctx.lineTo(lerp(pts[1].x, pts[2].x, 0.22), lerp(pts[1].y, pts[2].y, 0.22));
+    ctx.lineTo(lerp(pts[0].x, pts[3].x, 0.22), lerp(pts[0].y, pts[3].y, 0.22));
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(lerp(pts[0].x, pts[3].x, 0.78), lerp(pts[0].y, pts[3].y, 0.78));
+    ctx.lineTo(lerp(pts[1].x, pts[2].x, 0.78), lerp(pts[1].y, pts[2].y, 0.78));
+    ctx.lineTo(pts[2].x, pts[2].y);
+    ctx.lineTo(pts[3].x, pts[3].y);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = 'rgba(92,38,18,0.34)';
+    ctx.lineWidth = 1.2;
+    ctx.lineCap = 'round';
+    const rng = new Rng(0x51e7);
+    for (let i = 0; i < 90; i++) {
+      const a = rng.next();
+      const b = rng.next();
+      const left = {
+        x: lerp(pts[0].x, pts[3].x, a),
+        y: lerp(pts[0].y, pts[3].y, a),
+      };
+      const right = {
+        x: lerp(pts[1].x, pts[2].x, a),
+        y: lerp(pts[1].y, pts[2].y, a),
+      };
+      const x = lerp(left.x, right.x, b);
+      const y = lerp(left.y, right.y, b);
+      const len = rng.range(18, 68);
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + len, y + rng.spread(1.1));
+      ctx.stroke();
+    }
+
+    ctx.restore();
+
+    this.drawCourtEdges(ctx, cam);
+  }
+
+  private drawCourtEdges(ctx: CanvasRenderingContext2D, cam: Camera): void {
+    const pts = COURT_SURFACE_POLYGON.map(([x, y]) => cam.projectFloor(x, y));
+    // A warm dark ink edge, then a smaller cream edge. This
+    // keeps the court graphic and manga-like without using hard white.
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    });
+    ctx.closePath();
+    ctx.strokeStyle = 'rgba(75,28,15,0.52)';
+    ctx.lineWidth = Math.max(3.0, 5.4 * pts[0].scale);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(241,201,135,0.34)';
+    ctx.lineWidth = Math.max(1.2, 2.4 * pts[0].scale);
+    ctx.stroke();
     ctx.restore();
   }
   /**
@@ -539,7 +756,10 @@ export class Arena {
     const W = COURT_HALF_WIDTH;
     const L = COURT_HALF_LENGTH;
     strokePath(ctx, cam, [[-W, -L], [W, -L], [W, L], [-W, L], [-W, -L]]);
-    for (const y of [0, -ATTACK_LINE, ATTACK_LINE]) {
+    // The net is the centre line in this side-on composition. Drawing an
+    // additional white court line at y=0 creates the "double stripe" the user
+    // sees under the tape, so only the attack lines are painted on the wood.
+    for (const y of COURT_LINE_YS) {
       strokePath(ctx, cam, [[-W, y], [W, y]]);
     }
   }
@@ -636,7 +856,7 @@ export class Arena {
     ctx.fillStyle = 'rgba(8,14,26,0.13)';
     ctx.fill();
 
-    ctx.strokeStyle = 'rgba(218,231,248,0.58)';
+    ctx.strokeStyle = 'rgba(156,190,214,0.5)';
     ctx.lineWidth = Math.max(0.75, u * 0.018);
     ctx.beginPath();
     ctx.moveTo(top0.x, top0.y);
@@ -661,13 +881,17 @@ export class Arena {
     ctx.moveTo(top0.x, top0.y + 1);
     ctx.lineTo(top1.x, top1.y + 1);
     ctx.stroke();
-    ctx.strokeStyle = '#f7fbff';
+    // Never use hard white on the net. In the side-on view the tape can pass
+    // through player silhouettes; pure white then reads exactly like the
+    // rejected matte residue between the legs. A cool cel-shaded tape stays
+    // bright enough to read, but no longer trips live player white-QC.
+    ctx.strokeStyle = NET_PALETTE.tape;
     ctx.lineWidth = Math.max(4, u * 0.1);
     ctx.beginPath();
     ctx.moveTo(top0.x, top0.y);
     ctx.lineTo(top1.x, top1.y);
     ctx.stroke();
-    ctx.strokeStyle = 'rgba(230,240,252,0.72)';
+    ctx.strokeStyle = 'rgba(160,194,220,0.58)';
     ctx.lineWidth = Math.max(2, u * 0.045);
     ctx.beginPath();
     ctx.moveTo(bottom0.x, bottom0.y);
@@ -718,7 +942,7 @@ export class Arena {
     for (let i = 0; i < 6; i++) {
       const a = i / 6;
       const b = (i + 1) / 6;
-      ctx.strokeStyle = i % 2 === 0 ? '#ff3f55' : '#ffffff';
+      ctx.strokeStyle = i % 2 === 0 ? '#ff3f55' : NET_PALETTE.antennaLight;
       ctx.lineWidth = Math.max(2.5, u * 0.055);
       ctx.beginPath();
       ctx.moveTo(lerp(from.x, to.x, a), lerp(from.y, to.y, a));
@@ -733,7 +957,7 @@ export class Arena {
 function fillQuad(
   ctx: CanvasRenderingContext2D,
   cam: Camera,
-  pts: [number, number][],
+  pts: ReadonlyArray<readonly [number, number]>,
   color: string,
 ): void {
   ctx.beginPath();
@@ -759,6 +983,6 @@ function strokePath(ctx: CanvasRenderingContext2D, cam: Camera, pts: [number, nu
     else ctx.lineTo(s.x, s.y);
   });
   ctx.strokeStyle = LINE;
-  ctx.lineWidth = Math.max(2, 4.5 * scale);
+  ctx.lineWidth = Math.max(1.4, 2.6 * scale);
   ctx.stroke();
 }

@@ -15,8 +15,11 @@
  */
 import { chromium } from 'playwright';
 import { preview } from 'vite';
+import { mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { ARENA_V3_LAYER_NAMES } from '../src/render/arena-art';
+import { SHEETS } from '../src/render/sprites';
 
 /**
  * How many arena assets the bundle has to load.
@@ -28,6 +31,7 @@ import { ARENA_V3_LAYER_NAMES } from '../src/render/arena-art';
  * arena cannot leave this behind again.
  */
 const EXPECTED_ARENA_ASSETS = ARENA_V3_LAYER_NAMES.length;
+const EXPECTED_SPRITE_SHEETS = Object.keys(SHEETS).length;
 
 async function main(): Promise<void> {
   const server = await preview({ preview: { port: 5188, strictPort: true } });
@@ -58,16 +62,18 @@ async function main(): Promise<void> {
   type AssetCounts = { sprites: number; masks: number; arena: number };
   const rawAssets = await page
     .waitForFunction(
-      (wantArena: number) => {
+      ({ wantArena, wantSprites }: { wantArena: number; wantSprites: number }) => {
         const renderer = (window as unknown as {
           __sv90?: { renderer?: { spriteCount: number; maskedSpriteCount: number; arenaAssetCount: number } };
         }).__sv90?.renderer;
         if (!renderer) return false;
-        return renderer.spriteCount >= 10 && renderer.maskedSpriteCount >= 10 && renderer.arenaAssetCount >= wantArena
+        return renderer.spriteCount >= wantSprites &&
+          renderer.maskedSpriteCount >= wantSprites &&
+          renderer.arenaAssetCount >= wantArena
           ? { sprites: renderer.spriteCount, masks: renderer.maskedSpriteCount, arena: renderer.arenaAssetCount }
           : false;
       },
-      EXPECTED_ARENA_ASSETS,
+      { wantArena: EXPECTED_ARENA_ASSETS, wantSprites: EXPECTED_SPRITE_SHEETS },
       { timeout: 30000 },
     )
     .then((h) => h.jsonValue())
@@ -78,9 +84,24 @@ async function main(): Promise<void> {
       ? (rawAssets as AssetCounts)
       : { sprites: 0, masks: 0, arena: 0 };
 
+  const officialsDrawn = await page.waitForFunction(() => {
+    const diagnostics = (window as unknown as {
+      __sv90?: { renderer?: { officialDiagnostics?: {
+        atlas: { loaded: boolean };
+        referee: { rasterDraws: number };
+      } } };
+    }).__sv90?.renderer?.officialDiagnostics;
+    return diagnostics?.atlas.loaded && diagnostics.referee.rasterDraws > 0;
+  }, undefined, { timeout: 15000 }).then(() => true).catch(() => false);
+
   const failures: string[] = [];
-  if (assets.sprites !== 10) failures.push(`expected 10 sprite sheets in the built bundle, got ${assets.sprites}`);
-  if (assets.masks !== 10) failures.push(`expected 10 material masks in the built bundle, got ${assets.masks}`);
+  if (!officialsDrawn) failures.push('illustrated officials were not loaded and drawn from the built bundle');
+  if (assets.sprites !== EXPECTED_SPRITE_SHEETS) {
+    failures.push(`expected ${EXPECTED_SPRITE_SHEETS} sprite sheets in the built bundle, got ${assets.sprites}`);
+  }
+  if (assets.masks !== EXPECTED_SPRITE_SHEETS) {
+    failures.push(`expected ${EXPECTED_SPRITE_SHEETS} material masks in the built bundle, got ${assets.masks}`);
+  }
   if (assets.arena !== EXPECTED_ARENA_ASSETS) {
     failures.push(
       `expected ${EXPECTED_ARENA_ASSETS} arena assets in the built bundle, got ${assets.arena}`,
@@ -88,9 +109,13 @@ async function main(): Promise<void> {
   }
   for (const p of problems) failures.push(p);
 
-  console.log(`sprite sheets loaded from the build: ${assets.sprites}/10`);
-  console.log(`material masks loaded from the build: ${assets.masks}/10`);
+  console.log(`sprite sheets loaded from the build: ${assets.sprites}/${EXPECTED_SPRITE_SHEETS}`);
+  console.log(`material masks loaded from the build: ${assets.masks}/${EXPECTED_SPRITE_SHEETS}`);
   console.log(`arena assets loaded from the build: ${assets.arena}/${EXPECTED_ARENA_ASSETS}`);
+  console.log(`illustrated officials drawn from the build: ${officialsDrawn}`);
+  const output = resolve(process.argv.find(arg => arg.startsWith('--out='))?.slice('--out='.length) ?? 'artifacts/build-check');
+  mkdirSync(output, { recursive: true });
+  await page.screenshot({ path: resolve(output, 'match.png') });
   for (const f of failures) console.log(`FAIL  ${f}`);
   if (!failures.length) console.log('build check passed');
 

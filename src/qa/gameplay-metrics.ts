@@ -61,6 +61,38 @@ export interface GameplayMetrics {
   preTossApproachSamples: number;
   /** Covering players borrowing the attack approach. */
   coverApproachSamples: number;
+  /** Highest number of players tactically assigned as hitters in one frame. */
+  maxConcurrentAttackJobs: number;
+  locomotion: {
+    ready: number;
+    walk: number;
+    shuffle: number;
+    run: number;
+    approach: number;
+    stand: number;
+    /** Grounded samples moving slowly enough to be a positional correction. */
+    shortCorrectionSamples: number;
+    /** Slow corrections that rendered as the dedicated walking gait. */
+    shortCorrectionsAsWalk: number;
+    /** Samples moving between shuffle and full-run speed without attack licence. */
+    mediumCorrectionSamples: number;
+    /** Medium corrections that still rendered as shuffle instead of sprinting. */
+    mediumCorrectionsAsShuffle: number;
+  };
+  courtOrder: {
+    /** Rally frames sampled for the crowding/readability checks. */
+    rallySamples: number;
+    /** Highest number of players from both teams inside the ball's immediate visual bubble. */
+    maxNearBallPlayers: number;
+    /** Highest number from one team inside that same bubble. */
+    maxSameTeamNearBallPlayers: number;
+    /** Highest number of off-the-ball support bodies inside the ball bubble. */
+    maxNonPlayingNearBallPlayers: number;
+    /** Rally frames where the ball area is visually crowded. */
+    crowdedBallSamples: number;
+    /** Crowded frames where extra cover bodies, not playmakers, are inside the ball area. */
+    nonPlayingCrowdSamples: number;
+  };
   /** Serve phases played. */
   serveFormationPhases: number;
   /**
@@ -74,6 +106,9 @@ export interface GameplayMetrics {
   jumpServe: SequenceMetrics;
   spike: SequenceMetrics;
   block: {
+    attacksFaced: number;
+    unopposedAttacks: number;
+    doubleBlockAttacks: number;
     attempts: number;
     contacts: number;
     apexHeight: number;
@@ -97,6 +132,12 @@ interface Sample {
   apexHeight: number;
   airborneContact: boolean;
   stateSequence: string[];
+}
+
+interface PendingSample {
+  playerId: number;
+  sample: Sample;
+  age: number;
 }
 
 const median = (xs: number[]): number => {
@@ -145,11 +186,41 @@ export function measureGameplay(seeds: number[], steps: number): GameplayMetrics
     serveReadyApproachPlayers: 0,
     preTossApproachSamples: 0,
     coverApproachSamples: 0,
+    maxConcurrentAttackJobs: 0,
+    locomotion: {
+      ready: 0,
+      walk: 0,
+      shuffle: 0,
+      run: 0,
+      approach: 0,
+      stand: 0,
+      shortCorrectionSamples: 0,
+      shortCorrectionsAsWalk: 0,
+      mediumCorrectionSamples: 0,
+      mediumCorrectionsAsShuffle: 0,
+    },
+    courtOrder: {
+      rallySamples: 0,
+      maxNearBallPlayers: 0,
+      maxSameTeamNearBallPlayers: 0,
+      maxNonPlayingNearBallPlayers: 0,
+      crowdedBallSamples: 0,
+      nonPlayingCrowdSamples: 0,
+    },
     serveFormationPhases: 0,
     serveFormationSettled: 0,
     jumpServe: emptySequence(),
     spike: emptySequence(),
-    block: { attempts: 0, contacts: 0, apexHeight: 0, airborneContacts: 0, groundedContacts: 0 },
+    block: {
+      attacksFaced: 0,
+      unopposedAttacks: 0,
+      doubleBlockAttacks: 0,
+      attempts: 0,
+      contacts: 0,
+      apexHeight: 0,
+      airborneContacts: 0,
+      groundedContacts: 0,
+    },
   };
 
   const jumpServeSamples: Sample[] = [];
@@ -169,6 +240,7 @@ export function measureGameplay(seeds: number[], steps: number): GameplayMetrics
     // body actually covered getting there.
     const approachRun = new Map<number, number>();
     const phases = new Map<number, string[]>();
+    const pendingSpikeSamples: PendingSample[] = [];
     let overTwo = 0;
     // Serve-formation bookkeeping: did this serve phase ever settle?
     let inServePhase = false;
@@ -190,6 +262,35 @@ export function measureGameplay(seeds: number[], steps: number): GameplayMetrics
       const serverId = w.team(w.servingSide).server.id;
       const players = [...w.home.players, ...w.away.players];
       let approachingNow = 0;
+      let attackingJobsNow = 0;
+      if (w.phase === 'rally') {
+        m.courtOrder.rallySamples++;
+        const nearBall = players.filter((p) => Math.hypot(p.pos.x - w.ball.pos.x, p.pos.y - w.ball.pos.y) < 1.55);
+        const homeNear = nearBall.filter((p) => p.side === 'home').length;
+        const awayNear = nearBall.filter((p) => p.side === 'away').length;
+        const nonPlayingNear = nearBall.filter((p) => {
+          const job = p.presentation.sourceJob;
+          const action = p.presentation.action;
+          // A player can still be recorded with tactical `cover` while their
+          // body is in the actual set/block contact animation. The crowding
+          // requirement is about off-ball support bodies visually chasing the
+          // ball, not the legal playmaker or wall currently making a touch.
+          return !['attack', 'receive', 'set', 'block'].includes(job) &&
+            !['spike', 'serve', 'bump', 'set', 'block', 'dive'].includes(action);
+        }).length;
+        m.courtOrder.maxNearBallPlayers = Math.max(m.courtOrder.maxNearBallPlayers, nearBall.length);
+        m.courtOrder.maxSameTeamNearBallPlayers = Math.max(
+          m.courtOrder.maxSameTeamNearBallPlayers,
+          homeNear,
+          awayNear,
+        );
+        m.courtOrder.maxNonPlayingNearBallPlayers = Math.max(
+          m.courtOrder.maxNonPlayingNearBallPlayers,
+          nonPlayingNear,
+        );
+        if (nearBall.length > 4 || homeNear > 3 || awayNear > 3) m.courtOrder.crowdedBallSamples++;
+        if (nonPlayingNear > 2) m.courtOrder.nonPlayingCrowdSamples++;
+      }
 
       if (w.phase === 'serve') {
         if (!inServePhase) {
@@ -210,6 +311,17 @@ export function measureGameplay(seeds: number[], steps: number): GameplayMetrics
 
       for (const p of players) {
         notePhase(p);
+        m.locomotion[p.presentation.locomotion]++;
+        const speed = Math.hypot(p.vel.x, p.vel.y);
+        if (!p.airborne && !p.diving && speed >= 0.12 && speed < 0.8) {
+          m.locomotion.shortCorrectionSamples++;
+          if (p.presentation.locomotion === 'walk') m.locomotion.shortCorrectionsAsWalk++;
+        }
+        if (!p.airborne && !p.diving && !p.approaching && speed >= 0.8 && speed < 2.35) {
+          m.locomotion.mediumCorrectionSamples++;
+          if (p.presentation.locomotion === 'shuffle') m.locomotion.mediumCorrectionsAsShuffle++;
+        }
+        if (p.presentation.sourceJob === 'attack') attackingJobsNow++;
         if (p.presentation.locomotion === 'approach') {
           approachingNow++;
           const run = (approachRun.get(p.id) ?? 0) + FIXED_DT;
@@ -224,8 +336,26 @@ export function measureGameplay(seeds: number[], steps: number): GameplayMetrics
           approachRun.set(p.id, 0);
         }
       }
+      for (let j = pendingSpikeSamples.length - 1; j >= 0; j--) {
+        const pending = pendingSpikeSamples[j];
+        pending.age += FIXED_DT;
+        pending.sample.stateSequence = [...(phases.get(pending.playerId) ?? pending.sample.stateSequence)];
+        const striker = players.find((p) => p.id === pending.playerId);
+        const hasFollow = pending.sample.stateSequence.includes('spike:follow');
+        const leftSpike =
+          striker !== undefined &&
+          striker.presentation.action !== 'spike' &&
+          pending.sample.stateSequence.includes('spike:contact');
+        if (hasFollow || leftSpike || pending.age > 0.45) {
+          spikeSamples.push(pending.sample);
+          pendingSpikeSamples.splice(j, 1);
+        }
+      }
       if (approachingNow > m.maxConcurrentApproachPlayers) {
         m.maxConcurrentApproachPlayers = approachingNow;
+      }
+      if (attackingJobsNow > m.maxConcurrentAttackJobs) {
+        m.maxConcurrentAttackJobs = attackingJobsNow;
       }
       // The brief tolerates a momentary third approach but not a sustained
       // one, so what is gated is how long it lasts, not that it ever happens.
@@ -251,6 +381,13 @@ export function measureGameplay(seeds: number[], steps: number): GameplayMetrics
         if (e.type !== 'contact') continue;
 
         m.contactsByKind[e.kind] = (m.contactsByKind[e.kind] ?? 0) + 1;
+        if (e.kind === 'spike' || e.kind === 'power') {
+          const defenders = (e.side === 'home' ? w.away : w.home).players;
+          const blockersUp = defenders.filter((p) => p.airborne && Math.abs(p.pos.y) < 1.6).length;
+          m.block.attacksFaced++;
+          if (blockersUp === 0) m.block.unopposedAttacks++;
+          if (blockersUp >= 2) m.block.doubleBlockAttacks++;
+        }
 
         const asAction: VolleyballAction =
           e.kind === 'tip' || e.kind === 'power'
@@ -269,9 +406,12 @@ export function measureGameplay(seeds: number[], steps: number): GameplayMetrics
           stateSequence: [...(phases.get(e.playerId) ?? [])],
         };
         if (e.kind === 'serve' && striker.plansJumpServe) jumpServeSamples.push(sample);
-        if (e.kind === 'spike' || e.kind === 'power') spikeSamples.push(sample);
+        if (e.kind === 'spike' || e.kind === 'power') {
+          pendingSpikeSamples.push({ playerId: e.playerId, sample, age: 0 });
+        }
       }
     }
+    for (const pending of pendingSpikeSamples) spikeSamples.push(pending.sample);
   }
   m.jumpServe = summarise(jumpServeSamples);
   m.spike = summarise(spikeSamples);
@@ -323,6 +463,38 @@ export function checkGameplayGates(m: GameplayMetrics): Violation[] {
     String(m.serveReadyApproachPlayers),
   );
   need(m.coverApproachSamples === 0, 'coverApproachSamples', '0', String(m.coverApproachSamples));
+  need(
+    m.maxConcurrentAttackJobs <= 1,
+    'maxConcurrentAttackJobs',
+    '<= 1',
+    String(m.maxConcurrentAttackJobs),
+  );
+  const shortCorrectionRatio = m.locomotion.shortCorrectionSamples
+    ? m.locomotion.shortCorrectionsAsWalk / m.locomotion.shortCorrectionSamples
+    : 0;
+  const mediumCorrectionRatio = m.locomotion.mediumCorrectionSamples
+    ? m.locomotion.mediumCorrectionsAsShuffle / m.locomotion.mediumCorrectionSamples
+    : 0;
+  need(m.locomotion.walk > 0, 'locomotion.walk', '> 0 samples', String(m.locomotion.walk));
+  need(m.locomotion.shuffle > 0, 'locomotion.shuffle', '> 0 samples', String(m.locomotion.shuffle));
+  need(
+    m.locomotion.run <= m.locomotion.shuffle * 0.25,
+    'locomotion.runVsShuffle',
+    '<= 25% of shuffle samples',
+    `${m.locomotion.run}/${m.locomotion.shuffle}`,
+  );
+  need(
+    shortCorrectionRatio >= 0.8,
+    'locomotion.shortCorrectionsAsWalk',
+    '>= 80% of slow moving grounded samples',
+    `${m.locomotion.shortCorrectionsAsWalk}/${m.locomotion.shortCorrectionSamples}`,
+  );
+  need(
+    mediumCorrectionRatio >= 0.8,
+    'locomotion.mediumCorrectionsAsShuffle',
+    '>= 80% of medium unlicensed moving samples',
+    `${m.locomotion.mediumCorrectionsAsShuffle}/${m.locomotion.mediumCorrectionSamples}`,
+  );
   // Twelve still, ready players before the serve — over the whole sample, not
   // in one lucky frame. A little slack for a rally that ends far from base.
   const settledRatio = m.serveFormationPhases
@@ -340,6 +512,45 @@ export function checkGameplayGates(m: GameplayMetrics): Violation[] {
     '<= 1.6 s',
     m.longestApproachRun.toFixed(2),
   );
+  const crowdedRatio = m.courtOrder.rallySamples
+    ? m.courtOrder.crowdedBallSamples / m.courtOrder.rallySamples
+    : 1;
+  need(
+    m.courtOrder.rallySamples > 0,
+    'courtOrder.rallySamples',
+    '> 0',
+    String(m.courtOrder.rallySamples),
+  );
+  need(
+    m.courtOrder.maxNearBallPlayers <= 4,
+    'courtOrder.maxNearBallPlayers',
+    '<= 4',
+    String(m.courtOrder.maxNearBallPlayers),
+  );
+  need(
+    m.courtOrder.maxSameTeamNearBallPlayers <= 4,
+    'courtOrder.maxSameTeamNearBallPlayers',
+    '<= 4',
+    String(m.courtOrder.maxSameTeamNearBallPlayers),
+  );
+  need(
+    crowdedRatio <= 0.002,
+    'courtOrder.crowdedBallRatio',
+    '<= 0.2% of rally samples',
+    `${m.courtOrder.crowdedBallSamples}/${m.courtOrder.rallySamples}`,
+  );
+  need(
+    m.courtOrder.maxNonPlayingNearBallPlayers <= 2,
+    'courtOrder.maxNonPlayingNearBallPlayers',
+    '<= 2',
+    String(m.courtOrder.maxNonPlayingNearBallPlayers),
+  );
+  need(
+    m.courtOrder.nonPlayingCrowdSamples === 0,
+    'courtOrder.nonPlayingCrowdRatio',
+    '0 cover-crowd samples',
+    `${m.courtOrder.nonPlayingCrowdSamples}/${m.courtOrder.rallySamples}`,
+  );
 
   need(m.spike.count > 0, 'spike.count', '> 0', String(m.spike.count));
   need(m.spike.airborneContact, 'spike.airborneContact', 'true', String(m.spike.airborneContact));
@@ -354,6 +565,15 @@ export function checkGameplayGates(m: GameplayMetrics): Violation[] {
     'spike.approachDistance',
     '>= 1.4 m',
     m.spike.approachDistance.toFixed(2),
+  );
+  need(
+    m.spike.stateSequence.includes('spike:plant') &&
+      m.spike.stateSequence.includes('spike:rise') &&
+      m.spike.stateSequence.includes('spike:contact') &&
+      m.spike.stateSequence.includes('spike:follow'),
+    'spike.stateSequence',
+    'plant -> rise -> contact -> follow',
+    m.spike.stateSequence.join(' -> ') || '(none)',
   );
 
   need(m.jumpServe.count > 0, 'jumpServe.count', '> 0', String(m.jumpServe.count));
@@ -380,6 +600,20 @@ export function checkGameplayGates(m: GameplayMetrics): Violation[] {
   need(m.block.contacts > 0, 'block.contacts', '> 0', String(m.block.contacts));
   need(m.block.groundedContacts === 0, 'block.groundedContacts', '0', String(m.block.groundedContacts));
   need(m.block.apexHeight >= 0.45, 'block.apexHeight', '>= 0.45 m', m.block.apexHeight.toFixed(2));
+  const unopposedRatio = m.block.attacksFaced ? m.block.unopposedAttacks / m.block.attacksFaced : 1;
+  const doubleRatio = m.block.attacksFaced ? m.block.doubleBlockAttacks / m.block.attacksFaced : 0;
+  need(
+    unopposedRatio <= 0.35,
+    'block.unopposedAttackRatio',
+    '<= 35% of attacks',
+    `${m.block.unopposedAttacks}/${m.block.attacksFaced}`,
+  );
+  need(
+    doubleRatio >= 0.3,
+    'block.doubleBlockAttackRatio',
+    '>= 30% of attacks',
+    `${m.block.doubleBlockAttacks}/${m.block.attacksFaced}`,
+  );
 
   return v;
 }

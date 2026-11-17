@@ -1,6 +1,7 @@
 import { clamp, lerp } from '../core/math3';
 import { Player } from '../core/player';
 import { Camera } from './camera';
+import { diveRenderHeight } from './dive-takeoff';
 
 /**
  * A pose is a set of joint angles, all measured from straight down and growing
@@ -190,6 +191,80 @@ const animState = new Map<number, AnimState>();
 
 const SKINS = ['#f6cca9', '#e8b184', '#c98d5c', '#9a6238', '#6f4527'];
 const HAIRS = ['#2a1f1a', '#141013', '#5b3a1e', '#8a5a2b', '#3a2a20', '#1c1c22'];
+
+export type GroundGait = 'run' | 'shuffle' | 'walk';
+
+export interface GaitPoseDiagnostics {
+  armFar: [number, number];
+  armNear: [number, number];
+  crouchAdd: number;
+  feet: [[number, number], [number, number]];
+  stride: number;
+  maxLift: number;
+  armPump: number;
+}
+
+export interface PlayerGaitDrawDiagnostics {
+  playerId: number;
+  gait: GroundGait;
+  speed: number;
+  phase: number;
+  farFootSign: -1 | 0 | 1;
+  nearFootSign: -1 | 0 | 1;
+  stride: number;
+  maxLift: number;
+}
+
+const gaitDrawDiagnostics = new Map<number, PlayerGaitDrawDiagnostics>();
+
+export function playerGaitDiagnostics(): PlayerGaitDrawDiagnostics[] {
+  return [...gaitDrawDiagnostics.values()];
+}
+
+export function resetPlayerGaitDiagnostics(): void {
+  gaitDrawDiagnostics.clear();
+}
+
+/**
+ * Grounded locomotion in figure space.
+ *
+ * `run` and `shuffle` used to share one sprint pose with smaller numbers.
+ * That still read as "running on the spot" during short court adjustments:
+ * high knees, hard arm pump, and the same single visual language as the attack
+ * run-up. The shuffle is now its own low, short walking cycle: opposite feet
+ * still alternate, but the lift, arm pump and bob are deliberately restrained.
+ */
+export function gaitPoseForDiagnostics(kind: GroundGait, phase: number, groundSpeed: number): GaitPoseDiagnostics {
+  const walking = kind === 'walk';
+  const shuffling = kind === 'shuffle';
+  const pace = walking
+    ? clamp(groundSpeed / 0.8, 0.18, 1)
+    : shuffling
+      ? clamp(groundSpeed / 1.35, 0.18, 1)
+      : clamp(groundSpeed / 5.2, 0.42, 1);
+  const step = Math.sin(phase);
+  const swing = Math.cos(phase);
+  const stride = (walking ? 0.095 : shuffling ? 0.11 : 0.29) * pace;
+  const maxLift = (walking ? 0.032 : shuffling ? 0.045 : 0.15) * pace;
+  const armPump = (walking ? 0.2 : shuffling ? 0.28 : 0.9) * pace;
+  const elbow = walking ? -0.2 - 0.1 * pace : shuffling ? -0.28 - 0.16 * pace : -0.55 - 0.4 * pace;
+  const crouchAdd = Math.abs(swing) * (walking ? 0.014 : shuffling ? 0.025 : 0.06) * pace;
+  const farLift = Math.max(0, swing) * maxLift;
+  const nearLift = Math.max(0, -swing) * maxLift;
+
+  return {
+    armFar: [-armPump * step, elbow],
+    armNear: [armPump * step, elbow],
+    crouchAdd,
+    feet: [
+      [stride * step, farLift],
+      [-stride * step, nearLift],
+    ],
+    stride,
+    maxLift,
+    armPump,
+  };
+}
 
 export interface PlayerDrawOptions {
   active: boolean;
@@ -393,7 +468,22 @@ export function drawPlayer(
     animState.set(p.id, st);
   }
   const groundSpeed = Math.hypot(p.vel.x, p.vel.y);
-  st.runPhase += opts.dt * (5 + groundSpeed * 2.6);
+  const locomotion = p.presentation?.locomotion;
+  const groundedGait =
+    p.anim === 'run' || locomotion === 'run'
+      ? 'run'
+      : locomotion === 'walk'
+        ? 'walk'
+        : p.anim === 'shuffle' || locomotion === 'shuffle'
+        ? 'shuffle'
+        : null;
+  st.runPhase +=
+    opts.dt *
+    (groundedGait === 'walk'
+      ? 1.8 + groundSpeed * 1.35
+      : groundedGait === 'shuffle'
+        ? 2.6 + groundSpeed * 1.8
+        : 5 + groundSpeed * 2.6);
 
   // Airborne attacks are a sequence, not a pose: rise with the arms swinging
   // up, arch the back at the top with the arm cocked, then whip through on
@@ -407,41 +497,27 @@ export function drawPlayer(
   }
 
   let target = POSES[animKey] ?? POSES.idle;
-  if (p.anim === 'run') {
-    // Gait follows pace. One full sprint cycle for every speed meant a player
-    // drifting half a metre pumped their arms like they were chasing a bus —
-    // twelve of those at once is most of what made the court look possessed.
-    // A slow adjustment is a low shuffle: short stride, arms quiet.
-    const pace = clamp(groundSpeed / 5.2, 0.25, 1);
-    // A stride is contralateral: the leg that swings forward pairs with the
-    // arm on the OTHER side. `phase` drives the far leg; the far arm takes
-    // the opposite sign, the near pair mirrors both.
-    const phase = Math.sin(st.runPhase);
-    // Each foot is planted at the back of its stride and lifts through the
-    // front of it, so the run is driven by the floor like the other grounded
-    // poses instead of floating on joint angles.
-    const stride = 0.26 * pace;
-    // A foot is planted while it travels BACKWARD under the body and lifts
-    // while it swings forward. Lifting it at the front of the stride instead
-    // — where it should be reaching for the floor — is what turns a run into
-    // a skate. The foot moves forward when cos(phase) is positive.
-    const swingPhase = Math.cos(st.runPhase);
-    const farLift = Math.max(0, swingPhase) * 0.15 * pace;
-    const nearLift = Math.max(0, -swingPhase) * 0.15 * pace;
+  if (groundedGait) {
+    const gait = gaitPoseForDiagnostics(groundedGait, st.runPhase, groundSpeed);
+    gaitDrawDiagnostics.set(p.id, {
+      playerId: p.id,
+      gait: groundedGait,
+      speed: Number(groundSpeed.toFixed(2)),
+      phase: Number(st.runPhase.toFixed(3)),
+      farFootSign: Math.sign(gait.feet[0][0]) as -1 | 0 | 1,
+      nearFootSign: Math.sign(gait.feet[1][0]) as -1 | 0 | 1,
+      stride: Number(gait.stride.toFixed(3)),
+      maxLift: Number(gait.maxLift.toFixed(3)),
+    });
     target = {
       ...target,
-      // A touch of vertical bob per stride sells the footfalls.
-      crouch: target.crouch + Math.abs(Math.cos(st.runPhase)) * 0.06 * pace,
-      // Elbows fold FORWARD, so their bend is negative. This override kept the
-      // positive value the whole pose table was corrected away from, which is
-      // why a running player's forearms pointed the wrong way and the arms
-      // read as fighting the legs.
-      armFar: [-0.9 * phase * pace, -0.55 - 0.4 * pace],
-      armNear: [0.9 * phase * pace, -0.55 - 0.4 * pace],
-      feet: [
-        [stride * phase, farLift],
-        [-stride * phase, nearLift],
-      ],
+      crouch: target.crouch + gait.crouchAdd,
+      // A stride is contralateral: the leg that swings forward pairs with the
+      // arm on the OTHER side. Elbows fold forward, so their bend stays
+      // negative; otherwise the forearms fight the legs.
+      armFar: gait.armFar,
+      armNear: gait.armNear,
+      feet: gait.feet,
     };
   } else if (p.anim === 'idle') {
     const breathe = Math.sin(opts.time * 2.1 + p.id) * 0.025;
@@ -858,7 +934,7 @@ export function drawPlayer(
   if (unit > 46) {
     ctx.save();
     ctx.scale(facing, 1);
-    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.fillStyle = 'rgba(238,226,194,0.92)';
     ctx.font = `800 ${unit * 0.085}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     // On the hip: in profile there is no chest facing the camera to print a
@@ -869,7 +945,7 @@ export function drawPlayer(
   }
 
   // Near side.
-  drawLeg(current.legNear, current.feet?.[1] ?? null, 1, skin, shorts, '#f2f5fb');
+  drawLeg(current.legNear, current.feet?.[1] ?? null, 1, skin, shorts, '#e5edf4');
   drawArm(current.armNear, 1, kit);
 
   // ---- head
@@ -1064,9 +1140,9 @@ function scratchFor(w: number, h: number): { canvas: HTMLCanvasElement; ctx: Can
  * the player rises the core fades out and the pool spreads, so a jump visibly
  * leaves the ground instead of merely moving up the screen.
  */
-export function drawPlayerShadow(ctx: CanvasRenderingContext2D, cam: Camera, p: Player): void {
+export function drawPlayerShadow(ctx: CanvasRenderingContext2D, cam: Camera, p: Player, renderedHeight = diveRenderHeight(p)): void {
   const s = cam.projectFloor(p.pos.x, p.pos.y);
-  const lift = clamp(p.height / 1.4, 0, 1);
+  const lift = clamp(renderedHeight / 1.4, 0, 1);
   const u = s.scale * 42;
   const rx = 0.42 * u * (1 + lift * 0.85);
 

@@ -27,6 +27,8 @@ import { resolve } from 'node:path';
 
 const ACTIONS = [
   'idle',
+  'walk',
+  'run',
   'approach',
   'spike',
   'block',

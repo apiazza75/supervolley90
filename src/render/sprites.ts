@@ -1,5 +1,3 @@
-import { applyCharacterSignature } from './character-signature';
-
 /**
  * Sprite sheets.
  *
@@ -12,23 +10,39 @@ import { applyCharacterSignature } from './character-signature';
  * was drawn on, measures where the feet are, and hands the renderer a frame at
  * a time.
  *
- * The whole system is optional. If the files are absent — which they are until
- * someone puts them there — `loadSheets` resolves with nothing and the game
- * goes on drawing its vector figures, so a missing asset can never break a
- * build or a match.
+ * The whole system is mandatory for gameplay. If a sheet is absent or damaged
+ * the renderer shows a diagnostic and waits for a complete raster set instead
+ * of silently switching the players back to the old capsule/ellipse figures.
  */
+
+import { PixelBudgetCache } from './pixel-budget-cache';
+import { inkBounds, type InkBounds } from './ink-bounds';
+import { recolourMaterialPixels } from './material-pixels';
+import { packBinaryMaterialMasks, type MaterialMask } from './material-mask';
+import { isBlueClothHighlight } from './cloth-highlight';
 
 /** The actions a sheet can describe. One PNG each. */
 export type SpriteAction =
   | 'idle'
+  | 'walk'
+  | 'shuffle'
+  | 'backpedal'
+  | 'run'
   | 'approach'
   | 'spike'
+  | 'spikeFollow'
   | 'block'
   | 'bump'
   | 'set'
+  | 'backSet'
+  | 'turn'
+  | 'runTurn'
+  | 'turnStop'
+  | 'runBrake'
   | 'dive'
   | 'serve'
   | 'jumpServe'
+  | 'jumpServeFollow'
   | 'celebrate';
 
 export interface SheetLayout {
@@ -54,17 +68,13 @@ export interface SheetLayout {
    * top would launch the sprite twice as high as the physics says it is.
    */
   artHasLift: boolean;
+  /** Whole-figure scale in the original 512px cut-out cells, before packing. */
+  nativeBodyHeight?: number;
   /**
    * Frames to skip, by index, because the drawing holds something other than
    * the player.
-   *
-   * One block frame has the net drawn into it, attached to the hitter's hands,
-   * so it survives every filter as part of the figure and would appear on court
-   * beside the net the game draws for itself. It was briefly rejected by how
-   * wide it measured, but that margin was thin — 1.68 times the sheet's median
-   * against 1.54 for a genuine spike stride — and it stopped holding the moment
-   * the crop changed. Naming the frame is the honest way to say it: this one
-   * cell is not a pose.
+   * This remains available for future bad art imports, but the current manga
+   * sheets are expected to provide all 24 gameplay frames per action.
    */
   skip?: number[];
 }
@@ -84,17 +94,79 @@ const GRID: SheetLayout = {
   artHasLift: false,
 };
 
+/**
+ * Frame-zero crown/chin landmarks, reviewed on the shipped drawings with
+ * tools/inspect-sprite-proportions.ts. The collar is NOT a head measurement:
+ * leaning changes its height relative to the chin. Re-review after a redraw.
+ * These approximate landmarks register scale, not anatomical quality.
+ */
+export const SPRITE_HEAD_REFERENCE: Record<SpriteAction, { top: number; chin: number }> = {
+  idle: { top: 15, chin: 91 },
+  walk: { top: 14, chin: 90 },
+  shuffle: { top: 13, chin: 94 },
+  backpedal: { top: 13, chin: 95 },
+  run: { top: 21, chin: 101 },
+  approach: { top: 47, chin: 120 },
+  bump: { top: 20, chin: 97 },
+  set: { top: 43, chin: 115 },
+  backSet: { top: 40, chin: 112 },
+  turn: { top: 36, chin: 113 },
+  runTurn: { top: 12, chin: 92 },
+  turnStop: { top: 12, chin: 92 },
+  runBrake: { top: 32, chin: 113 },
+  spike: { top: 96, chin: 161 },
+  spikeFollow: { top: 44, chin: 114 },
+  block: { top: 133, chin: 194 },
+  dive: { top: 185, chin: 259 },
+  serve: { top: 58, chin: 122 },
+  jumpServe: { top: 44, chin: 110 },
+  jumpServeFollow: { top: 105, chin: 180 },
+  celebrate: { top: 55, chin: 125 },
+};
+
+/**
+ * The authored neutral athlete is six crown-to-chin units tall (idle frame 0:
+ * 455px sole-to-crown / 76px head). Its world height is 1.9m before roster
+ * variation. The legacy 340/81 unit made ready players 2.3–3m tall beside a
+ * 2.43m net, magnifying overlap even when their court positions were legal.
+ * Keep this unit fixed: redrawing one action must not resize the whole roster.
+ */
+export const SPRITE_STANDING_HEAD_UNITS = 6;
+
+function calibratedLayout(action: SpriteAction, artHasLift = false): SheetLayout {
+  const head = SPRITE_HEAD_REFERENCE[action];
+  return {
+    ...GRID,
+    artHasLift,
+    // Register every action to the same anatomical standing unit. Apply ONE uniform scale to
+    // every drawing in an action. Never stretch limbs or resize each pose by
+    // its bounding box: crouching and reaching must still change the outline.
+    nativeBodyHeight: SPRITE_STANDING_HEAD_UNITS * (head.chin - head.top),
+  };
+}
+
 export const SHEETS: Record<SpriteAction, SheetLayout> = {
-  idle: { ...GRID },
-  approach: { ...GRID },
-  spike: { ...GRID, artHasLift: true },
-  block: { ...GRID, artHasLift: true, skip: [16] },
-  bump: { ...GRID },
-  set: { ...GRID },
-  dive: { ...GRID, artHasLift: true },
-  serve: { ...GRID },
-  jumpServe: { ...GRID, artHasLift: true },
-  celebrate: { ...GRID },
+  idle: calibratedLayout('idle'),
+  walk: calibratedLayout('walk'),
+  shuffle: calibratedLayout('shuffle'),
+  run: calibratedLayout('run', true),
+  backpedal: calibratedLayout('backpedal'),
+  approach: calibratedLayout('approach'),
+  spike: calibratedLayout('spike', true),
+  spikeFollow: calibratedLayout('spikeFollow', true),
+  block: calibratedLayout('block', true),
+  bump: calibratedLayout('bump'),
+  set: calibratedLayout('set'),
+  backSet: calibratedLayout('backSet'),
+  turn: calibratedLayout('turn'),
+  runTurn: calibratedLayout('runTurn'),
+  turnStop: calibratedLayout('turnStop'),
+  runBrake: calibratedLayout('runBrake'),
+  dive: calibratedLayout('dive', true),
+  serve: calibratedLayout('serve'),
+  jumpServe: calibratedLayout('jumpServe', true),
+  jumpServeFollow: calibratedLayout('jumpServeFollow', true),
+  celebrate: calibratedLayout('celebrate'),
 };
 
 const SHEET_SCALE = 0.5;
@@ -114,6 +186,8 @@ const SHEET_SCALE = 0.5;
 const PAPER_FRAC = 0.3;
 
 export interface Frame {
+  /** Pixel-preserving cached-paint crop; physics/hand/root coordinates stay unchanged. */
+  inkBounds?: InkBounds;
   /** Source rectangle inside the keyed sheet canvas. */
   sx: number;
   sy: number;
@@ -142,6 +216,8 @@ export interface SpritePalette {
 
 export interface Sheet {
   canvas: HTMLCanvasElement;
+  /** Binary generated masks, packed after all illustrated extensions join. */
+  materialMask?: MaterialMask;
   /** Packed RGBA material mask: R primary, G secondary, B skin. */
   maskCanvas?: HTMLCanvasElement;
   /** Packed hair mask; red channel contains hair weight. */
@@ -236,9 +312,6 @@ function parseColour(value: string): [number, number, number] | null {
   return rgb ? [parseInt(rgb[1], 10), parseInt(rgb[2], 10), parseInt(rgb[3], 10)] : null;
 }
 
-const CHANNEL_SOURCE_LIGHTNESS = [0.31, 0.7, 0.55, 0.16] as const;
-const CHANNEL_TONE_RANGE = [0.9, 0.62, 0.7, 0.5] as const;
-
 function paletteKey(palette: SpritePalette): string {
   return [
     palette.primary,
@@ -259,60 +332,66 @@ function paletteKey(palette: SpritePalette): string {
  * explicit: uniform panels move, skin and hair do not unless a per-player
  * palette deliberately asks them to.
  */
-function recolour(sheet: Sheet, palette: SpritePalette): HTMLCanvasElement {
-  const cacheKey = paletteKey(palette);
-  const cached = sheet.variants.get(cacheKey);
-  if (cached) return cached;
+// Gameplay needs one pose, not a synchronous recolour of 24 poses on the first
+// touch of every action/identity. A bounded LRU avoids keeping whole atlases
+// for every roster member and never changes the underlying colouring formula.
+// 384 entries could not retain even two concurrent locomotion cycles for a
+// roster. Small cropped poses should not cost the same as a large full sheet.
+// Bound retained RGBA backing pixels instead (browser/GPU overhead is extra).
+const frameVariants = new PixelBudgetCache<HTMLCanvasElement>(96 * 1024 * 1024);
+const sheetIds = new WeakMap<Sheet, number>();
+let nextSheetId = 0;
+export const frameVariantStats = {
+  generated: 0,
+  get hits() { return frameVariants.stats.hits; },
+  get entries() { return frameVariants.size; },
+  get bytes() { return frameVariants.stats.bytes; },
+  get peakBytes() { return frameVariants.stats.peakBytes; },
+  get evictions() { return frameVariants.stats.evictions; },
+  byteLimit: frameVariants.byteLimit,
+};
+
+function recolour(sheet: Sheet, palette: SpritePalette, frameIndex?: number, tight = false): HTMLCanvasElement {
+  const frame = frameIndex === undefined ? undefined : sheet.frames[frameIndex];
+  const crop = tight ? frame?.inkBounds : undefined;
+  let sheetId = sheetIds.get(sheet);
+  if (sheetId === undefined) { sheetId = nextSheetId++; sheetIds.set(sheet, sheetId); }
+  const cacheKey = frame ? `${sheetId}/${frameIndex}/${tight ? 'tight/' : ''}${paletteKey(palette)}` : paletteKey(palette);
+  const cached = frame ? frameVariants.get(cacheKey) : sheet.variants.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
 
   const src = sheet.canvas;
   const out = document.createElement('canvas');
-  out.width = src.width;
-  out.height = src.height;
+  out.width = crop?.width ?? frame?.sw ?? src.width;
+  out.height = crop?.height ?? frame?.sh ?? src.height;
   const ctx = out.getContext('2d', { willReadFrequently: true });
   if (!ctx) return src;
-  ctx.drawImage(src, 0, 0);
+  const sx = (frame?.sx ?? 0) + (crop?.x ?? 0), sy = (frame?.sy ?? 0) + (crop?.y ?? 0);
+  const sourceCtx = src.getContext('2d', { willReadFrequently: true });
+  if (!sourceCtx) return src;
 
   const targets = [palette.primary, palette.secondary, palette.skin, palette.hair].map((c) =>
     c ? parseColour(c) : null,
   );
   const targetHsl = targets.map((c) => (c ? rgbToHsl(c[0], c[1], c[2]) : null));
-  const img = ctx.getImageData(0, 0, out.width, out.height);
+  // getImageData already returns a detached writable copy. Copying the same
+  // rectangle through another canvas first adds a synchronous drawing pass
+  // (measured at 12ms on a cache miss) without changing any source pixels.
+  // All 682 loaded poses were compared byte-for-byte through both paths.
+  const img = sourceCtx.getImageData(sx, sy, out.width, out.height);
   const d = img.data;
 
-  if (sheet.maskCanvas) {
+  if (sheet.materialMask) {
+    recolourMaterialPixels(d, sheet.materialMask.data, undefined, targetHsl,
+      { offset: sy * sheet.materialMask.width + sx, width: out.width, stride: sheet.materialMask.width });
+  } else if (sheet.maskCanvas) {
     const mctx = sheet.maskCanvas.getContext('2d', { willReadFrequently: true });
     const hctx = sheet.hairMaskCanvas?.getContext('2d', { willReadFrequently: true });
-    const md = mctx?.getImageData(0, 0, out.width, out.height).data;
-    const hd = hctx?.getImageData(0, 0, out.width, out.height).data;
-    if (md) {
-      for (let i = 0; i < out.width * out.height; i++) {
-        if (d[i * 4 + 3] < 24) continue;
-        const weights = [md[i * 4], md[i * 4 + 1], md[i * 4 + 2], hd?.[i * 4] ?? 0];
-        let channel = -1;
-        let weight = 0;
-        for (let c = 0; c < weights.length; c++) {
-          const w = weights[c];
-          if (targets[c] && w > weight) {
-            channel = c;
-            weight = w;
-          }
-        }
-        if (channel < 0 || weight < 24) continue;
-        const target = targetHsl[channel];
-        if (!target) continue;
-        const [, sourceS, sourceL] = rgbToHsl(d[i * 4], d[i * 4 + 1], d[i * 4 + 2]);
-        const [targetH, targetS, targetL] = target;
-        const tone = CHANNEL_SOURCE_LIGHTNESS[channel];
-        const range = CHANNEL_TONE_RANGE[channel];
-        const lightness = Math.max(0.025, Math.min(0.975, targetL + (sourceL - tone) * range));
-        const saturation = Math.max(targetS * 0.82, sourceS * 0.42);
-        const [r, g, b] = hslToRgb(targetH, Math.min(1, saturation), lightness);
-        const mix = weight / 255;
-        d[i * 4] = Math.round(d[i * 4] * (1 - mix) + r * mix);
-        d[i * 4 + 1] = Math.round(d[i * 4 + 1] * (1 - mix) + g * mix);
-        d[i * 4 + 2] = Math.round(d[i * 4 + 2] * (1 - mix) + b * mix);
-      }
-    }
+    const md = mctx?.getImageData(sx, sy, out.width, out.height).data;
+    const hd = hctx?.getImageData(sx, sy, out.width, out.height).data;
+    if (md) recolourMaterialPixels(d, md, hd, targetHsl);
   } else {
     // Legacy fallback for old paper sheets: only the primary hue is available.
     const target = targetHsl[0];
@@ -343,8 +422,12 @@ function recolour(sheet: Sheet, palette: SpritePalette): HTMLCanvasElement {
   }
 
   ctx.putImageData(img, 0, 0);
-  applyCharacterSignature(ctx, sheet, palette);
-  sheet.variants.set(cacheKey, out);
+  // Keep the illustrated anatomy and costume intact. Screen-space sleeve,
+  // knee-pad and stripe overlays do not follow limbs in a raster animation.
+  if (frame) {
+    frameVariants.set(cacheKey, out, out.width, out.height);
+    frameVariantStats.generated++;
+  } else sheet.variants.set(cacheKey, out);
   return out;
 }
 
@@ -354,6 +437,23 @@ export function kitCanvas(
   palette: SpritePalette | string,
 ): HTMLCanvasElement {
   return recolour(sheet, typeof palette === 'string' ? { primary: palette } : palette);
+}
+
+/** Same material recolouring as kitCanvas, restricted to one authored cell. */
+export function frameKitCanvas(sheet: Sheet, index: number, palette: SpritePalette | string): HTMLCanvasElement {
+  const frameIndex = Math.max(0, Math.min(sheet.frames.length - 1, index));
+  return recolour(sheet, typeof palette === 'string' ? { primary: palette } : palette, frameIndex);
+}
+
+/** Drawn pixels only; offsets are relative to the original unmodified cell. */
+export function frameKitTile(sheet: Sheet, index: number, palette: SpritePalette | string) {
+  const frameIndex = Math.max(0, Math.min(sheet.frames.length - 1, index));
+  const frame = sheet.frames[frameIndex];
+  return {
+    canvas: recolour(sheet, typeof palette === 'string' ? { primary: palette } : palette, frameIndex, true),
+    x: frame.inkBounds?.x ?? 0, y: frame.inkBounds?.y ?? 0,
+    width: frame.inkBounds?.width ?? frame.sw, height: frame.inkBounds?.height ?? frame.sh,
+  };
 }
 
 /**
@@ -823,9 +923,9 @@ function sanitizeTransparentSheet(
   width: number,
   height: number,
 ): void {
-  if (width !== 3072 || height !== 2048) return;
-  for (let row = 0; row < 4; row++) {
-    for (let col = 0; col < 6; col++) {
+  if (!((width === 3072 && height === 2048) || (width === 2048 && height === 512))) return;
+  for (let row = 0; row < height / 512; row++) {
+    for (let col = 0; col < width / 512; col++) {
       clearExteriorWhite(ctx, col * 512, row * 512, 512, 512);
     }
   }
@@ -917,15 +1017,20 @@ function proximityFrom(seed: Uint8Array, width: number, height: number, radius: 
 /**
  * Build explicit material masks from the packed, sanitised artwork.
  *
- * This happens once per sheet, off the gameplay path. It removes the unsafe
- * dominant-hue guess: only the connected royal-blue shirt/short components are
- * primary kit, nearby white/gold panels are secondary kit, and skin/hair are
- * isolated separately. Shoes and unrelated saturated pixels stay authored.
+ * This happens once per sheet, off the gameplay path. Masks are derived from
+ * source colours, not hand-authored anatomy: blue costume material is primary,
+ * connected pale/gold accents are secondary, and skin/hair are separate.
+ * Keep the classification independent of a component's size or screen height.
  */
 function attachGeneratedMasks(sheet: Sheet): Sheet {
   const sourceCtx = sheet.canvas.getContext('2d', { willReadFrequently: true });
   if (!sourceCtx) return sheet;
   const source = sourceCtx.getImageData(0, 0, sheet.canvas.width, sheet.canvas.height);
+  // Measure once during asset loading, never during a rally. Leave the
+  // original cell and its root/contact geometry completely untouched.
+  for (const frame of sheet.frames) {
+    frame.inkBounds = inkBounds(source.data, source.width, frame.sx, frame.sy, frame.sw, frame.sh);
+  }
   const mask = document.createElement('canvas');
   mask.width = sheet.canvas.width;
   mask.height = sheet.canvas.height;
@@ -974,32 +1079,46 @@ function attachGeneratedMasks(sheet: Sheet): Sheet {
     if (top > bottom) continue;
     const bodyHeight = Math.max(1, bottom - top + 1);
 
-    const blueCandidate = new Uint8Array(count);
-    for (let i = 0; i < count; i++) {
-      if (opaque[i] && hueDistance(hue[i], 225) <= 42 && sat[i] >= 0.24 && light[i] >= 0.045 && light[i] <= 0.88) blueCandidate[i] = 1;
-    }
-    const blue = labelComponents(blueCandidate, width, height);
+    // The source palette identifies cloth even in a tiny disconnected fold.
+    // Filtering components by their size relative to the torso made shoes
+    // and jersey details change material from one pose to the next.
     const primary = new Uint8Array(count);
-    const largest = blue.sizes.length ? Math.max(...blue.sizes) : 0;
-    for (let id = 0; id < blue.sizes.length; id++) {
-      const size = blue.sizes[id];
-      const cy = blue.sumY[id] / Math.max(1, size);
-      const relY = (cy - top) / bodyHeight;
-      if (size < Math.max(8, largest * 0.035)) continue;
-      if (size >= largest * 0.16 || relY < 0.76) {
-        for (let i = 0; i < count; i++) if (blue.labels[i] === id) primary[i] = 1;
-      }
+    for (let i = 0; i < count; i++) {
+      if (opaque[i] && hueDistance(hue[i], 225) <= 42 && sat[i] >= 0.18 && light[i] >= 0.045 && light[i] <= 0.88) primary[i] = 1;
+      // Bright blue antialiasing around numbers, panels and shoe details is
+      // still cloth. Retain the .88 ceiling for neutral whites, not for these
+      // strongly blue pixels that otherwise stay blue on every team's kit.
+      if (!opaque[i] || primary[i] || light[i] <= .88) continue;
+      const x = i % width, y = (i / width) | 0;
+      const o = ((frame.sy + y) * sheet.canvas.width + frame.sx + x) * 4;
+      if (isBlueClothHighlight(source.data[o], source.data[o + 1], source.data[o + 2])) primary[i] = 1;
     }
     const nearPrimary = proximityFrom(primary, width, height, 7);
 
+    // Select WHOLE accent regions touching blue fabric, not only a 7px rim.
+    // The rim-only mask left white islands in green/black panels. Avoid
+    // screen-height bands: a lifted sock is still the same costume material.
+    const accentCandidate = new Uint8Array(count);
+    for (let i = 0; i < count; i++) {
+      if (!opaque[i] || primary[i]) continue;
+      const x = i % width, y = (i / width) | 0;
+      const o = ((frame.sy + y) * sheet.canvas.width + frame.sx + x) * 4;
+      const r = source.data[o], g = source.data[o + 1], b = source.data[o + 2];
+      // HSL saturation explodes near white: a tiny cream tint in a sock was
+      // classified differently from its neighbouring white pixel. Use actual
+      // channel spread, while excluding the red/warm gradients of skin.
+      const neutral = light[i] > 0.58 && Math.max(r, g, b) - Math.min(r, g, b) <= 42 && r - g <= 12 && g - b <= 25;
+      const gold = hue[i] >= 48 && hue[i] <= 78 && sat[i] > 0.35 && light[i] > 0.18;
+      if (neutral || gold) accentCandidate[i] = 1;
+    }
+    const accents = labelComponents(accentCandidate, width, height);
+    const touchesFabric = new Uint8Array(accents.sizes.length);
+    for (let i = 0; i < count; i++) {
+      if (accents.labels[i] >= 0 && nearPrimary[i]) touchesFabric[accents.labels[i]] = 1;
+    }
     const secondary = new Uint8Array(count);
     for (let i = 0; i < count; i++) {
-      if (!opaque[i] || primary[i] || !nearPrimary[i]) continue;
-      const y = (i / width) | 0;
-      if ((y - top) / bodyHeight > 0.72) continue;
-      const neutral = sat[i] < 0.16 && light[i] > 0.58;
-      const gold = hue[i] >= 48 && hue[i] <= 78 && sat[i] > 0.35 && light[i] > 0.18;
-      if (neutral || gold) secondary[i] = 1;
+      if (accents.labels[i] >= 0 && touchesFabric[accents.labels[i]]) secondary[i] = 1;
     }
 
     const skinCandidate = new Uint8Array(count);
@@ -1051,7 +1170,6 @@ const CUT_OUT_CELL = 512;
 const CUT_OUT_COLS = 6;
 const CUT_OUT_ROWS = 4;
 const CUT_OUT_FLOOR = 470 / CUT_OUT_CELL;
-const CUT_OUT_BODY_HEIGHT = 340;
 
 /**
  * Clear a flat background, and report whether the sheet arrived cut out.
@@ -1082,25 +1200,26 @@ function sliceCutOut(
   ctx: CanvasRenderingContext2D,
   layout: SheetLayout,
 ): Sheet | null {
-  const expectedWidth = CUT_OUT_CELL * CUT_OUT_COLS;
-  const expectedHeight = CUT_OUT_CELL * CUT_OUT_ROWS;
+  const standardGrid = layout.cols === CUT_OUT_COLS && layout.rows === CUT_OUT_ROWS;
+  const gatherGrid = (layout.cols === 4 || layout.cols === 2) && layout.rows === 1;
+  if (!standardGrid && !gatherGrid) {
+    throw new Error('transparent sheet layout must be 6x4 or a 2x1/4x1 illustrated extension');
+  }
+  const expectedWidth = CUT_OUT_CELL * layout.cols;
+  const expectedHeight = CUT_OUT_CELL * layout.rows;
   if (canvas.width !== expectedWidth || canvas.height !== expectedHeight) {
     throw new Error(
       `transparent sheet must be ${expectedWidth}x${expectedHeight}; got ${canvas.width}x${canvas.height}`,
     );
   }
-  if (layout.cols !== CUT_OUT_COLS || layout.rows !== CUT_OUT_ROWS) {
-    throw new Error(`transparent sheet layout must be ${CUT_OUT_COLS}x${CUT_OUT_ROWS}`);
-  }
-
   const frames: Frame[] = [];
-  for (let r = 0; r < CUT_OUT_ROWS; r++) {
-    for (let c = 0; c < CUT_OUT_COLS; c++) {
+  for (let r = 0; r < layout.rows; r++) {
+    for (let c = 0; c < layout.cols; c++) {
       const sx = c * CUT_OUT_CELL;
       const sy = r * CUT_OUT_CELL;
       const m = measure(ctx, sx, sy, CUT_OUT_CELL, CUT_OUT_CELL);
       if (m.pixels < 64) {
-        throw new Error(`transparent sheet frame ${r * CUT_OUT_COLS + c + 1} is empty`);
+        throw new Error(`transparent sheet frame ${r * layout.cols + c + 1} is empty`);
       }
       frames.push({
         sx,
@@ -1115,7 +1234,7 @@ function sliceCutOut(
     }
   }
 
-  // No outlier substitution here. A strict cut-out sheet contains 24
+  // No outlier substitution here. A strict cut-out sheet contains authored
   // intentional poses; silently replacing a crouch, dive or full reach
   // would destroy authored animation while pretending to repair it.
   const packed = pack(
@@ -1123,7 +1242,7 @@ function sliceCutOut(
     frames,
     layout,
     dominantHue(ctx, frames),
-    CUT_OUT_BODY_HEIGHT,
+    layout.nativeBodyHeight,
   );
   return packed ? attachGeneratedMasks(packed) : null;
 }
@@ -1226,9 +1345,58 @@ async function loadOne(
 
 export type SheetSet = Partial<Record<SpriteAction, Sheet>>;
 
+/** Retain one byte per mask pixel instead of two RGBA canvas backings.
+ * Called only after joining extensions, so no partial atlas is ever compacted.
+ * No source artwork or source/caller-owned mask canvas is mutated.
+ */
+export function compactMaterialMasks(sheet: Sheet): Sheet {
+  const material = sheet.maskCanvas, hair = sheet.hairMaskCanvas;
+  if (!material || !hair || material.width !== sheet.canvas.width || material.height !== sheet.canvas.height
+    || hair.width !== material.width || hair.height !== material.height) return sheet;
+  const mctx = material.getContext('2d', { willReadFrequently: true });
+  const hctx = hair.getContext('2d', { willReadFrequently: true });
+  if (!mctx || !hctx) return sheet;
+  const packed = packBinaryMaterialMasks(
+    mctx.getImageData(0, 0, material.width, material.height).data,
+    hctx.getImageData(0, 0, hair.width, hair.height).data,
+  );
+  if (!packed) return sheet;
+  const result = { ...sheet, materialMask: { data: packed, width: material.width, height: material.height } };
+  delete result.maskCanvas; delete result.hairMaskCanvas;
+  return result;
+}
+
+/** Append a registered, same-scale illustrated strip without changing
+ * the existing 24 touch/recovery frame indexes or their pixels.
+ */
+export function appendIllustratedExtension(sheet: Sheet, entry: Sheet): Sheet {
+  if (sheet.materialMask || entry.materialMask) throw new Error('Append illustrated extensions before material-mask compaction');
+  if (sheet.frames.length < 24 || sheet.frames.length % 2 !== 0 || ![2,4].includes(entry.frames.length)
+    || sheet.nativeBodyHeight !== entry.nativeBodyHeight) throw new Error('Invalid illustrated extension registration');
+  const y = sheet.canvas.height;
+  const join = (a: HTMLCanvasElement, b: HTMLCanvasElement): HTMLCanvasElement => {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(a.width, b.width); canvas.height = a.height + b.height;
+    // These are CPU-read source/material atlases, just like pack()'s output.
+    // Losing this flag at the join made every added strip turn the complete
+    // atlas back into a GPU surface. First-use kit recolouring then forced
+    // synchronous readbacks during the match (including both material masks).
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+    ctx.drawImage(a, 0, 0); ctx.drawImage(b, 0, a.height);
+    return canvas;
+  };
+  return { ...sheet, canvas: join(sheet.canvas, entry.canvas),
+    maskCanvas: sheet.maskCanvas && entry.maskCanvas ? join(sheet.maskCanvas, entry.maskCanvas) : undefined,
+    hairMaskCanvas: sheet.hairMaskCanvas && entry.hairMaskCanvas ? join(sheet.hairMaskCanvas, entry.hairMaskCanvas) : undefined,
+    frames: [...sheet.frames, ...entry.frames.map(f => ({ ...f, sy: f.sy + y }))], variants: new Map() };
+}
+
 /**
- * Load whatever is present under `/sprites`. Missing files are not an error:
- * the caller falls back to the vector figures for anything absent.
+ * Load the complete authored manga set under `/sprites`.
+ *
+ * Missing files are reported to the caller and the returned set is incomplete.
+ * The gameplay renderer treats that as a visible art-loading failure, never as
+ * permission to draw vector placeholder bodies.
  */
 export async function loadSheets(
   base = 'sprites',
@@ -1237,21 +1405,35 @@ export async function loadSheets(
 ): Promise<SheetSet> {
   const names = Object.keys(SHEETS) as SpriteAction[];
   const out: SheetSet = {};
-  // One sheet at a time, yielding in between. Preparing all ten at once holds
+  // One sheet at a time, yielding in between. Preparing all sheets at once holds
   // the main thread for seconds — long enough that the game does not respond to
   // its first inputs — because each one is flood-filled and shape-labelled a
-  // cell at a time. Handing each finished sheet over as it arrives means the
-  // match starts on vector figures and takes on the drawn ones as they land,
-  // instead of waiting for the slowest.
+  // cell at a time. The renderer installs the result atomically only after the
+  // complete set has loaded, so there is no mid-match species switching.
   for (const n of names) {
     // Resolved against the document rather than left relative, so it does not
     // depend on what the page's path happens to be once bundled.
     const url = new URL(`${base}/${n}.png`, document.baseURI).href;
-    const sheet = await loadOne(url, SHEETS[n]).catch((err: unknown) => {
-      // Said out loud. Falling back to the vector figures is the right
-      // behaviour when a sheet is genuinely absent, but doing it silently is
-      // how a build shipped where NOTHING loaded and the only clue was that
-      // the players looked like the old ones.
+    const sheet = await (async () => {
+      let main = await loadOne(url, SHEETS[n]);
+      if (!main) return main;
+      const extensions = n === 'approach' ? [...Array.from({length:9},(_,i)=>`approach-steps-${i+1}`), 'approach-plant']
+        : n === 'idle' ? ['ready-retreat','ready-lateral'] : n === 'set' ? ['set-entry','set-return'] : n === 'backSet' ? ['backset-recovery'] : n === 'block' ? ['block-landing','block-landing-between','block-descent']
+        : n === 'dive' ? ['dive-recovery', 'dive-floor', 'dive-rise', 'dive-impact', 'dive-turn'] : n === 'bump' ? ['bump-follow','bump-preparation','bump-release','bump-release-early','bump-moving-entry']
+        : n === 'celebrate' ? ['celebrate-follow'] : n === 'spike' ? ['spike-rise', 'spike-cock']
+        : n === 'spikeFollow' ? ['spike-descent', 'backpedal-entry']
+        : n === 'serve' ? ['serve-swing','serve-follow','serve-charge-release','serve-toss-release','serve-follow-between']
+        : n === 'jumpServe' ? ['jump-serve-entry','jump-serve-toss','jump-serve-rise']
+        : n === 'walk' ? ['walk-release','walk-arm-release']
+        : n === 'turnStop' ? ['turn-stop-between'] : n === 'run' ? ['run-passing'] : [];
+      for (const extension of extensions) {
+        const entry = await loadOne(new URL(`${base}/${extension}.png`, document.baseURI).href,
+          { ...SHEETS[n], cols: extension === 'run-passing' ? 2 : 4, rows: 1 });
+        if (!entry) throw new Error(`Missing illustrated ${extension}`);
+        main = appendIllustratedExtension(main, entry);
+      }
+      return compactMaterialMasks(main);
+    })().catch((err: unknown) => {
       console.error(`[sprites] ${n} failed to load from ${url}:`, err);
       onError?.(n, err instanceof Error ? err.message : String(err));
       return null;
@@ -1291,20 +1473,23 @@ export function drawFrame(
   if (!f) return;
   const drawn = sheet.nativeBodyHeight ?? Math.max(1, f.footY - f.boxTop);
   const k = height / drawn;
+  const tile = palette ? frameKitTile(sheet, index, palette) : undefined;
+  const drawX = tile?.x ?? 0, drawY = tile?.y ?? 0;
+  const drawWidth = tile?.width ?? f.sw, drawHeight = tile?.height ?? f.sh;
 
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(facing * widthScale, 1);
   ctx.drawImage(
-    palette ? kitCanvas(sheet, palette) : sheet.canvas,
-    f.sx,
-    f.sy,
-    f.sw,
-    f.sh,
-    -f.footX * k,
-    -f.footY * k,
-    f.sw * k,
-    f.sh * k,
+    tile?.canvas ?? sheet.canvas,
+    palette ? 0 : f.sx,
+    palette ? 0 : f.sy,
+    drawWidth,
+    drawHeight,
+    (drawX - f.footX) * k,
+    (drawY - f.footY) * k,
+    drawWidth * k,
+    drawHeight * k,
   );
   ctx.restore();
 }

@@ -2,7 +2,11 @@ import { Vec3, copy, v3 } from './math3';
 import { Player, PlayerRole, PlayerStats, defaultStats, isFrontRow, slotPosition } from './player';
 import { Rng } from './rng';
 import { POWER_MAX, Side, TEAM_SIZE, attackDir } from './rules';
-import { SETTER_X, SETTER_Y } from './tactics';
+import { SETTER_X, SETTER_Y, serveFormation } from './tactics';
+import {
+  SkillAction, SkillActivation, SkillId,
+  createSkillState, tickSkill, addSkillCharge, peekSkill, useSkill,
+} from './skills';
 
 export interface TeamConfig {
   name: string;
@@ -11,7 +15,19 @@ export interface TeamConfig {
   colors: [string, string];
   /** 0..1 overall quality; individual stats are derived from it. */
   rating: number;
+  /** Optional match loadout. Catalog selections are cloned before a match. */
+  skillId?: SkillId;
+  kitId?: string;
   players?: { name: string; role: PlayerRole; stats?: Partial<PlayerStats> }[];
+}
+
+export interface RotationReport {
+  liberoChange?: {
+    playerId: number;
+    name: string;
+    entered: boolean;
+    slot: number;
+  };
 }
 
 const DEFAULT_ROLES: PlayerRole[] = [
@@ -50,6 +66,7 @@ export class Team {
 
   points = 0;
   setsWon = 0;
+  readonly skillState = createSkillState();
   /**
    * Lethal Maneuver gauge, 0..POWER_MAX. Full means the next attack can be
    * unleashed as a power move.
@@ -134,6 +151,22 @@ export class Team {
     this.power = 0;
   }
 
+  tickSkill(dt: number): void {
+    tickSkill(this.skillState, dt);
+  }
+
+  addSkillCharge(amount: number): void {
+    if (this.config.skillId) addSkillCharge(this.skillState, amount);
+  }
+
+  peekSkill(action: SkillAction): SkillActivation | null {
+    return peekSkill(this.skillState, this.config.skillId, action);
+  }
+
+  useSkill(action: SkillAction): SkillActivation | null {
+    return useSkill(this.skillState, this.config.skillId, action);
+  }
+
   get(id: number): Player | undefined {
     return this.players.find((p) => p.id === id);
   }
@@ -163,9 +196,28 @@ export class Team {
     return isFrontRow(p.rotationSlot);
   }
 
-  rotate(): void {
+  rotate(): RotationReport {
+    const before = this.liberoOnCourt();
     this.rotationOffset = (this.rotationOffset + 1) % TEAM_SIZE;
     this.applyRotation();
+    const after = this.liberoOnCourt();
+    const report: RotationReport = {};
+    if (before.on !== after.on && this.libero) {
+      report.liberoChange = {
+        playerId: this.libero.id,
+        name: this.libero.name,
+        entered: after.on,
+        slot: after.slot || this.libero.rotationSlot,
+      };
+    }
+    return report;
+  }
+
+  private liberoOnCourt(): { on: boolean; slot: number } {
+    const libero = this.libero;
+    if (!libero) return { on: false, slot: 0 };
+    const current = this.players.find((p) => p.id === libero.id);
+    return { on: Boolean(current), slot: current?.rotationSlot ?? libero.rotationSlot };
   }
 
   /** Recompute slots and formation anchors from the current rotation offset. */
@@ -219,11 +271,26 @@ export class Team {
       p.height = 0;
       p.vertVel = 0;
       p.downTime = 0;
+      p.gettingUp = 0;
+      p.sliding = 0;
       p.lockout = 0;
       p.diving = false;
       p.charge = 0;
+      p.actionBuffer = 0;
+      p.cancelApproach();
+      p.presentation.locomotion = 'stand';
       p.setAnim('idle');
       p.facing = this.side === 'home' ? 1 : -1;
+    }
+  }
+
+  /** The teams are already organised when service input is offered. */
+  prepareServePositions(serving: boolean): void {
+    const formation = serveFormation(this.players, serving);
+    for (const p of this.players) {
+      p.pos = copy(formation.get(p.id)!);
+      p.vel = v3();
+      p.setAnim('ready');
     }
   }
 
@@ -231,13 +298,17 @@ export class Team {
   placeServer(): Player {
     const s = this.server;
     s.pos.x = this.side === 'home' ? 2.2 : -2.2;
-    s.pos.y = this.side === 'home' ? -9.6 : 9.6;
+    // Start far enough behind the baseline to leave room for a visible jump
+    // serve run-up after the toss. The old implementation moved the human
+    // server backwards while the button was still held and the ball was still
+    // in hand, which read as an automatic pre-serve animation.
+    s.pos.y = this.side === 'home' ? -11.05 : 11.05;
     s.vel.x = 0;
     s.vel.y = 0;
     s.height = 0;
     s.vertVel = 0;
     s.charge = 0;
-    s.setAnim('serve_toss');
+    s.setAnim('ready');
     return s;
   }
 

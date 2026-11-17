@@ -1,6 +1,8 @@
 import { Vec3, v3, clamp, approach } from './math3';
 import {
   GRAVITY,
+  DIVE_INITIAL_HEIGHT,
+  DIVE_INITIAL_VELOCITY,
   JUMP_VELOCITY,
   LANDING_LOCK,
   PLAYER_ACCEL,
@@ -15,13 +17,13 @@ import {
 } from './rules';
 import {
   type ActionPhase,
-  type Locomotion,
   type PresentationJob,
   type PresentationState,
   type VolleyballAction,
   FACING_LOCKED_PHASES,
-  RUN_SPEED_THRESHOLD,
-  SHUFFLE_SPEED,
+  SET_GROUND_RECOVERY_TIME,
+  BUMP_GROUND_RECOVERY_TIME,
+  groundGait,
   initialPresentation,
 } from './presentation';
 
@@ -40,6 +42,7 @@ export type PlayerAnim =
   | 'air_contact_jump_serve'
   | 'follow_through'
   | 'dive'
+  | 'dive_contact'
   | 'jump'
   | 'spike'
   | 'block'
@@ -88,6 +91,7 @@ const TRANSIENT_ANIMS: readonly PlayerAnim[] = [
   'serve_contact',
   'down',
   'getUp',
+  'dive_contact',
 ];
 
 /** Minimum hold time for one-shot / readable action states. */
@@ -98,11 +102,11 @@ const TRANSIENT_HOLD: Partial<Record<PlayerAnim, number>> = {
   air_contact_spike: 0.12,
   air_contact_block: 0.14,
   air_contact_jump_serve: 0.14,
-  follow_through: 0.16,
+  follow_through: 0.22,
   bump_ready: 0.11,
-  bump_contact: 0.16,
+  bump_contact: BUMP_GROUND_RECOVERY_TIME,
   set_ready: 0.1,
-  set_contact: 0.16,
+  set_contact: SET_GROUND_RECOVERY_TIME,
   land: 0.15,
   down: 0.38,
   getUp: 0.24,
@@ -141,7 +145,8 @@ const ANIM_PRESENTATION: Record<PlayerAnim, { action: VolleyballAction; phase: A
   serve: { action: 'serve', phase: 'contact' },
   serve_contact: { action: 'serve', phase: 'contact' },
   air_contact_jump_serve: { action: 'jumpServe', phase: 'contact' },
-  dive: { action: 'dive', phase: 'contact' },
+  dive: { action: 'dive', phase: 'rise' },
+  dive_contact: { action: 'dive', phase: 'contact' },
   down: { action: 'dive', phase: 'land' },
   getUp: { action: 'dive', phase: 'recover' },
   cheer: { action: 'celebrate', phase: 'contact' },
@@ -175,10 +180,16 @@ export class Player {
 
   pos: Vec3 = v3();
   vel: Vec3 = v3();
+  /** Last accepted ground steering, for choosing footwork during acceleration.
+   * Observational only: never fed back into movement or ball contact.
+   */
+  locomotionIntent?: { x: number; y: number };
   /** Height above the floor and its vertical rate; kept apart from pos.z so
    *  that ground movement and airtime never fight each other. */
   height = 0;
   vertVel = 0;
+  /** Back-row attack eligibility is decided where the feet leave the floor. */
+  takeoffY?: number;
 
   /** Rotation slot 1..6, driving the base formation position. */
   rotationSlot = 1;
@@ -194,6 +205,9 @@ export class Player {
    * `anim` remains the call-site vocabulary; this is what gets rendered.
    */
   presentation: PresentationState = initialPresentation();
+
+  /** Grounded anticipation only; never identifies an airborne block or touch. */
+  blockPreparationAge?: number;
 
   /**
    * Seconds of remaining licence to play the attack-approach cycle.
@@ -213,6 +227,8 @@ export class Player {
   approachDistance = 0;
   /** How long the current approach has been running, for the hard cap below. */
   approachAge = 0;
+  /** Authored step timing up to the anticipated plant; latched at commitment. */
+  approachRunDuration = 0.58;
   /**
    * Ground covered by the run-up that produced the jump currently in progress.
    *
@@ -276,7 +292,12 @@ export class Player {
   }
 
   get canAct(): boolean {
-    return this.lockout <= 0 && this.downTime <= 0;
+    return this.lockout <= 0 && this.downTime <= 0 && this.gettingUp <= 0;
+  }
+
+  /** Feet absorb a jump landing; unlike a dive this is not a floor slide. */
+  get landingPlant(): boolean {
+    return this.height <= 0 && this.vertVel === 0 && this.anim === 'land';
   }
 
   get runSpeed(): number {
@@ -293,7 +314,8 @@ export class Player {
   }
 
   jump(): boolean {
-    if (!this.canAct || this.airborne) return false;
+    if (!this.canAct || this.height > 0 || this.vertVel !== 0) return false;
+    this.takeoffY = this.pos.y;
     // The run-up ends here; remember how far it actually travelled.
     this.lastApproachDistance = this.approachDistance;
     this.vertVel = this.jumpVelocity;
@@ -303,28 +325,46 @@ export class Player {
   }
 
   dive(dirX: number, dirY: number): boolean {
-    if (!this.canAct || this.airborne) return false;
+    if (!this.canAct || this.height > 0 || this.vertVel !== 0) return false;
+    this.takeoffY = undefined;
     const l = Math.hypot(dirX, dirY) || 1;
     const speed = this.runSpeed * 1.65;
     this.vel.x = (dirX / l) * speed;
     this.vel.y = (dirY / l) * speed;
     this.diving = true;
-    this.height = 0.35;
-    this.vertVel = 1.1;
+    this.height = DIVE_INITIAL_HEIGHT;
+    this.vertVel = DIVE_INITIAL_VELOCITY;
     this.downTime = 0.55;
+    // A save may reach towards our own baseline. Do not mirror a backwards
+    // dive towards the net while its momentum carries the body the other way.
+    if (Math.abs(dirY) > 0.15) this.facing = Math.sign(dirY);
     this.setAnim('dive');
     return true;
   }
 
   /** Throw the arms up. Purely for show, and it stops the moment play resumes. */
   celebrate(duration: number): void {
-    if (this.downTime > 0) return;
+    if (this.downTime > 0 || this.gettingUp > 0 || this.diving) return;
+    // This strip is a grounded fist-pump. Keep the actual jumping/blocking
+    // body until it lands; a point must not put planted-foot art in midair.
+    if (this.height > 0) return;
+    // A point can be awarded on the same simulation step as a kill. Do not let
+    // the celebration erase the hitter's follow-through before a single frame
+    // of it has been observable; that is the exact "bare hit pose" complaint.
+    if (
+      (this.swing > 0 || this.airborne) &&
+      (this.anim === 'air_contact_spike' || this.anim === 'follow_through' || this.anim === 'jump_rise')
+    ) {
+      this.setAnim('follow_through');
+      return;
+    }
     this.cheerTime = Math.max(this.cheerTime, duration);
     this.setAnim('cheer');
   }
 
   knockDown(duration = 0.85): void {
     this.downTime = Math.max(this.downTime, duration);
+    this.gettingUp = 0;
     this.diving = false;
     this.sliding = 0.3;
     this.height = 0;
@@ -348,14 +388,26 @@ export class Player {
    * the feet are committed.
    *
    * The court is viewed side-on with the net at y = 0, so "towards the ball"
-   * and "towards the net" are the same direction for every skill a player can
-   * be executing: `attackDir(side)`. Locking there during the committed phases
+   * and "towards the net" are the same direction for attacking skills:
+   * `attackDir(side)`. A diving save instead preserves its actual direction.
+   * Locking there during the committed phases
    * is what stops a player who was backpedalling from meeting the ball with
    * their back to the net.
    */
   private syncPresentation(a: PlayerAnim): void {
-    const mapped = ANIM_PRESENTATION[a] ?? { action: 'none' as const, phase: 'recover' as const };
+    let mapped = ANIM_PRESENTATION[a] ?? { action: 'none' as const, phase: 'recover' as const };
     const pr = this.presentation;
+    // Keep the jumping action for the short landing recovery. Otherwise
+    // landing changed the action to `none` and discarded the drawn knee bend.
+    if (a === 'land' && (pr.action === 'block' || pr.action === 'spike' || pr.action === 'jumpServe')) {
+      mapped = { action: pr.action, phase: 'land' };
+    }
+    // The plant and rise poses are shared artwork, but a server running into a
+    // toss is executing a jump serve, not a spike. Keeping that identity here
+    // lets the renderer play the correct sequence before the contact event.
+    if (pr.sourceJob === 'serve' && (a === 'plant' || a === 'jump_rise' || a === 'jump')) {
+      mapped = { action: 'jumpServe', phase: a === 'plant' ? 'plant' : 'rise' };
+    }
     if (pr.action !== mapped.action) {
       pr.startedAt = 0;
       pr.contactAt = undefined;
@@ -364,7 +416,10 @@ export class Player {
     pr.phase = mapped.phase;
     if (mapped.phase === 'contact' && pr.contactAt === undefined) pr.contactAt = pr.startedAt;
 
-    if (mapped.action !== 'none' && mapped.action !== 'celebrate' && FACING_LOCKED_PHASES.has(mapped.phase)) {
+    if (mapped.action === 'dive') {
+      // Keep the whole slide and get-up on the same side of the silhouette.
+      pr.lockedFacing = this.facing >= 0 ? 1 : -1;
+    } else if (mapped.action !== 'none' && mapped.action !== 'celebrate' && FACING_LOCKED_PHASES.has(mapped.phase)) {
       pr.lockedFacing = attackDir(this.side) as -1 | 1;
       this.facing = pr.lockedFacing;
     } else {
@@ -379,12 +434,18 @@ export class Player {
    * the window in which the run-up must happen; past it the body drops back to
    * ordinary locomotion whether or not the attack came off.
    */
-  licenseApproach(job: PresentationJob, duration = 1.1): void {
+  licenseApproach(job: PresentationJob, duration = 1.1, runDuration?: number): void {
     // Only a *new* run-up resets the odometer. The AI renews the licence every
     // step while the window is open, so zeroing it unconditionally meant the
     // measured approach distance was always the last frame's worth of travel.
     // A spent approach cannot be renewed until the body has stopped running it.
     if (this.approachAge > MAX_APPROACH_TIME) return;
+    // Renewing the licence must not restart or retime the visible steps. The
+    // first attack read supplies the expected plant deadline, not a new jump.
+    if (this.approachAge === 0 && this.approachLicence <= 0) {
+      this.approachRunDuration = runDuration !== undefined && Number.isFinite(runDuration)
+        ? Math.max(0.18, Math.min(0.58, runDuration)) : 0.58;
+    }
     this.approachLicence = Math.max(this.approachLicence, duration);
     this.presentation.sourceJob = job;
   }
@@ -407,16 +468,15 @@ export class Player {
    * player adjusting their feet shuffles, and neither of them may borrow the
    * attack approach. Only a licence granted by the AI unlocks `approach`.
    */
-  private updateLocomotion(): void {
+  private runGaitAge = 0;
+
+  private updateLocomotion(dt: number): void {
     const speed = Math.hypot(this.vel.x, this.vel.y);
     const pr = this.presentation;
 
-    let loco: Locomotion;
-    if (!this.airborne && this.approaching && speed > SHUFFLE_SPEED) loco = 'approach';
-    else if (speed < 0.12) loco = 'ready';
-    else if (speed < SHUFFLE_SPEED) loco = 'shuffle';
-    else if (speed >= RUN_SPEED_THRESHOLD) loco = 'run';
-    else loco = 'shuffle';
+    const next = groundGait(speed, pr.locomotion, this.runGaitAge, dt, !this.airborne && this.approaching);
+    const loco = next.locomotion;
+    this.runGaitAge = next.runAge;
     pr.locomotion = loco;
 
     // A skill in progress owns the body; locomotion must not repaint the pose
@@ -428,31 +488,45 @@ export class Player {
       this.heldAction ||
       this.anim === 'land' ||
       this.anim === 'getUp' ||
-      this.anim === 'dive'
+      this.anim === 'dive' ||
+      this.anim === 'dive_contact'
     ) {
       return;
     }
 
     const wanted: PlayerAnim =
-      loco === 'approach' ? 'approach_run' : loco === 'run' ? 'run' : loco === 'shuffle' ? 'shuffle' : 'ready';
+      loco === 'approach'
+        ? 'approach_run'
+        : loco === 'run'
+          ? 'run'
+          : loco === 'shuffle' || loco === 'walk'
+            ? 'shuffle'
+            : 'ready';
     if (wanted === 'ready') return; // handled by the settle path, which respects holds
     if (this.anim !== wanted) this.setAnim(wanted);
   }
 
   private canSettle(): boolean {
     if (!this.canAct) return false;
+    // `airborne` has a 2cm tolerance for contact rules, but presentation must
+    // wait for actual floor contact. Settling in that last 2cm erased the
+    // landing action; jumping there also bypassed the landing lock entirely.
+    if (this.height > 0 || this.vertVel !== 0) return false;
     if (this.downTime > 0 || this.gettingUp > 0 || this.diving || this.airborne) return false;
     if (this.animHold > 0) return false;
     return true;
   }
 
   private shouldGoIdle(): boolean {
-    return this.canSettle() && this.animTime > 0.26 && TRANSIENT_ANIMS.includes(this.anim);
+    // Match the existing landing lock, not the generic gesture timeout. Keeping
+    // land art for .26 s let locomotion restart beneath planted feet at .16 s.
+    const duration = this.anim === 'land' ? LANDING_LOCK : 0.26;
+    return this.canSettle() && this.animTime >= duration && TRANSIENT_ANIMS.includes(this.anim);
   }
 
   /**
    * Integrate one step. `moveX`/`moveY` is the desired direction in [-1, 1];
-   * it is ignored while airborne, diving or knocked down.
+   * it is ignored while airborne, diving, knocked down or getting up.
    */
   step(dt: number, moveX: number, moveY: number): void {
     this.animTime += dt;
@@ -460,6 +534,20 @@ export class Player {
     if (this.animHold > 0) this.animHold = Math.max(0, this.animHold - dt);
     if (this.lockout > 0) this.lockout -= dt;
     if (this.swing > 0) this.swing -= dt;
+    // A spike is not over at contact.  The previous state machine had a
+    // `follow_through` pose, but an airborne spike contact held until landing
+    // and the landing code immediately overwrote it with `land`, so the swing
+    // read as a single hit frame followed by feet-on-floor recovery.  Once the
+    // authored contact pose has been held, let the arm and torso finish the
+    // swing while the body is still descending.
+    if (
+      this.airborne &&
+      this.anim === 'air_contact_spike' &&
+      this.animHold <= 0 &&
+      this.swing > 0
+    ) {
+      this.setAnim('follow_through');
+    }
     if (this.approachLicence > 0) {
       this.approachLicence = Math.max(0, this.approachLicence - dt);
       this.approachAge += dt;
@@ -478,6 +566,7 @@ export class Player {
       if (this.approachIdle > APPROACH_RESET_GAP) {
         this.approachAge = 0;
         this.approachDistance = 0;
+        this.approachRunDuration = 0.58;
       }
     }
 
@@ -488,7 +577,7 @@ export class Player {
     }
 
     if (this.gettingUp > 0) {
-      this.gettingUp -= dt;
+      this.gettingUp = Math.max(0, this.gettingUp - dt);
       if (this.gettingUp <= 0 && this.anim === 'getUp') this.setAnim('idle');
     }
 
@@ -508,12 +597,18 @@ export class Player {
 
     // A finished action must not linger and must not force the body into a
     // constant run cycle between touches.
-    if (this.shouldGoIdle() && this.swing <= 0 && !this.heldAction) {
+    if (this.shouldGoIdle() && (this.anim === 'land' || this.swing <= 0 && !this.heldAction)) {
       this.setAnim('ready');
     }
 
-    const grounded = !this.airborne;
-    const controllable = grounded && this.downTime <= 0 && !this.diving;
+    const grounded = this.height <= 0 && this.vertVel === 0;
+    const plantedLanding = this.landingPlant;
+    const controllable = grounded && !plantedLanding && this.downTime <= 0 && this.gettingUp <= 0 && !this.diving;
+    if (plantedLanding) { this.vel.x = 0; this.vel.y = 0; }
+
+    this.locomotionIntent ??= { x: 0, y: 0 };
+    this.locomotionIntent.x = controllable ? moveX : 0;
+    this.locomotionIntent.y = controllable ? moveY : 0;
 
     if (controllable) {
       const mag = Math.hypot(moveX, moveY);
@@ -532,11 +627,11 @@ export class Player {
         if (this.presentation.lockedFacing === undefined && Math.abs(ny) > 0.2) {
           this.facing = Math.sign(ny);
         }
-        this.updateLocomotion();
+        this.updateLocomotion(dt);
       } else {
         this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * dt);
         this.vel.y = approach(this.vel.y, 0, PLAYER_FRICTION * dt);
-        this.updateLocomotion();
+        this.updateLocomotion(dt);
         if (
           this.canSettle() &&
           (this.anim === 'approach_run' || this.anim === 'shuffle' || this.anim === 'run') &&
@@ -552,6 +647,7 @@ export class Player {
       // whole flight, which is neither true nor harmless — it is what the
       // concurrency and duration limits are measured against.
       this.presentation.locomotion = 'stand';
+      this.runGaitAge = 0;
 
       if (this.diving) {
         this.vel.x = approach(this.vel.x, 0, PLAYER_FRICTION * 0.55 * dt);
@@ -588,6 +684,10 @@ export class Player {
           this.setAnim('down');
         } else {
           this.lockout = Math.max(this.lockout, LANDING_LOCK);
+          // The airborne follow-through has already followed physical flight.
+          // Floor contact starts the drawn knee compression even after a late
+          // strike, with momentum absorbed at the actual landing position.
+          this.vel.x = 0; this.vel.y = 0;
           this.setAnim('land');
         }
       }
@@ -612,7 +712,7 @@ export class Player {
     // it, and a player standing 12 cm from it draws straddling the tape. That
     // happened 5% of the time. An airborne blocker may press right up to it,
     // which is exactly what a block is; everyone on the floor keeps clear.
-    const near = this.diving || this.downTime > 0 ? 0.85 : this.airborne ? 0.2 : 0.55;
+    const near = this.diving || this.downTime > 0 || this.gettingUp > 0 ? 0.85 : this.airborne ? 0.2 : 0.55;
     if (this.side === 'home') {
       this.pos.y = clamp(this.pos.y, -limitY, -near);
     } else {

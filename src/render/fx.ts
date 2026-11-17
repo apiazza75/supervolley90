@@ -1,5 +1,6 @@
 import { Vec3, v3 } from '../core/math3';
 import { Camera } from './camera';
+import { POWER_FLOOR_SCAR_STYLE, POWER_VISUAL_GRAMMAR, drawVolleyball, type VolleyballOptions } from './volleyball';
 
 type ParticleKind = 'dust' | 'spark' | 'shock' | 'burst' | 'confetti';
 
@@ -29,6 +30,8 @@ interface Crack {
   arms: CrackArm[];
   life: number;
   maxLife: number;
+  strokeColor: string;
+  fillColor: string;
 }
 
 interface FloatingText {
@@ -38,6 +41,8 @@ interface FloatingText {
   maxLife: number;
   color: string;
   size: number;
+  priority: number;
+  placement: 'world' | 'corner';
 }
 
 interface TrailPoint {
@@ -48,8 +53,20 @@ interface TrailPoint {
 }
 
 const CONFETTI = ['#ff5a4d', '#ffd166', '#7ef0ff', '#a0ffb4', '#f0a0ff'];
+const FLOOR_SCAR_STYLE = {
+  stroke: 'rgba(255,225,174,',
+  fill: '#fff0dc',
+} as const;
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
+
+/** A contact accent must leave the illustrated hand and volleyball readable.
+ * The old 13..58 broad, cream-cored shards merged into an opaque white blob.
+ * Strong hits still get more accents, but not a second ball-sized silhouette.
+ */
+export function contactSparkCount(power: number): number {
+  return Math.min(18, 4 + Math.round(Math.max(0, Number.isFinite(power) ? power : 0) * .6));
+}
 
 /** Accept both CSS colours and the historic `rgba(r,g,b,` prefix. */
 function withAlpha(color: string, alpha: number): string {
@@ -136,12 +153,17 @@ export class Effects {
     this.clock = 0;
   }
 
-  crack(at: Vec3, power: number, rng: () => number): void {
+  crack(
+    at: Vec3,
+    power: number,
+    rng: () => number,
+    style: { stroke: string; fill: string } = FLOOR_SCAR_STYLE,
+  ): void {
     const arms: CrackArm[] = [];
-    const count = 6 + Math.round(rng() * 4);
+    const count = 4 + Math.round(rng() * 3);
     for (let i = 0; i < count; i++) {
       const angle = (i / count) * Math.PI * 2 + (rng() - 0.5) * 0.45;
-      const length = (0.52 + rng() * 0.9) * power;
+      const length = (0.36 + rng() * 0.56) * power;
       arms.push({
         dx: Math.cos(angle) * length,
         dy: Math.sin(angle) * length * 0.58,
@@ -149,22 +171,29 @@ export class Effects {
         branch: 0.3 + rng() * 0.45,
       });
     }
-    this.cracks.push({ pos: v3(at.x, at.y, 0), arms, life: 2.8, maxLife: 2.8 });
-    if (this.cracks.length > 6) this.cracks.shift();
+    this.cracks.push({
+      pos: v3(at.x, at.y, 0),
+      arms,
+      life: 1.05,
+      maxLife: 1.05,
+      strokeColor: style.stroke,
+      fillColor: style.fill,
+    });
+    if (this.cracks.length > 2) this.cracks.shift();
   }
 
   dust(at: Vec3, amount: number, rng: () => number, color = 'rgba(255,240,214,'): void {
-    const count = Math.min(54, Math.max(4, Math.round(amount * 1.45)));
+    const count = Math.min(12, Math.max(3, Math.round(amount * 0.3)));
     for (let i = 0; i < count; i++) {
       const angle = rng() * Math.PI * 2;
-      const speed = 0.65 + rng() * 2.9;
-      const life = 0.42 + rng() * 0.55;
+      const speed = 0.25 + rng() * 0.75;
+      const life = 0.18 + rng() * 0.2;
       this.particles.push({
-        pos: v3(at.x, at.y, Math.max(0.03, at.z)),
-        vel: v3(Math.cos(angle) * speed, Math.sin(angle) * speed * 0.62, 0.6 + rng() * 2.5),
+        pos: v3(at.x, at.y, 0.03),
+        vel: v3(Math.cos(angle) * speed, Math.sin(angle) * speed * 0.62, 0.12 + rng() * 0.35),
         life,
         maxLife: life,
-        size: 3 + rng() * 7,
+        size: 0.65 + rng() * 0.95,
         color,
         gravity: -7,
         kind: 'dust',
@@ -210,8 +239,8 @@ export class Effects {
     }
   }
 
-  impact(at: Vec3, power: number, rng: () => number, color = 'rgba(255,214,120,'): void {
-    const count = Math.min(58, Math.round(13 + power * 1.85));
+  impact(at: Vec3, power: number, rng: () => number, color = 'rgba(255,214,120,', wave = true): void {
+    const count = contactSparkCount(power);
     for (let i = 0; i < count; i++) {
       const angle = rng() * Math.PI * 2;
       const elevation = (rng() - 0.5) * 2;
@@ -222,7 +251,7 @@ export class Effects {
         vel: v3(Math.cos(angle) * speed, Math.sin(angle) * speed * 0.5, elevation * speed * 0.5),
         life,
         maxLife: life,
-        size: 2 + rng() * 4,
+        size: .65 + rng() * 1.2,
         color,
         gravity: -2,
         kind: 'spark',
@@ -231,7 +260,23 @@ export class Effects {
         seed: rng(),
       });
     }
-    this.shockwave(at, color);
+    if (wave) this.shockwave(at, color);
+  }
+
+  /**
+   * Airborne hand contact: never project a floor scar underneath the hitter.
+   */
+  powerImpact(at: Vec3, power: number, rng: () => number): void {
+    this.impact(at, power, rng, POWER_VISUAL_GRAMMAR.spark);
+    this.shockwave(at, POWER_VISUAL_GRAMMAR.shock);
+  }
+
+  /** Same ball palette, but only at its eventual, physical floor impact. */
+  powerFloorImpact(at: Vec3, power: number, rng: () => number): void {
+    const floor = v3(at.x, at.y, 0.03);
+    this.dust(floor, Math.max(14, power * 0.55), rng, POWER_VISUAL_GRAMMAR.floor);
+    this.shockwave(floor, POWER_VISUAL_GRAMMAR.shock);
+    this.crack(floor, Math.max(0.75, Math.min(1.85, power / 24)), rng, POWER_FLOOR_SCAR_STYLE);
   }
 
   burst(at: Vec3, color: string): void {
@@ -250,8 +295,24 @@ export class Effects {
     });
   }
 
-  announce(at: Vec3, text: string, color: string, size = 34): void {
-    this.texts.push({ pos: v3(at.x, at.y, at.z), text, life: 1.5, maxLife: 1.5, color, size });
+  announce(at: Vec3, text: string, color: string, size = 34, priority = size,
+    placement: FloatingText['placement'] = 'world'): void {
+    // One headline at a time. A kill, point, side-out and rotation can arrive
+    // within the same second; stacking all four across the court hid the play
+    // precisely when the player most needed to understand what happened.
+    const strongest = this.texts.reduce((best, item) => Math.max(best, item.priority), -Infinity);
+    if (strongest >= priority) return;
+    this.texts.length = 0;
+    this.texts.push({
+      pos: v3(at.x, at.y, at.z),
+      text,
+      life: 1.5,
+      maxLife: 1.5,
+      color,
+      size,
+      priority,
+      placement,
+    });
   }
 
   pushTrail(pos: Vec3, speed: number): void {
@@ -301,6 +362,23 @@ export class Effects {
     }
   }
 
+  /** Read-only diagnostics for tests; the renderer still owns drawing. */
+  snapshotForDiagnostics(): {
+    particles: { kind: ParticleKind; color: string }[];
+    cracks: { strokeColor: string; fillColor: string; arms: number }[];
+    trail: number;
+  } {
+    return {
+      particles: this.particles.map((p) => ({ kind: p.kind, color: p.color })),
+      cracks: this.cracks.map((c) => ({
+        strokeColor: c.strokeColor,
+        fillColor: c.fillColor,
+        arms: c.arms.length,
+      })),
+      trail: this.trail.length,
+    };
+  }
+
   /** Tapered motion ribbons with cut chevrons instead of a recoloured line. */
   drawTrail(ctx: CanvasRenderingContext2D, cam: Camera, color: string, powered = false): void {
     if (this.trail.length < 2) return;
@@ -336,7 +414,7 @@ export class Effects {
         const cx = a.x + dx * 0.45;
         const cy = a.y + dy * 0.45;
         const back = Math.min(22 * b.scale, length * 0.42);
-        ctx.strokeStyle = withAlpha('#fff5d8', alpha * 0.85);
+        ctx.strokeStyle = withAlpha(POWER_VISUAL_GRAMMAR.chevron, alpha * 0.85);
         ctx.lineWidth = Math.max(1, 1.7 * b.scale);
         ctx.beginPath();
         ctx.moveTo(cx - dx / length * back + nx * headWidth * 1.3, cy - dy / length * back + ny * headWidth * 1.3);
@@ -357,13 +435,13 @@ export class Effects {
     for (const crack of this.cracks) {
       const life = crack.life / crack.maxLife;
       const origin = cam.projectFloor(crack.pos.x, crack.pos.y);
-      ctx.globalAlpha = Math.min(1, life * 1.6) * 0.88;
-      ctx.strokeStyle = 'rgba(20,12,10,0.94)';
+      ctx.globalAlpha = Math.min(1, life * 1.7) * 0.34;
+      ctx.strokeStyle = withAlpha(crack.strokeColor, 0.72);
       for (const arm of crack.arms) {
         const end = cam.projectFloor(crack.pos.x + arm.dx, crack.pos.y + arm.dy);
         const mx = origin.x + (end.x - origin.x) * 0.56 + (end.y - origin.y) * arm.kink;
         const my = origin.y + (end.y - origin.y) * 0.56 - (end.x - origin.x) * arm.kink;
-        ctx.lineWidth = Math.max(1, 2.5 * origin.scale);
+        ctx.lineWidth = Math.max(0.8, 1.6 * origin.scale);
         ctx.beginPath();
         ctx.moveTo(origin.x, origin.y);
         ctx.lineTo(mx, my);
@@ -378,8 +456,8 @@ export class Effects {
         ctx.lineTo(bx + (end.y - origin.y) * 0.18, by - (end.x - origin.x) * 0.18);
         ctx.stroke();
       }
-      ctx.globalAlpha = life * 0.22;
-      ctx.fillStyle = '#fff0dc';
+      ctx.globalAlpha = life * 0.16;
+      ctx.fillStyle = crack.fillColor;
       polygon(ctx, origin.x, origin.y, 28 * origin.scale, 9 * origin.scale, 7, 0.18);
       ctx.fill();
     }
@@ -429,7 +507,7 @@ export class Effects {
       ctx.closePath();
       ctx.fill();
     }
-    ctx.strokeStyle = withAlpha('#ffffff', life * 0.68);
+    ctx.strokeStyle = withAlpha(POWER_VISUAL_GRAMMAR.cream, life * 0.56);
     ctx.lineWidth = Math.max(1.2, 2.4 * scale);
     polygon(ctx, 0, 0, radius * 0.42, radius * 0.3, 8, Math.PI / 8);
     ctx.stroke();
@@ -471,16 +549,15 @@ export class Effects {
         ctx.lineTo(screen.x - nx * size * 0.75, screen.y - ny * size * 0.75);
         ctx.closePath();
         ctx.fill();
-        ctx.fillStyle = withAlpha('#ffffff', life);
-        polygon(ctx, screen.x, screen.y, size * 0.62, size * 0.62, 4, Math.PI / 4);
-        ctx.fill();
+        // A single tapered mark, not a bright square pasted over the hand.
+        // Keep the caller's contact/super-shot palette; no white core layer.
         continue;
       }
 
       ctx.save();
       ctx.translate(screen.x, screen.y);
       ctx.rotate(particle.angle + this.clock * (particle.kind === 'confetti' ? 1.4 : 0.25));
-      ctx.globalAlpha = Math.min(1, life * 1.6);
+      ctx.globalAlpha = particle.kind === 'dust' ? life * 0.35 : Math.min(1, life * 1.6);
       ctx.fillStyle = withAlpha(particle.color, Math.min(1, life * 1.4));
       if (particle.kind === 'confetti') {
         ctx.fillRect(-size * 0.8, -size * 0.28, size * 1.6, size * 0.56);
@@ -499,29 +576,39 @@ export class Effects {
     }
 
     for (const text of this.texts) {
-      const screen = cam.projectVec(text.pos);
+      // Live attack names belong beside the scoreboard, not over the raised
+      // hands. World height is not a safe exclusion zone when athletes jump.
+      const corner = text.placement === 'corner';
+      const viewportScale = cam.viewWidth / 1280;
+      const screen = corner
+        ? { x: 18 * viewportScale, y: 44 * viewportScale, scale: viewportScale, behind: false }
+        : cam.projectVec(text.pos);
       if (screen.behind) continue;
       const life = text.life / text.maxLife;
       const pop = life > 0.8 ? 1 + (life - 0.8) * 3 : 1;
-      const size = text.size * screen.scale * pop;
+      // World projection can multiply a perfectly modest label into a banner
+      // hundreds of pixels tall when the contact is close to camera. Keep all
+      // calls readable without ever hiding the ball, the tape or both teams.
+      const size = corner ? text.size * screen.scale : Math.min(46, text.size * screen.scale * pop);
       ctx.save();
       ctx.globalAlpha = Math.min(1, life * 2.2);
       ctx.translate(screen.x, screen.y);
       ctx.transform(1, 0, -0.12, 1, 0, 0);
       ctx.font = `900 ${size}px "Arial Black", system-ui, sans-serif`;
-      ctx.textAlign = 'center';
+      ctx.textAlign = corner ? 'left' : 'center';
       ctx.lineJoin = 'miter';
       ctx.lineWidth = size * 0.28;
       ctx.strokeStyle = 'rgba(4,6,14,0.94)';
-      ctx.strokeText(text.text, 0, 0);
+      const maxWidth = corner ? 238 * viewportScale : undefined;
+      ctx.strokeText(text.text, 0, 0, maxWidth);
       ctx.lineWidth = size * 0.15;
       ctx.strokeStyle = text.color;
-      ctx.strokeText(text.text, 0, 0);
+      ctx.strokeText(text.text, 0, 0, maxWidth);
       const gradient = ctx.createLinearGradient(0, -size, 0, size * 0.3);
       gradient.addColorStop(0, '#ffffff');
       gradient.addColorStop(1, '#c9e7ff');
       ctx.fillStyle = gradient;
-      ctx.fillText(text.text, 0, 0);
+      ctx.fillText(text.text, 0, 0, maxWidth);
       ctx.restore();
     }
     ctx.restore();
@@ -542,7 +629,12 @@ export class Effects {
     for (let layer = 0; layer < 3; layer++) {
       const phase = time * (layer % 2 ? -1.4 : 1.1) + layer * 0.41;
       const outer = radius * (0.72 + layer * 0.18);
-      ctx.strokeStyle = layer === 0 ? 'rgba(255,244,190,0.86)' : layer === 1 ? 'rgba(255,165,52,0.6)' : 'rgba(255,75,25,0.4)';
+      ctx.strokeStyle =
+        layer === 0
+          ? withAlpha(POWER_VISUAL_GRAMMAR.cream, 0.86)
+          : layer === 1
+            ? POWER_VISUAL_GRAMMAR.auraGold
+            : POWER_VISUAL_GRAMMAR.auraCyan;
       ctx.lineWidth = Math.max(1.2, (3.2 - layer * 0.7) * scale);
       star(ctx, 0, 0, outer, outer * 0.72, 7 + layer, phase, 1.14);
       ctx.stroke();
@@ -551,7 +643,7 @@ export class Effects {
       const angle = time * 0.8 + (i / 6) * Math.PI * 2;
       const inner = radius * 0.45;
       const outer = radius * (0.9 + 0.18 * Math.sin(time * 5 + i));
-      ctx.fillStyle = i % 2 ? 'rgba(255,90,25,0.3)' : 'rgba(255,205,75,0.35)';
+      ctx.fillStyle = i % 2 ? POWER_VISUAL_GRAMMAR.auraCyan : POWER_VISUAL_GRAMMAR.auraGold;
       ctx.beginPath();
       ctx.moveTo(Math.cos(angle - 0.09) * inner, Math.sin(angle - 0.09) * inner * 1.15);
       ctx.lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer * 1.15);
@@ -562,44 +654,20 @@ export class Effects {
     ctx.restore();
   }
 
-  /** Faceted lethal-move ball, called after the renderer has translated to it. */
-  drawPowerBall(ctx: CanvasRenderingContext2D, radius: number, roll: number): void {
+  /** Energised volleyball, called after the renderer has translated to it. */
+  drawPowerBall(ctx: CanvasRenderingContext2D, radius: number, roll: number, hot = false,
+    style?: VolleyballOptions['style']): void {
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    ctx.fillStyle = 'rgba(255,74,24,0.24)';
-    star(ctx, 0, 0, radius * 2.9, radius * 1.35, 11, -roll * 0.18, 0.9);
+    ctx.fillStyle = withAlpha(POWER_VISUAL_GRAMMAR.gold, 0.24);
+    star(ctx, 0, 0, radius * 2.35, radius * 1.28, 11, -roll * 0.18, 0.9);
     ctx.fill();
-    ctx.fillStyle = 'rgba(255,179,48,0.34)';
-    star(ctx, 0, 0, radius * 2.1, radius * 1.18, 9, roll * 0.24, 0.94);
+    ctx.fillStyle = withAlpha(POWER_VISUAL_GRAMMAR.cyan, 0.2);
+    star(ctx, 0, 0, radius * 1.82, radius * 1.06, 9, roll * 0.24, 0.94);
     ctx.fill();
     ctx.globalCompositeOperation = 'source-over';
 
-    const core = ctx.createLinearGradient(-radius, -radius, radius, radius);
-    core.addColorStop(0, '#fffdf0');
-    core.addColorStop(0.32, '#ffd166');
-    core.addColorStop(0.68, '#ff8b2c');
-    core.addColorStop(1, '#d93812');
-    ctx.fillStyle = core;
-    polygon(ctx, 0, 0, radius, radius, 12, roll * 0.17);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(92,26,5,0.76)';
-    ctx.lineWidth = Math.max(0.9, radius * 0.11);
-    polygon(ctx, 0, 0, radius, radius, 12, roll * 0.17);
-    ctx.stroke();
-
-    ctx.save();
-    polygon(ctx, 0, 0, radius * 0.91, radius * 0.91, 12, roll * 0.17);
-    ctx.clip();
-    ctx.rotate(roll * 0.62);
-    ctx.strokeStyle = 'rgba(109,33,7,0.62)';
-    ctx.lineWidth = Math.max(0.8, radius * 0.09);
-    for (let i = -2; i <= 2; i++) {
-      ctx.beginPath();
-      ctx.moveTo(-radius * 1.2, i * radius * 0.43);
-      ctx.lineTo(radius * 1.2, i * radius * 0.43 - radius * 0.48);
-      ctx.stroke();
-    }
-    ctx.restore();
+    drawVolleyball(ctx, radius, roll, { energized: true, hot, style });
     ctx.restore();
   }
 

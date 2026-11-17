@@ -3,6 +3,7 @@ import {
   CHARACTER_SIGNATURES,
   characterSignatureFor,
   characterSignatureId,
+  characterSignatureFingerprint,
   countDistinctCharacterSignatures,
 } from '../src/render/character-signature';
 import { ARENA_V3_LAYER_NAMES, coverSourceRect } from '../src/render/arena-art';
@@ -22,13 +23,21 @@ describe('Recovery V3 character identities', () => {
     }
   });
 
-  it('contains six or more structurally different authored variants', () => {
+  it('retains the separate design briefs without claiming they are drawn variants', () => {
     const structural = new Set(
       CHARACTER_SIGNATURES.map((s) =>
         [s.hair, s.beard, s.sleeves, s.pattern, s.kneePads, s.socks, s.shoes].join('|'),
       ),
     );
     expect(structural.size).toBeGreaterThanOrEqual(6);
+  });
+
+  it('does not count unimplemented costume overlays as rendered identity', () => {
+    const signature = CHARACTER_SIGNATURES[0];
+    expect(characterSignatureFingerprint({ ...signature, sleeves: 'long', pattern: 'chevron', socks: 'high', shoes: 'dark' }))
+      .toBe(characterSignatureFingerprint(signature));
+    expect(characterSignatureFingerprint({ ...signature, heightDelta: signature.heightDelta + .01 }))
+      .not.toBe(characterSignatureFingerprint(signature));
   });
 });
 

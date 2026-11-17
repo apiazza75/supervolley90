@@ -10,7 +10,8 @@
  *   npx tsx tools/build-info.ts
  */
 import { execSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 
 function git(cmd: string, fallback: string): string {
@@ -33,6 +34,20 @@ const branch =
   git('rev-parse --abbrev-ref HEAD', 'unknown');
 const repository = process.env.GITHUB_REPOSITORY ?? 'apiazza75/supervolley90';
 const runId = process.env.GITHUB_RUN_ID ?? 'local';
+// Local work can include authored art and uncommitted gameplay changes. Keep
+// the git baseline while identifying the actual source shipped in this build.
+const fingerprint = createHash('sha256');
+function hashSource(path: string): void {
+  if (!existsSync(path) || path === 'public/build-info.json') return;
+  if (statSync(path).isDirectory()) {
+    for (const name of readdirSync(path).sort()) hashSource(`${path}/${name}`);
+  } else {
+    fingerprint.update(path); fingerprint.update('\0'); fingerprint.update(readFileSync(path));
+  }
+}
+for (const path of ['src', 'public', 'index.html', 'package.json', 'package-lock.json', 'vite.config.ts']) hashSource(path);
+const sourceHash = fingerprint.digest('hex');
+const dirty = git('status --porcelain --untracked-files=normal', '').length > 0;
 
 const info = {
   repository,
@@ -41,6 +56,8 @@ const info = {
   shortCommit: commit.slice(0, 7),
   runId,
   builtAt: new Date().toISOString(),
+  sourceHash,
+  dirty,
 };
 
 mkdirSync(resolve('public'), { recursive: true });

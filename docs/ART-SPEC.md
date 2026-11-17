@@ -1,5 +1,38 @@
 # Art specification
 
+> Historical specification. For the current 21-action raster pipeline, actual
+> illustrated arena/official assets, import instructions and open visual
+> issues, see [the September 2026 art progress record](ART-PROGRESS-2026-09-09.md).
+> The fallback, asset counts and contact-frame values below are not the current
+> runtime contract; use `SHEETS` and `CONTACT_FRAME` in the renderer.
+
+## Current illustrated court material contract — September 2026
+
+`public/arena/v3/surface-manga.png` is the runtime floor atlas: **1254 × 1254
+RGB**, opaque, drawn maple parquet in the top half and a painted petrol-teal
+free-zone material in the bottom half. The original generated file is retained
+in `assets/source/manga-2026-09/court-surface-atlas.png`; the complete prompt and
+generation provenance are in `court-generation.json` beside it.
+
+The materials contain no perspective, court markings, players or effects.
+`ArenaArtwork` crops a one-pixel inset from each half. It repeats the wood
+swatch four times along each court axis, giving twelve board courses per
+4.5 m × 2.25 m patch, and projects it onto the real 18 m × 9 m court. The teal
+material covers the larger free zone. Court edges, rule lines, shadows and
+impact effects remain separate live passes. `FloorSurfaceCache` retains the
+projected material at backing-store density and follows the camera's affine
+pan, zoom and shake; it does not lower the game's display resolution.
+
+The previous `floor.png` is retained for historical tooling but is not loaded
+by the runtime. Do not apply its former grey soft-light texture or procedural
+scratches over the new drawing. The illustrated stand is
+`public/arena/v3/grandstand-manga-v3.png`; seated referee and line-judge drawings
+are in `public/officials/manga-seated.png`. These assets are implemented, not
+automatically artistically approved. The historical guidance below does not
+authorize a return to vector placeholder people.
+
+---
+
 What to draw, and how to hand it over, so that the game can use it directly.
 
 The nine sheets already in `public/sprites` work. Everything below is about
@@ -69,12 +102,16 @@ in all sheets.
 ### Size and placement
 
 - The figure is **centred horizontally** in its cell.
-- A standing player is about **340 px** from the floor line to the top of the
-  head — roughly two thirds of the cell — leaving room above for reaching and
-  jumping, and to the sides for a full stride.
-- Keep that height consistent across every frame of every sheet. The game
-  scales each frame by the figure's own height, so a figure drawn larger in one
-  frame will visibly swell for that frame.
+- Keep the athlete's anatomical scale constant within each sheet. Bending,
+  reaching and jumping change the silhouette, not the length of the limbs.
+- The current manga standing reference is approximately **six head units**:
+  idle frame 0 measures 455 px sole-to-crown and 76 px crown-to-chin. Sheets
+  may use another common drawing scale if all 24 poses preserve it and fit.
+- Record the reviewed frame-zero crown/chin in `SPRITE_HEAD_REFERENCE`.
+  The renderer uses one uniform scale per action, never a per-frame outline
+  fit. Six head units map to a 1.9 m athlete before roster variation, keeping
+  bodies proportional to the court and its 2.43 m net. The old 340/81 scale
+  must not be restored: it enlarged ready players beyond the net height.
 
 ---
 

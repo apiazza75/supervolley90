@@ -35,6 +35,14 @@ console.log(`points played:            ${metrics.points}`);
 console.log(`contacts:                 ${JSON.stringify(metrics.contactsByKind)}`);
 console.log(`back-facing contacts:     ${metrics.backFacingContacts}`);
 console.log(`max concurrent approach:  ${metrics.maxConcurrentApproachPlayers}`);
+console.log(`max concurrent attackers: ${metrics.maxConcurrentAttackJobs}`);
+console.log(`locomotion samples:       ${JSON.stringify(metrics.locomotion)}`);
+console.log(
+  `short corrections walk:   ${metrics.locomotion.shortCorrectionsAsWalk}/${metrics.locomotion.shortCorrectionSamples}`,
+);
+console.log(
+  `medium corrections walk:  ${metrics.locomotion.mediumCorrectionsAsShuffle}/${metrics.locomotion.mediumCorrectionSamples}`,
+);
 console.log(`longest spell above two:  ${metrics.longestOverTwoApproach.toFixed(2)} s`);
 console.log(`longest approach run:     ${metrics.longestApproachRun.toFixed(2)} s`);
 console.log(`serve-ready approaches:   ${metrics.serveReadyApproachPlayers}`);
@@ -54,6 +62,10 @@ console.log(
 console.log(
   `block:      attempts=${metrics.block.attempts} contacts=${metrics.block.contacts} ` +
     `apex=${metrics.block.apexHeight.toFixed(2)} m grounded=${metrics.block.groundedContacts}`,
+);
+console.log(
+  `block cover: attacks=${metrics.block.attacksFaced} unopposed=${metrics.block.unopposedAttacks} ` +
+    `double=${metrics.block.doubleBlockAttacks}`,
 );
 console.log(`spike phases:      ${metrics.spike.stateSequence.join(' -> ') || '(none)'}`);
 console.log(`jump serve phases: ${metrics.jumpServe.stateSequence.join(' -> ') || '(none)'}`);

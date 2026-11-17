@@ -47,6 +47,11 @@ export const PLAYER_REACH = 2.15;
 export const PLAYER_RUN_SPEED = 6.4;
 export const PLAYER_ACCEL = 42;
 export const PLAYER_FRICTION = 26;
+/** Time to extend the forearms after pushing off for a diving save. */
+export const DIVE_EXTENSION_TIME = 0.09;
+/** Collision trajectory starts at chest clearance; drawing lifts into it. */
+export const DIVE_INITIAL_HEIGHT = 0.35;
+export const DIVE_INITIAL_VELOCITY = 1.1;
 export const JUMP_VELOCITY = 5.6;
 /** How long a player stays "landing" and cannot act again. */
 export const LANDING_LOCK = 0.16;
@@ -105,12 +110,17 @@ export const SERVE_APPROACH = 0.2;
 /**
  * Global pace multiplier. Everything — ball, players, timers — runs this much
  * slower than real time, because at 1.0 the exchanges around the net came and
- * went faster than a player could read them.
+ * went faster than a player could read them. 0.58 keeps rallies playable while
+ * giving the eye time to read approach, set, block and landing cues.
  */
-export const GAME_SPEED = 0.82;
+export const GAME_SPEED = 0.58;
 
 /** Fixed simulation timestep (120 Hz) — rendering interpolates between steps. */
 export const FIXED_DT = 1 / 120;
+
+/** Short arcade breaks, in simulation seconds; presentation shares these boundaries. */
+export const POINT_BREAK_SECONDS = 2;
+export const SET_BREAK_SECONDS = 1.4;
 
 /**
  * How long an action press stays armed while waiting for the ball, seconds.
@@ -120,7 +130,7 @@ export const FIXED_DT = 1 / 120;
  * early is thrown away and the ball drops — which reads as the game ignoring
  * good timing.
  */
-export const ACTION_BUFFER = 0.28;
+export const ACTION_BUFFER = 0.36;
 
 /**
  * Power gauge, the "Lethal Maneuver" resource.

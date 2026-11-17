@@ -1,0 +1,176 @@
+.sv-menu {
+  --sv-cyan: #49dcff;
+  --sv-gold: #ffd35c;
+  --sv-coral: #ff5f5a;
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  background: linear-gradient(180deg, rgb(2 5 13 / 35%), rgb(2 5 13 / 5%) 55%, rgb(2 5 13 / 55%));
+  color: #f4f7ff;
+  font: 500 14px/1.45 "Inter", system-ui, -apple-system, sans-serif;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.sv-menu[hidden] { display: none; }
+.sv-menu *, .sv-menu *::before, .sv-menu *::after { box-sizing: border-box; }
+.sv-menu-shell { width: min(1120px, 100%); margin: 0 auto; padding: 28px 32px 18px; }
+.sv-menu p, .sv-menu h1, .sv-menu h2, .sv-menu h3 { margin: 0; }
+.sv-menu-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 8px 0 24px; }
+.sv-kicker { color: var(--sv-gold); font-size: 10px; font-weight: 900; letter-spacing: 0.16em; }
+.sv-menu h1 {
+  margin-top: 4px;
+  font: italic 950 clamp(27px, 4vw, 47px)/1.05 "Arial Black", "Inter", system-ui, sans-serif;
+  letter-spacing: -0.055em;
+  background: linear-gradient(#fff 20%, #ccefff 44%, var(--sv-cyan) 49%, #438be1 90%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 10px rgb(73 220 255 / 20%));
+}
+.sv-menu h1 span { -webkit-text-fill-color: var(--sv-gold); }
+.sv-profile { flex-shrink: 0; text-align: right; }
+.sv-profile strong { display: block; color: var(--sv-gold); font-size: 22px; font-weight: 950; }
+.sv-profile span { color: #b3c4de; font-size: 11px; }
+.sv-menu-tabs { position: sticky; top: 0; z-index: 2; display: flex; gap: 6px; padding: 5px; border: 1px solid #334766; background: #070f1d; }
+.sv-menu [data-menu-control] { scroll-margin-top: 72px; scroll-margin-bottom: 160px; }
+.sv-menu button, .sv-menu select { font: inherit; -webkit-tap-highlight-color: transparent; }
+.sv-menu-tabs button {
+  flex: 1;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  color: #b7c9e3;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+}
+.sv-menu-tabs button[aria-current="page"] { background: #162d49; box-shadow: inset 0 -3px var(--sv-cyan); color: #fff; }
+.sv-menu button:hover { filter: brightness(1.15); }
+.sv-menu button:focus-visible, .sv-menu select:focus-visible { outline: 3px solid var(--sv-gold); outline-offset: 3px; }
+.sv-menu-content { padding: 20px 0; }
+.sv-match-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 18px; }
+.sv-panel { min-width: 0; padding: 24px; border: 1px solid #304261; background: linear-gradient(140deg, rgb(18 29 52 / 95%), rgb(4 10 23 / 96%)); }
+.sv-menu h2 { font-size: 21px; font-weight: 850; line-height: 1.25; margin: 6px 0 22px; letter-spacing: -0.03em; }
+.sv-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 14px; }
+.sv-field { display: flex; min-width: 0; flex-direction: column; gap: 7px; }
+.sv-field > span { color: #cad9ed; font-size: 11px; font-weight: 800; letter-spacing: 0.04em; }
+.sv-field select {
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  padding: 10px 30px 10px 12px;
+  border: 1px solid #496184;
+  border-radius: 3px;
+  background: #0b182b;
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  text-overflow: ellipsis;
+}
+.sv-field select option { color: #fff; background: #0b182b; }
+.sv-field select option:disabled { color: #8fa2be; }
+.sv-rule-note { color: #bdcce2; font-size: 12px; line-height: 1.6; margin-top: 18px !important; }
+.sv-control-note { padding-top: 18px; margin-top: 18px; border-top: 1px solid #304261; }
+.sv-control-note strong { color: var(--sv-cyan); font-size: 10px; letter-spacing: 0.1em; }
+.sv-control-note p { margin-top: 8px; color: #d2def0; font-size: 12px; line-height: 1.65; }
+.sv-team-mini { display: flex; align-items: center; gap: 14px; padding: 18px 0; border-top: 1px solid #304261; }
+.sv-team-mini .sv-field { flex: 1; }
+.sv-team-badge { display: grid; place-items: center; width: 60px; height: 60px; flex-shrink: 0; border-left: 4px solid var(--team-color); background: linear-gradient(135deg, color-mix(in srgb, var(--team-color), transparent 65%), #07111f); font: 950 20px "Arial Black", system-ui, sans-serif; }
+.sv-muted { color: #acbdd5; font-size: 12px; line-height: 1.65; }
+.sv-matchup .sv-muted { margin-top: 9px; }
+.sv-menu-footer { position: sticky; bottom: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px 24px; border: 1px solid #486385; border-top: 3px solid var(--sv-gold); background: #091424; box-shadow: 0 12px 32px rgb(0 0 0 / 20%); }
+.sv-menu-footer strong { font: 950 21px "Arial Black", system-ui, sans-serif; }
+.sv-menu-footer strong span { color: var(--sv-coral); margin: 0 12px; font-size: 12px; }
+.sv-menu-footer p { margin-top: 5px; color: #afc1dc; font-size: 12px; }
+.sv-start { flex-shrink: 0; min-height: 54px; padding: 14px 24px; border: 1px solid #fff1be; background: linear-gradient(110deg, #ffde73, #ffc853); color: #07101c; font-weight: 950 !important; font-size: 14px !important; cursor: pointer; box-shadow: 0 0 20px rgb(255 211 92 / 12%); }
+.sv-start span { padding-left: 18px; }
+.sv-menu-footnote { display: flex; justify-content: space-between; gap: 15px; margin-top: 16px; color: #97acc9; font-size: 10px; }
+.sv-menu-footnote > span:last-child { color: #788fae; text-align: right; }
+.sv-teams-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.sv-teams-grid .sv-team-mini { padding-top: 0; border-top: 0; }
+.sv-team-preview { display: block; width: min(100%, 380px); height: auto; margin: -6px auto 12px; }
+.sv-item-detail { min-height: 34px; color: #acbdd5; font-size: 11px; margin: 8px 0 18px !important; }
+.sv-skill-detail { margin-top: 12px; padding: 13px 15px; border-left: 3px solid var(--sv-cyan); background: #10243c; }
+.sv-skill-detail strong { color: var(--sv-cyan); font-size: 12px; }
+.sv-skill-detail p { color: #d5e2f4; font-size: 12px; margin: 5px 0 8px; }
+.sv-skill-detail span { color: #a6bbd9; font-size: 10px; }
+.sv-skill-note { padding: 0 4px; }
+.sv-collection-intro { display: grid; grid-template-columns: 1.1fr 1fr; gap: 24px; align-items: center; }
+.sv-collection-intro h2 { margin-bottom: 8px; }
+.sv-unlock-groups { display: grid; gap: 22px; margin-top: 24px; }
+.sv-unlock-groups h3 { color: #d6e5f8; font-size: 13px; letter-spacing: 0.04em; margin-bottom: 10px; }
+.sv-unlock-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.sv-unlock { display: flex; gap: 10px; align-items: center; min-width: 0; min-height: 69px; padding: 12px; background: #0c192b; border: 1px solid #2c405f; }
+.sv-unlock > div { flex: 1; min-width: 0; }
+.sv-unlock strong { display: block; color: #dae8f9; font-size: 11px; overflow-wrap: anywhere; }
+.sv-unlock div span { display: block; color: #92a9c8; font-size: 10px; margin-top: 3px; }
+.sv-unlock > b { color: var(--sv-cyan); font-size: 15px; }
+.sv-unlock-swatch { width: 8px; height: 29px; flex-shrink: 0; background: var(--item-color); }
+.sv-unlock.is-locked { background: rgb(8 16 29 / 75%); border-color: #26364f; }
+.sv-unlock.is-locked strong { color: #a9b8ce; }
+.sv-unlock.is-locked > b { color: #8c9fb9; }
+.sv-unlock.is-locked .sv-unlock-swatch { opacity: 0.5; }
+
+@media (max-width: 760px) {
+  .sv-menu-shell { padding: 20px 18px 16px; }
+  .sv-menu-header { padding-bottom: 18px; gap: 12px; }
+  .sv-menu h1 { font-size: clamp(24px, 5.7vw, 40px); }
+  .sv-menu-header .sv-kicker { font-size: 8px; letter-spacing: 0.09em; }
+  .sv-profile strong { font-size: 17px; }
+  .sv-profile span { display: block; max-width: 88px; font-size: 10px; }
+  .sv-match-grid { grid-template-columns: 1fr; gap: 14px; }
+  .sv-panel { padding: 19px; }
+  .sv-matchup { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+  .sv-matchup > .sv-kicker, .sv-matchup > h2, .sv-matchup > .sv-muted { grid-column: 1 / -1; }
+  .sv-team-mini { gap: 10px; }
+  .sv-team-badge { width: 44px; height: 50px; font-size: 16px; }
+  .sv-menu-footer { padding: 18px; gap: 16px; }
+  .sv-menu-footer p { max-width: 235px; font-size: 11px; }
+  .sv-start { padding: 13px 16px; font-size: 12px !important; }
+  .sv-start span { padding-left: 8px; }
+  .sv-collection-intro { grid-template-columns: 1fr; gap: 18px; }
+  .sv-unlock-grid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 540px) {
+  .sv-menu-shell { padding: max(15px, env(safe-area-inset-top)) 12px max(16px, env(safe-area-inset-bottom)); }
+  .sv-menu-header { align-items: flex-start; padding-bottom: 16px; }
+  .sv-profile strong { font-size: 15px; line-height: 1.3; }
+  .sv-profile span { max-width: 75px; font-size: 9px; }
+  .sv-menu h1 { letter-spacing: -0.055em; }
+  .sv-menu-tabs { gap: 1px; padding: 3px; }
+  .sv-menu-tabs button { min-height: 45px; padding: 6px; font-size: 10px; letter-spacing: 0; }
+  .sv-menu-content { padding: 14px 0; }
+  .sv-menu h2 { font-size: 19px; margin-bottom: 18px; }
+  .sv-form-grid { gap: 14px 10px; }
+  .sv-field select { min-height: 47px; font-size: 12px; padding-left: 9px; padding-right: 18px; }
+  .sv-matchup { display: block; }
+  .sv-panel { padding: 17px; }
+  .sv-control-note p { font-size: 11px; }
+  .sv-rule-note { font-size: 11px; }
+  .sv-matchup .sv-team-mini { padding: 13px 0; }
+  .sv-team-badge { width: 53px; height: 55px; font-size: 18px; }
+  .sv-menu-footer { flex-direction: column; align-items: stretch; gap: 14px; }
+  .sv-menu-footer > div { display: flex; align-items: center; gap: 15px; justify-content: space-between; }
+  .sv-menu-footer strong { flex-shrink: 0; font-size: 18px; }
+  .sv-menu-footer strong span { margin: 0 6px; font-size: 10px; }
+  .sv-menu-footer p { font-size: 10px; margin: 0; text-align: right; }
+  .sv-start { width: 100%; min-height: 50px; font-size: 13px !important; }
+  .sv-menu-footnote { flex-direction: column; gap: 7px; font-size: 9px; }
+  .sv-menu-footnote > span:last-child { text-align: left; }
+  .sv-teams-grid { grid-template-columns: 1fr; gap: 14px; }
+  .sv-unlock-grid { gap: 7px; }
+  .sv-unlock { gap: 7px; padding: 10px 8px; min-height: 76px; }
+  .sv-unlock strong { font-size: 10px; }
+  .sv-unlock div span { font-size: 9px; }
+  .sv-unlock > b { font-size: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sv-menu * { scroll-behavior: auto; }
+}

@@ -1,4 +1,5 @@
 import type { Camera } from './camera';
+import { COURT_HALF_LENGTH, COURT_HALF_WIDTH } from '../core/rules';
 
 export interface SourceRect {
   sx: number;
@@ -52,6 +53,15 @@ export const ARENA_V3_LAYER_NAMES = [
 
 export type ArenaV3Layer = (typeof ARENA_V3_LAYER_NAMES)[number];
 
+export const FLOOR_MANGA_SOURCE = 'surface-manga.png';
+export const GRANDSTAND_MANGA_SOURCE = 'grandstand-manga-v3.png';
+export const FLOOR_MATERIAL_REPEAT = { wood: 4, teal: 1 } as const;
+
+/** The atlas has wood above teal, without baked court markings or perspective. */
+export function floorMaterialSourceRect(width: number, height: number, material: 'wood' | 'teal'): SourceRect {
+  return { sx: 1, sy: material === 'wood' ? 1 : height / 2 + 1, sw: width - 2, sh: height / 2 - 2 };
+}
+
 interface LayerHandle {
   img: HTMLImageElement;
   loaded: boolean;
@@ -70,14 +80,15 @@ export class ArenaArtwork {
   private static readonly SCENE_HEIGHT = 1440;
   private readonly base: string;
   private readonly layers: Record<ArenaV3Layer, LayerHandle>;
+  private woodCell?: HTMLCanvasElement;
 
   constructor(base = 'arena/v3') {
     this.base = base.replace(/^\//, '').replace(/\/$/, '');
     this.layers = {
       backdrop: this.createLayer('backdrop.png'),
-      crowdFar: this.createLayer('crowd-far.png'),
+      crowdFar: this.createLayer(GRANDSTAND_MANGA_SOURCE),
       ledMid: this.createLayer('led-mid.png'),
-      floor: this.createLayer('floor.png'),
+      floor: this.createLayer(FLOOR_MANGA_SOURCE),
       foreground: this.createLayer('foreground.png'),
     };
   }
@@ -153,13 +164,16 @@ export class ArenaArtwork {
   drawCrowdFar(ctx: CanvasRenderingContext2D, width: number, height: number): boolean {
     const img = this.getLayer('crowdFar');
     if (!img) return false;
-    // The stand fills the gap between the fascia and the far edge of the
-    // projected floor, which the camera puts at screen y 299 — scene y 598.
-    //
-    // This was 345, with the sheet's first spectator row 245 pixels down it:
-    // the crowd therefore began at scene 590 and the court was drawn over the
-    // whole of it. Every spectator was rendered, and none was ever visible.
-    this.drawSceneLayer(ctx, img, width, height, 400);
+    // Preserve the illustrator's proportions. The lower tiers and the barrier
+    // occupy the visible band; the source's roof is cropped, never squashed.
+    const crop = this.sceneCrop(width, height);
+    const scale = width / crop.sw;
+    const standHeight = 580;
+    const source = coverSourceRect(img.naturalWidth, img.naturalHeight, 2560, standHeight);
+    ctx.drawImage(
+      img, source.sx, img.naturalHeight - source.sh, source.sw, source.sh,
+      -crop.sx * scale, (40 - crop.sy) * scale, 2560 * scale, standHeight * scale,
+    );
     return true;
   }
 
@@ -180,35 +194,8 @@ export class ArenaArtwork {
     return true;
   }
 
-  /**
-   * The one knob for dialling the floor texture back.
-   *
-   * It sits at full strength because the strength is authored into the sheet
-   * instead: `floor.png` is built on mid grey, and `soft-light` leaves a pixel
-   * untouched wherever the source is exactly 50% grey, so only the deviations
-   * drawn into the sheet reach the screen at all. Measured off the committed
-   * file, those deviations arrive as a mean shift of about 7 levels out of 255
-   * — wear and sheen on the planks, not a repaint of the court.
-   *
-   * The V3 asset was a painted court instead, and at any strength worth having
-   * it brought its own perspective with it.
-   */
-  private static readonly FLOOR_GRAIN_ALPHA = 1;
-
-  /**
-   * Lay the authored floor texture over the drawn parquet as grain and sheen.
-   *
-   * Composited, not substituted. `Arena.drawGrain()` builds the planks by
-   * sampling the camera's own floor projection, so its seams are in
-   * perspective by construction; a bitmap can only be in the perspective it
-   * was drawn in. The V3 asset was a painted court, drawn over this same
-   * quadrilateral in place of the planks, and it laid a lattice across the
-   * free zone at an angle the camera never produces. The sheet is a grey
-   * texture now, and it arrives as texture and nothing else.
-   *
-   * Image x follows court length, image y follows far-to-near court width.
-   */
-  drawFloorGrain(
+  /** Project both drawn materials onto real geometry, not a painted court. */
+  drawFloorMaterials(
     ctx: CanvasRenderingContext2D,
     cam: Camera,
     halfWidth: number,
@@ -217,15 +204,40 @@ export class ArenaArtwork {
     const img = this.getLayer('floor');
     if (!img) return false;
 
+    this.drawFloorMaterial(ctx, cam, img, 'teal', halfWidth, halfLength);
+    this.drawFloorMaterial(ctx, cam, img, 'wood', COURT_HALF_WIDTH, COURT_HALF_LENGTH);
+    return true;
+  }
+
+  private drawFloorMaterial(ctx: CanvasRenderingContext2D, cam: Camera, img: HTMLImageElement,
+    material: 'wood' | 'teal', halfWidth: number, halfLength: number): void {
+    const source = floorMaterialSourceRect(img.naturalWidth, img.naturalHeight, material);
+    const repeat = FLOOR_MATERIAL_REPEAT[material];
+    // The wooden swatch represents 4.5m x 2.25m, not the whole 18m x 9m
+    // court: its twelve courses become normal-width boards, not 75cm slabs.
+    let pattern: CanvasPattern | null = null;
+    if (repeat > 1) {
+      if (!this.woodCell) {
+        const cell = document.createElement('canvas'); cell.width = source.sw; cell.height = source.sh;
+        const paint = cell.getContext('2d');
+        if (paint) {
+          paint.drawImage(img, source.sx, source.sy, source.sw, source.sh, 0, 0, source.sw, source.sh);
+          this.woodCell = cell;
+        }
+      }
+      if (this.woodCell) pattern = ctx.createPattern(this.woodCell, 'repeat');
+    }
+    const copies = pattern ? repeat : 1;
+    const mapWidth = source.sw * copies, mapHeight = source.sh * copies;
     const farLeft = cam.projectFloor(halfWidth, -halfLength);
     const farRight = cam.projectFloor(halfWidth, halfLength);
     const nearLeft = cam.projectFloor(-halfWidth, -halfLength);
     const nearRight = cam.projectFloor(-halfWidth, halfLength);
 
-    const a = (farRight.x - farLeft.x) / img.naturalWidth;
-    const b = (farRight.y - farLeft.y) / img.naturalWidth;
-    const c = (nearLeft.x - farLeft.x) / img.naturalHeight;
-    const d = (nearLeft.y - farLeft.y) / img.naturalHeight;
+    const a = (farRight.x - farLeft.x) / mapWidth;
+    const b = (farRight.y - farLeft.y) / mapWidth;
+    const c = (nearLeft.x - farLeft.x) / mapHeight;
+    const d = (nearLeft.y - farLeft.y) / mapHeight;
 
     ctx.save();
     ctx.beginPath();
@@ -235,11 +247,11 @@ export class ArenaArtwork {
     ctx.lineTo(nearLeft.x, nearLeft.y);
     ctx.closePath();
     ctx.clip();
-    ctx.globalCompositeOperation = 'soft-light';
-    ctx.globalAlpha = ArenaArtwork.FLOOR_GRAIN_ALPHA;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
     ctx.transform(a, b, c, d, farLeft.x, farLeft.y);
-    ctx.drawImage(img, 0, 0);
+    if (pattern) { ctx.fillStyle = pattern; ctx.fillRect(0, 0, mapWidth, mapHeight); }
+    else ctx.drawImage(img, source.sx, source.sy, source.sw, source.sh, 0, 0, source.sw, source.sh);
     ctx.restore();
-    return true;
   }
 }

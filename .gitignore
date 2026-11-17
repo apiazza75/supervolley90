@@ -12,6 +12,7 @@ public/build-info.json
 # QA output: screenshots, video and metrics are uploaded as CI artifacts.
 artifacts/
 artifacts-sprite-sanitize.json
+/tools/__pycache__/
 
 # Icon variants are derived from src-tauri/icons/icon.png by `tauri icon`.
 src-tauri/icons/*

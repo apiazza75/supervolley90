@@ -6,16 +6,25 @@ import { Rng } from './rng';
 import {
   COURT_HALF_LENGTH,
   COURT_HALF_WIDTH,
+  ATTACK_LINE,
   FIXED_DT,
   GRAVITY,
+  DIVE_EXTENSION_TIME,
   NET_HEIGHT,
   PLAYER_REACH,
+  POINT_BREAK_SECONDS,
+  Side,
+  UNDERARM_HOLD,
   attackDir,
   otherSide,
 } from './rules';
-import { HITTER_PIN, attackSpot, defenceSpot, legalSpot, receptionSpot } from './tactics';
+import { attackFormation, clearAttackLanding, defenceFormation, legalSpot, servePassers } from './tactics';
 import { Team } from './team';
 import type { Command, World } from './world';
+import { canPlantForReceive, canPlantForGroundContact } from './receive-plant';
+import { BLOCK_PREPARATION_TIME, BUMP_GROUND_RECOVERY_TIME, SET_GROUND_RECOVERY_TIME } from './presentation';
+import { settledSteering, walkingResetSteering, resetAdjustmentSteering } from './settled-steering';
+import { SetPlan, SetPlay, copySetPlan, setTargetFor } from './set-play';
 
 type Job = 'idle' | 'receive' | 'set' | 'attack' | 'block' | 'cover' | 'serve';
 
@@ -28,15 +37,6 @@ type Job = 'idle' | 'receive' | 'set' | 'attack' | 'block' | 'cover' | 'serve';
  */
 const APPROACH_WINDOW = 1.25;
 
-/**
- * How far behind the baseline a jump server starts their run-up, in metres.
- * Sized so the physical approach lands inside the 1.2–2.6 m a real one covers.
- */
-const JUMP_SERVE_RUNUP = 2.35;
-
-/** How long the jump server is already moving before the ball leaves the hands. */
-const TOSS_ON_THE_MOVE = 0.2;
-
 /** Latest the jump server may plant, measured from the start of the run-up. */
 const PLANT_DEADLINE = 0.72;
 
@@ -47,6 +47,13 @@ const PLANT_DEADLINE = 0.72;
  * cut straight to mid-air and the pose the sheets draw for it was never shown.
  */
 const PLANT_LEAD = 0.14;
+
+/**
+ * A block has to read as a reaction to the set, not a coin flip and not a
+ * teleport. The lead blocker takes one readable beat to process the cue; the
+ * second blocker syncs almost immediately once the lead goes.
+ */
+const BLOCK_LEAD_READ_DELAY = 0.032;
 
 /**
  * How much room a player insists on having, in metres.
@@ -61,8 +68,11 @@ const PERSONAL_SPACE = 1.7;
 
 interface Brainstate {
   job: Job;
+  blockPreparing?: boolean;
   /** Countdown before the player is allowed to react to a new situation. */
   reactionDelay: number;
+  /** One read per attack: countdown from the visual cue to the block jump. */
+  blockReadDelay: number;
   /** Where this player is heading. */
   goal: Vec3;
   /** Whether the player intends to swing at the ball on contact. */
@@ -80,20 +90,24 @@ interface Brainstate {
   armSpecial: boolean;
   /** Committed to moving towards the goal (hysteresis against goal jitter). */
   enRoute: boolean;
+  /** Off-ball movement remains stopped across insignificant steering noise. */
+  adjusting: boolean;
 }
 
 const newState = (): Brainstate => ({
   job: 'idle',
   reactionDelay: 0,
+  blockReadDelay: -1,
   goal: v3(),
   wantsAction: false,
   holdAction: false,
   aim: { x: 0, depth: 0.4 },
-  serveHold: 0.6,
+  serveHold: 0,
   powerServe: false,
   serveRunUpAt: 0,
   armSpecial: false,
   enRoute: false,
+  adjusting: false,
 });
 
 /**
@@ -112,10 +126,21 @@ export class TeamBrain {
   /** Recomputed on assignment; who this team wants to hit the third ball. */
   private designatedAttacker = -1;
   private designatedReceiver = -1;
+  private designatedSetter = -1;
   /** Where this team has decided to run its attack, chosen once per possession. */
   private plannedAttack: Vec3 = v3();
+  private setPlan: SetPlan | null = null;
+  private readonly playRng: Rng;
+  private playBag: SetPlay[] = [];
+  private hasPlannedPlay = false;
+  private decoyJumped = false;
+  private attackAim: Aim | null = null;
+  private readAirborneBlock = false;
+  /** Read the set once for coverage; the hitter's feet are behind ball contact. */
+  private coverLanding: Vec3 | null = null;
   /** Touch count seen on the previous step, to detect possession transitions. */
   private lastSeenTouches = -1;
+  private lastSeenPossession: Side | null = null;
   /**
    * The defensive read, frozen until the situation genuinely changes.
    *
@@ -137,11 +162,22 @@ export class TeamBrain {
     this.team = team;
     this.difficulty = clamp(difficulty, 0, 2);
     this.rng = world.rng;
+    // Tactical variety has its own deterministic stream, so shuffling a play
+    // does not perturb the serve/error random draws of unrelated teammates.
+    this.playRng = new Rng(world.rng.snapshot() ^ (team.side === 'home' ? 0x51e7 : 0xbac5));
     for (const p of team.players) this.states.set(p.id, newState());
   }
 
   suppress(id: number): void {
     this.suppressedId = id;
+  }
+
+  /** World passes this committed target and tempo into the actual set contact. */
+  setPlanFor(playerId: number): SetPlan | undefined {
+    if (!this.setPlan || playerId === this.suppressedId) return undefined;
+    const player = this.team.get(playerId);
+    if (!player || this.stateOf(player).job !== 'set') return undefined;
+    return copySetPlan(this.setPlan);
   }
 
   /** Latency floor in seconds; better players and higher difficulty react sooner. */
@@ -170,8 +206,16 @@ export class TeamBrain {
   }
 
   think(dt: number): void {
-    for (const s of this.states.values()) if (s.reactionDelay > 0) s.reactionDelay -= dt;
+    for (const s of this.states.values()) {
+      s.blockPreparing = false;
+      if (s.reactionDelay > 0) s.reactionDelay -= dt;
+      if (s.blockReadDelay > 0) s.blockReadDelay = Math.max(0, s.blockReadDelay - dt);
+    }
     this.assignJobs();
+    for (const p of this.team.players) {
+      const preparing = this.stateOf(p).blockPreparing && p.height === 0 && p.vertVel === 0;
+      p.blockPreparationAge = preparing ? (p.blockPreparationAge === undefined ? 0 : p.blockPreparationAge + dt) : undefined;
+    }
     this.playAnythingInReach();
   }
 
@@ -186,12 +230,26 @@ export class TeamBrain {
   private playAnythingInReach(): void {
     const w = this.world;
     if (w.phase !== 'rally' || w.ball.grounded || w.ball.frozen) return;
+    if (w.serveInFlight && w.servingSide === this.team.side) return;
+    const touches = w.possession === this.team.side ? w.touches : 0;
+    const contactJob = touches === 0 ? 'receive' : touches === 1 ? 'set' : 'attack';
+    const owner = this.team.players.find(p => this.stateOf(p).job === contactJob);
+    const landing = predictLanding(w.ball);
+    const ownerCanArrive = owner && owner.downTime <= 0 && owner.gettingUp <= 0
+      && (owner.id !== w.lastToucherId || w.lastTouchWasBlock)
+      && (canReach(owner, w.ball) || landing.valid && landing.time > .12
+        && distXY(owner.pos, landing.point) <= owner.runSpeed * landing.time * .9 + .7);
     for (const p of this.team.players) {
       if (p.id === this.suppressedId) continue;
+      if (p.id === this.setPlan?.decoyId && p.airborne && touches <= 2) continue;
       if (p.id === w.lastToucherId && !w.lastTouchWasBlock) continue;
       if (w.possession === p.side && w.touches >= 3) continue;
       if (!canReach(p, w.ball)) continue;
       const s = this.stateOf(p);
+      // Cover is not another receiver/setter. A first-row teammate used to
+      // intercept an otherwise playable serve just because it passed nearby.
+      // Yield to the named owner; take over only for an actual emergency.
+      if (ownerCanArrive && owner?.id !== p.id && s.job !== 'block') continue;
       s.wantsAction = true;
       s.holdAction = false;
     }
@@ -230,6 +288,19 @@ export class TeamBrain {
       return;
     }
 
+    // The serving team cannot play its own serve. Previously its possession
+    // and the ball still being behind the net briefly activated our offence,
+    // so teammates chased the server's ball before turning back to defend.
+    if (w.serveInFlight) {
+      this.modeTimer = 0;
+      if (w.servingSide === side) { this.mode = 'defence'; this.assignBaseDefense(); }
+      else { this.mode = 'offence'; this.assignOffense(); }
+      return;
+    }
+    if (w.possession === side && w.touches >= 3 && !w.lastTouchWasBlock) {
+      this.mode = 'defence'; this.modeTimer = 0; this.assignBaseDefense(); return;
+    }
+
     const mine = w.possession === side && ballOnMySide;
 
     // Debounce the offence/defence decision. Read raw, it flickers every time
@@ -258,12 +329,28 @@ export class TeamBrain {
   private assignServe(): void {
     const server = this.team.server;
     const serving = this.world.servingSide === this.team.side;
+    const passers = this.passers();
+    this.lastSeenTouches = -1;
+    this.lastSeenPossession = null;
+    this.designatedSetter = -1;
+    this.coverLanding = null;
+    this.setPlan = null;
+    this.decoyJumped = false;
+    this.wasDefending = false;
     for (const p of this.team.players) {
       const s = this.stateOf(p);
       s.wantsAction = false;
       s.holdAction = false;
       if (serving && p.id === server.id) {
         s.job = 'serve';
+        // The human owns the serve plan as well as the button. Letting the AI
+        // continue through this branch while its command was suppressed still
+        // rewrote `plansJumpServe` every simulation step, cancelling a loaded
+        // human run-up immediately after the toss.
+        if (p.id === this.suppressedId) {
+          s.goal = copy(p.pos);
+          continue;
+        }
         // Plan the serve once: toss time, target, and whether to go up for it.
         if (s.serveHold <= 0) {
           s.powerServe = this.rng.chance(0.18 + this.difficulty * 0.12);
@@ -278,34 +365,27 @@ export class TeamBrain {
         p.plansJumpServe = s.powerServe;
         const t = this.world.phaseTimer;
         const ball = this.world.ball;
-        // The run-up is a real journey across the floor: back off behind the
-        // baseline before the toss, then cover that ground and plant. The old
-        // code kept the server's goal pinned to where they already stood and
-        // simply made them jump, so the sheet mimed a run nobody ran.
+        // The run-up is a real journey across the floor after the toss. The
+        // old code either moved before the ball left the hands or kept the
+        // server pinned and simply made them jump, so the sheet mimed a run
+        // nobody ran.
         const serveDir = attackDir(this.team.side);
         const baseline = -serveDir * COURT_HALF_LENGTH;
-        const runUpStart = baseline - serveDir * JUMP_SERVE_RUNUP;
         const plantSpot = baseline - serveDir * 0.35;
 
         if (ball.frozen && s.powerServe) {
-          // A jump server walks back, then starts the run-up and tosses ON THE
-          // MOVE — that first step is part of the approach, not a preamble to
-          // it. Tossing from a standstill and only then setting off left barely
-          // half a metre of run-up before the ball had to be struck.
-          const atStart = Math.abs(p.pos.y - runUpStart) < 0.3;
-          if (!atStart && s.serveRunUpAt <= 0) {
-            s.goal = v3(p.pos.x, runUpStart, 0);
+          // No pre-toss footwork. The server is already placed deep enough for
+          // a run-up; the charge happens still, then release throws the ball
+          // and the approach begins.
+          s.goal = copy(p.pos);
+          const chargeStart = Math.max(0.18, s.serveHold - UNDERARM_HOLD * 1.08);
+          if (t >= chargeStart && t <= s.serveHold) {
+            s.holdAction = true;
             s.wantsAction = false;
-          } else {
-            if (s.serveRunUpAt <= 0 && t > s.serveHold) s.serveRunUpAt = t;
-            if (s.serveRunUpAt > 0) {
-              s.goal = v3(p.pos.x, plantSpot, 0);
-              if (!p.airborne) p.licenseApproach('serve', 0.9);
-            } else {
-              s.goal = v3(p.pos.x, runUpStart, 0);
-            }
-            // The ball leaves the hands once the body is already travelling.
-            s.wantsAction = s.serveRunUpAt > 0 && t > s.serveRunUpAt + TOSS_ON_THE_MOVE;
+          } else if (t > s.serveHold) {
+            s.holdAction = false;
+            s.wantsAction = true;
+            if (s.serveRunUpAt <= 0) s.serveRunUpAt = t;
           }
         } else if (ball.frozen) {
           // Ball still in hand: a press now is the toss.
@@ -313,6 +393,7 @@ export class TeamBrain {
           s.wantsAction = t > s.serveHold;
         } else if (s.powerServe) {
           // Toss is up: finish the approach, plant, and leave the floor.
+          s.serveRunUpAt = t - this.world.serveTossElapsed;
           s.goal = v3(p.pos.x, plantSpot, 0);
           const arrived =
             serveDir > 0 ? p.pos.y >= plantSpot - 0.28 : p.pos.y <= plantSpot + 0.28;
@@ -338,43 +419,24 @@ export class TeamBrain {
           s.wantsAction = ball.vel.z < 1.0 && ball.pos.z <= reachTop && ball.pos.z > 1.6;
         }
       } else {
-        s.job = 'idle';
+        s.job = serving ? this.team.isFrontRow(p) ? 'block' : 'cover'
+          : passers.includes(p.id) ? 'receive' : p.role === 'setter' ? 'set' : 'cover';
         s.serveHold = 0;
         s.serveRunUpAt = 0;
-        // The receiving team takes up a reception formation; the serving team
-        // spreads into its base defensive shape ready for the return.
-        s.goal = serving
-          ? legalSpot(p.side, defenceSpot(p, 0, [], false))
-          : legalSpot(p.side, receptionSpot(p, this.passers()));
+        // setupServe has already placed the legal pre-serve formation. Stay
+        // there through the toss; switching/penetration starts on the hit.
+        s.enRoute = false;
+        s.goal = copy(p.pos);
       }
     }
   }
 
-  /**
-   * The three players who take the serve.
-   *
-   * A three-passer reception: the two outsides and whoever is in the back
-   * middle, never the setter — who has to be free to run to the net — and
-   * never a front-row middle, who has to be free to hit the quick.
-   */
+  /** Keep a recovering defender out of the first-contact assignment. */
   private passers(): number[] {
-    const eligible = this.team.players.filter(
-      (p) =>
-        p.role !== 'setter' &&
-        p.downTime <= 0 &&
-        !(p.role === 'middle' && this.team.isFrontRow(p)),
-    );
-    // The libero passes every ball they can reach — that is what they are on
-    // court for — so they are never the one left out of a three-passer line.
-    const chosen = eligible
-      .slice()
-      .sort((a, b) => Number(b.role === 'libero') - Number(a.role === 'libero'))
-      .slice(0, 3);
-    // Left to right across the court, so the reception line keeps its shape.
-    const dir = attackDir(this.team.side);
-    return chosen
-      .sort((a, b) => a.home.x * dir - b.home.x * dir)
-      .map((p) => p.id);
+    return servePassers(this.team.players).filter(id => {
+      const p = this.team.get(id)!;
+      return p.downTime <= 0 && p.gettingUp <= 0;
+    });
   }
 
   /** Our side has the ball: pass, set, attack, everyone else covers. */
@@ -386,26 +448,40 @@ export class TeamBrain {
 
     // Plan the whole play the moment the ball comes our way, so the hitter can
     // start the approach run while the pass is still in the air.
-    if (touches !== this.lastSeenTouches) {
+    if (touches !== this.lastSeenTouches || this.lastSeenPossession !== w.possession) {
       if (touches <= 1) {
         this.designatedReceiver = this.pickReceiver();
-        this.designatedAttacker = this.pickAttacker();
-        const pin = this.rng.chance(0.25) ? 0 : this.rng.chance(0.5) ? -HITTER_PIN : HITTER_PIN;
-        this.plannedAttack = v3(pin + this.rng.spread(0.5), -dir * 2.1, NET_HEIGHT + 0.95);
+        const newPossession = !this.setPlan || touches < this.lastSeenTouches
+          || this.lastSeenTouches < 0;
+        const planned = this.team.get(this.designatedAttacker);
+        const needsHitter = !planned || planned.downTime > 0 || planned.gettingUp > 0
+          || touches === 1 && planned.id === w.lastToucherId && !w.lastTouchWasBlock;
+        if (newPossession || needsHitter) this.planSet(newPossession ? this.nextSetPlay() : this.setPlan!.play);
+        this.coverLanding = null;
+        this.designatedSetter = -1;
       }
       this.lastSeenTouches = touches;
+      this.lastSeenPossession = w.possession;
     }
 
     // Contact height for a set-up attack: the top of the hitting window.
     const attackPred = predictLanding(w.ball, NET_HEIGHT + 0.85);
     const floorPred = predictLanding(w.ball);
+    const readSet = touches >= 2 && this.coverLanding === null;
+    if (readSet) {
+      const contact = attackPred.valid ? attackPred.point : this.plannedAttack;
+      this.coverLanding = v3(contact.x, contact.y - dir * 0.3, 0);
+    }
+    const landing = this.coverLanding ?? v3(this.plannedAttack.x, this.plannedAttack.y - dir * 0.3, 0);
     // Who takes the second and third balls. Both fall back to whoever can
     // actually get there: the designated player is a preference, not a
     // promise, because the ball does not always go where the plan assumed.
-    const setterId = this.pickBallHandler(floorPred, (p) => (p.role === 'setter' ? 2.2 : 0));
-    const attackerId = this.pickBallHandler(attackPred.valid ? attackPred : floorPred, (p) =>
-      p.id === this.designatedAttacker ? 2.6 : this.team.isFrontRow(p) ? 0.8 : 0,
-    );
+    const setterId = this.committedSetter(floorPred);
+    const attackerId =
+      touches >= 2
+        ? this.pickAttackerHandler(attackPred.valid ? attackPred : floorPred)
+        : this.designatedAttacker;
+    const formation = attackFormation(this.team.players, attackerId, this.plannedAttack.x, touches);
 
     for (const p of this.team.players) {
       const s = this.stateOf(p);
@@ -417,11 +493,21 @@ export class TeamBrain {
 
       if (touches === 0 && p.id === this.designatedReceiver) {
         s.job = 'receive';
+        p.cancelApproach();
         s.goal = floorPred.valid ? copy(floorPred.point) : copy(w.ball.pos);
         s.goal.z = 0;
         this.driveReceive(p, s, floorPred.valid ? floorPred.time : 0.4);
+      } else if (touches === 0 && p.role === 'setter') {
+        // Release the setter into the passing target as soon as reception is
+        // assigned. Treating them as attack cover sent them backwards, away
+        // from their own pass, and forced an outside hitter to improvise sets.
+        s.job = 'set';
+        p.cancelApproach();
+        s.goal = this.team.setterTarget();
+        s.goal.z = 0;
       } else if (touches === 1 && p.id === setterId) {
         s.job = 'set';
+        p.cancelApproach();
         s.goal = floorPred.valid ? copy(floorPred.point) : copy(w.ball.pos);
         s.goal.z = 0;
         this.driveSet(s);
@@ -434,15 +520,73 @@ export class TeamBrain {
       } else if (isAttacker) {
         // Approach run: wait behind the planned contact point.
         s.job = 'attack';
-        s.goal = v3(this.plannedAttack.x, this.plannedAttack.y - dir * 1.9, 0);
+        const runUp = this.setPlan?.play === 'quick' ? .85 : this.setPlan?.play === 'pipe' ? 1.8 : 2.3;
+        s.goal = v3(this.plannedAttack.x, this.plannedAttack.y - dir * runUp, 0);
+      } else if (p.id === this.setPlan?.decoyId && touches <= 2 && !this.decoyJumped) {
+        // Sell a quick with a real, legal front-row jump. The decoy never asks
+        // for contact: the opposite remains the only owner of the third ball.
+        s.job = 'cover';
+        s.goal = v3(0, -dir * 1.9, 0);
+        const setArrival = predictLanding(w.ball, PLAYER_REACH + .15);
+        if (p.id !== this.suppressedId && touches === 1 && setArrival.valid && setArrival.time < .26
+          && distXY(p.pos, s.goal) < 1.25 && p.canAct && !p.airborne) {
+          p.cancelApproach();
+          this.decoyJumped = p.jump();
+        }
       } else {
         s.job = 'cover';
-        // Cover is planned around where the attack is GOING, decided once per
-        // possession — not around the hitter's live position, which sweeps
-        // through several metres during the approach and dragged the whole
-        // cover arc along with it.
-        this.sticky(s, legalSpot(p.side, attackSpot(p, null, this.plannedAttack.x * dir)));
+        p.cancelApproach();
+        // Prepare around the planned route, then read the delivered set ONCE.
+        // Cover clears the hitter's feet, not just the ball's contact point.
+        // Following the live airborne body would drag the entire formation.
+        const frontOfPipe = this.setPlan?.play === 'pipe' && this.team.isFrontRow(p) && p.role !== 'setter';
+        const cover = frontOfPipe ? formation.get(p.id)! : clearAttackLanding(p.side, formation.get(p.id)!, landing);
+        // A newly delivered set is a real phase change, not prediction noise.
+        // The normal .7m deadband must not discard its clearance correction.
+        this.sticky(s, cover, readSet ? 0 : 0.7);
       }
+    }
+  }
+
+  private committedSetter(pred: { valid: boolean; point: Vec3; time: number }): number {
+    const current = this.team.get(this.designatedSetter);
+    const target = pred.valid ? pred.point : this.world.ball.pos;
+    if (current && current.downTime <= 0 && current.gettingUp <= 0
+      && (current.id !== this.world.lastToucherId || this.world.lastTouchWasBlock)
+      && distXY(current.pos, target) <= current.runSpeed * Math.max(0.1, pred.time) + 1.4) return current.id;
+    this.designatedSetter = this.pickBallHandler(pred, p => p.role === 'setter' ? 2.2 : 0);
+    return this.designatedSetter;
+  }
+
+  /** Three front players ready at the net, three distinct back-row zones. */
+  private assignBaseDefense(): void {
+    const formation = defenceFormation(this.team.players);
+    const w = this.world;
+    const incoming = w.phase === 'rally' && w.lastToucherSide !== this.team.side
+      && w.ball.vel.y * attackDir(this.team.side) < 0;
+    this.wasDefending = false;
+    for (const p of this.team.players) {
+      const s = this.stateOf(p);
+      // Crossing the net resets possession before the formation debounce
+      // finishes. Do not recall the already prepared receiver to base defence
+      // during that gap: his platform would reopen immediately before impact.
+      // Preserve only the single assigned, physically reachable ground dig.
+      if (incoming && p.id === this.designatedReceiver
+        && p.presentation.action === 'bump' && p.presentation.phase === 'prepare'
+        && canPlantForReceive(p, w.ball)) {
+        const arrival = predictLanding(w.ball);
+        s.job = 'receive';
+        s.armSpecial = false;
+        p.cancelApproach();
+        s.goal = copy(arrival.valid ? arrival.point : p.pos);
+        s.goal.z = 0;
+        this.driveReceive(p, s, arrival.valid ? arrival.time : .3);
+        continue;
+      }
+      s.job = this.team.isFrontRow(p) ? 'block' : 'cover';
+      s.wantsAction = false; s.holdAction = false; s.armSpecial = false;
+      p.cancelApproach();
+      this.sticky(s, formation.get(p.id)!, 0.35);
     }
   }
 
@@ -467,7 +611,7 @@ export class TeamBrain {
     let bestId = -1;
     let bestScore = Infinity;
     for (const p of this.team.players) {
-      if (p.downTime > 0) continue;
+      if (p.downTime > 0 || p.gettingUp > 0) continue;
       // Ineligible: a player may not touch the ball twice in a row.
       if (p.id === w.lastToucherId && !w.lastTouchWasBlock) continue;
       const reach = p.runSpeed * Math.max(0.1, time) + 1.1;
@@ -481,11 +625,53 @@ export class TeamBrain {
     return bestId;
   }
 
+  /**
+   * Who actually attacks the third ball.
+   *
+   * Attack assignment is intentionally narrower than generic ball handling:
+   * one hitter owns the play, while the other front-row players cover. Falling
+   * back is allowed only when the chosen hitter clearly cannot arrive.
+   */
+  private pickAttackerHandler(pred: { valid: boolean; point: Vec3; time: number }): number {
+    const target = pred.valid ? pred.point : this.world.ball.pos;
+    const time = pred.valid ? Math.max(0.12, pred.time) : 0.45;
+    const preferred = this.team.get(this.designatedAttacker);
+    const preferredEligible =
+      preferred &&
+      preferred.downTime <= 0 &&
+      preferred.gettingUp <= 0 &&
+      (preferred.id !== this.world.lastToucherId || this.world.lastTouchWasBlock);
+    if (preferredEligible) {
+      const reach = preferred.runSpeed * time + 1.35;
+      if (distXY(preferred.pos, target) <= reach) return preferred.id;
+    }
+
+    const front = this.team.frontRow().filter((p) => p.role !== 'setter' && p.role !== 'libero' && p.downTime <= 0 && p.gettingUp <= 0);
+    let bestId = preferredEligible ? preferred.id : -1;
+    let best = Infinity;
+    for (const p of front.length ? front : this.team.players) {
+      if (p.downTime > 0 || p.gettingUp > 0 || (p.id === this.world.lastToucherId && !this.world.lastTouchWasBlock)) continue;
+      const gap = distXY(p.pos, target);
+      const late = gap > p.runSpeed * time + 1.15 ? 5 : 0;
+      const score = gap + late + (p.id === this.designatedAttacker ? -1.4 : 0);
+      if (score < best) {
+        best = score;
+        bestId = p.id;
+      }
+    }
+    return bestId;
+  }
+
   /** Opponent has the ball: block at the net, dig behind it. */
   private assignDefense(): void {
     const w = this.world;
     const dir = attackDir(this.team.side);
     const opponent = w.team(otherSide(this.team.side));
+    // Read an actual set before closing a double block. The pass/serve does
+    // not yet identify an attack lane; all three front players hold base.
+    if (w.possession !== opponent.side || w.touches < 2 || w.serveInFlight) {
+      this.assignBaseDefense(); return;
+    }
     const floorPred = predictLanding(w.ball);
     const ballComing = dir > 0 ? w.ball.vel.y < -0.5 : w.ball.vel.y > 0.5;
 
@@ -520,14 +706,25 @@ export class TeamBrain {
 
     // Commit to a read. Re-read only on entering defence or when the threat
     // has moved by more than a body's width — not every step.
-    if (!this.wasDefending || Math.abs(blockX - this.readX) > 1.1) {
+    const candidatePair = this.team
+      .frontRow()
+      .filter((p) => p.id !== this.suppressedId && p.role !== 'libero'
+        && p.downTime <= 0 && p.gettingUp <= 0 && !p.diving)
+      .slice()
+      .sort((a, b) => Math.abs(a.pos.x - blockX) - Math.abs(b.pos.x - blockX))
+      .slice(0, 2);
+    const candidateScore = candidatePair.reduce((sum, p) => sum + Math.abs(p.pos.x - blockX), 0);
+    const currentScore = this.blockPair
+      .map((id) => this.team.get(id))
+      .reduce((sum, p) => sum + (p ? Math.abs(p.pos.x - blockX) : 4), 0);
+    const invalidPair = this.blockPair.some(id => {
+      const p = this.team.get(id);
+      return !p || id === this.suppressedId || !this.team.isFrontRow(p)
+        || p.role === 'libero' || p.downTime > 0 || p.gettingUp > 0 || p.diving;
+    });
+    if (!this.wasDefending || invalidPair || Math.abs(blockX - this.readX) > 0.65 || candidateScore + 1.15 < currentScore) {
       this.readX = blockX;
-      this.blockPair = this.team
-        .frontRow()
-        .slice()
-        .sort((a, b) => Math.abs(a.pos.x - blockX) - Math.abs(b.pos.x - blockX))
-        .slice(0, 2)
-        .map((b) => b.id);
+      this.blockPair = candidatePair.map((b) => b.id);
     }
     this.wasDefending = true;
     const steadyX = this.readX;
@@ -550,19 +747,12 @@ export class TeamBrain {
       this.designatedReceiver = this.pickReceiver();
     }
     const receiverId = this.designatedReceiver;
+    const formation = defenceFormation(this.team.players, steadyX, this.blockPair);
 
     for (const p of this.team.players) {
       const s = this.stateOf(p);
       s.wantsAction = false;
       s.holdAction = false;
-
-      if (p.id === receiverId && floorPred.valid) {
-        s.job = 'receive';
-        s.goal = copy(floorPred.point);
-        s.goal.z = 0;
-        this.driveReceive(p, s, floorPred.time);
-        continue;
-      }
 
       // Two front-row players commit to the block for the whole of the
       // opponent's build-up, not just once the ball reaches the net. Waiting
@@ -570,16 +760,34 @@ export class TeamBrain {
       const blockIndex = blockers.indexOf(p);
       if (blockIndex >= 0) {
         s.job = 'block';
+        p.cancelApproach();
         const offset = blockIndex === 0 ? 0 : steadyX > 0 ? -0.85 : 0.85;
         this.sticky(s, v3(clamp(steadyX + offset, -3.9, 3.9), -dir * 0.72, 0), 0.45);
-        this.driveBlock(p, s, threat, blockIndex, blockers[0]);
+        this.driveBlock(
+          p,
+          s,
+          threat,
+          blockIndex,
+          blockers[0],
+          blockers.find((b) => b.id !== p.id),
+        );
+        continue;
+      }
+
+      if (p.id === receiverId && floorPred.valid) {
+        s.job = 'receive';
+        p.cancelApproach();
+        s.goal = copy(floorPred.point);
+        s.goal.z = 0;
+        this.driveReceive(p, s, floorPred.time);
         continue;
       }
 
       s.job = 'cover';
+      p.cancelApproach();
       // Always the deep shape: flipping depth on a live speed estimate marched
       // the whole back line up and down a metre at a time.
-      this.sticky(s, legalSpot(p.side, defenceSpot(p, steadyX, this.blockPair, true)));
+      this.sticky(s, legalSpot(p.side, formation.get(p.id)!));
     }
   }
 
@@ -588,7 +796,11 @@ export class TeamBrain {
   private driveReceive(p: Player, s: Brainstate, timeToLand: number): void {
     const w = this.world;
     const gap = distXY(p.pos, s.goal);
-    const reachable = gap < p.runSpeed * Math.max(0.05, timeToLand) + 0.9;
+    // Decide while there is still time to extend after pushing off. Spending
+    // the last .09 s on a standing pursuit starts a dive only when an instant
+    // contact could save it, skipping the whole visible take-off sequence.
+    const pursuitTime = Math.max(0, timeToLand - DIVE_EXTENSION_TIME);
+    const reachable = gap < p.runSpeed * pursuitTime + 0.9;
 
     // A ball that will drop out of reach is worth a dive.
     //
@@ -600,7 +812,7 @@ export class TeamBrain {
     // a coin toss: you go, and how far you commit is what varies.
     const desperate = !reachable && gap < 4.6 && timeToLand < 0.85;
     if (desperate && !p.airborne && p.canAct && p.height <= 0.02) {
-      const worthIt = gap > p.runSpeed * Math.max(0.05, timeToLand) + 0.35;
+      const worthIt = gap > p.runSpeed * pursuitTime + 0.35;
       if (worthIt && this.rng.chance(0.55 + this.difficulty * 0.2)) {
         p.dive(s.goal.x - p.pos.x, s.goal.y - p.pos.y);
       }
@@ -634,14 +846,16 @@ export class TeamBrain {
     const rise = p.jumpVelocity / (Math.abs(GRAVITY) * 1.15);
     // Jump when the ball will arrive as we peak, and only if we are close
     // enough that the swing will actually connect.
-    const inPosition = gap < 1.4 || gap < p.runSpeed * timeToContact * 0.6;
+    const legalTakeoff = this.team.isFrontRow(p) || -attackDir(p.side) * p.pos.y > ATTACK_LINE + .08;
+    const inPosition = legalTakeoff && (gap < 1.4 || gap < p.runSpeed * timeToContact * 0.6);
 
     // Licence the run-up, and only the run-up. The window opens when the set is
     // close enough that the hitter commits, and only if there is ground left to
     // cover — a hitter already standing under the ball plants, they do not
     // sprint on the spot. Everything outside this window is ordinary movement.
     if (!p.airborne && timeToContact < APPROACH_WINDOW && gap > 0.55) {
-      p.licenseApproach('attack', Math.min(APPROACH_WINDOW, timeToContact + 0.2));
+      p.licenseApproach('attack', Math.min(APPROACH_WINDOW, timeToContact + 0.2),
+        timeToContact - rise - PLANT_LEAD);
     }
 
     // Plant, THEN leave the floor. Setting the plant pose on the same step as
@@ -671,16 +885,23 @@ export class TeamBrain {
 
     // Aim away from the block, and away from where the defence is standing.
     const opponent = w.team(otherSide(this.team.side));
-    const blockers = opponent.players.filter((o) => o.airborne && Math.abs(o.pos.y) < 1.6);
-    let aimX = this.rng.range(-0.72, 0.72);
-    if (blockers.length) {
-      const avgBlock = blockers.reduce((a, o) => a + o.pos.x, 0) / blockers.length;
-      aimX = clamp((avgBlock > 0 ? -0.68 : 0.68) + this.rng.spread(0.2), -0.85, 0.85);
+    // Choose a shot, then read the wall once at takeoff. Re-rolling both axes
+    // 120 times per second made the intended target tremble while an otherwise
+    // settled hitter waited for contact, and never represented a real choice.
+    if (!this.attackAim || p.airborne && !this.readAirborneBlock) {
+      const blockers = opponent.players.filter((o) => o.airborne && Math.abs(o.pos.y) < 1.6);
+      let aimX = this.playRng.range(-0.72, 0.72);
+      if (blockers.length) {
+        const avgBlock = blockers.reduce((a, o) => a + o.pos.x, 0) / blockers.length;
+        aimX = clamp((avgBlock > 0 ? -0.68 : 0.68) + this.playRng.spread(0.2), -0.85, 0.85);
+      }
+      const smart = 0.35 + this.difficulty * 0.3;
+      const tipIt = this.playRng.chance(0.08 * smart);
+      this.attackAim = { x: aimX, depth: tipIt ? -0.7 : this.playRng.range(0.15, 0.86) };
+      if (p.airborne) this.readAirborneBlock = true;
     }
-    const smart = 0.35 + this.difficulty * 0.3;
-    const tipIt = this.rng.chance(0.08 * smart);
-    s.aim = { x: aimX, depth: tipIt ? -0.7 : this.rng.range(0.15, 0.86) };
-    if (tipIt) s.holdAction = false;
+    s.aim = this.attackAim;
+    if (s.aim.depth < -.6) s.holdAction = false;
   }
 
   private driveBlock(
@@ -689,6 +910,7 @@ export class TeamBrain {
     threat: Player | undefined,
     blockIndex: number,
     lead: Player | undefined,
+    partner: Player | undefined,
   ): void {
     const w = this.world;
 
@@ -717,19 +939,35 @@ export class TeamBrain {
       s.holdAction = false;
       return;
     }
+    const timeToHeight = (target: number): number => {
+      const a = 0.5 * GRAVITY;
+      const b = ball.vel.z;
+      const c = ball.pos.z - target;
+      const d = b * b - 4 * a * c;
+      if (d < 0) return Infinity;
+      const root = Math.sqrt(d);
+      const t1 = (-b - root) / (2 * a);
+      const t2 = (-b + root) / (2 * a);
+      return [t1, t2].filter((t) => t > 0).sort((a, b) => a - b)[0] ?? Infinity;
+    };
+    const timeToStrikeWindow = timeToHeight(NET_HEIGHT + 0.85);
     const strikeZone =
       theirSide &&
-      Math.abs(ball.pos.y) < 3.0 &&
-      ball.pos.z > NET_HEIGHT + 0.25 &&
-      ball.pos.z < NET_HEIGHT + 2.1 &&
-      ball.vel.z < 1.2;
+      Math.abs(ball.pos.y) < 3.7 &&
+      ball.pos.z > NET_HEIGHT + 0.35 &&
+      ball.pos.z < NET_HEIGHT + 2.45 &&
+      ball.vel.z < 2.4 &&
+      timeToStrikeWindow < 0.82;
 
     // The second blocker is placed a shoulder off the ball on purpose, so it
     // must be judged against its own spot rather than against the hitter —
     // measuring it against the hitter is what kept it on the floor.
     const reference = threat ? threat.pos.x : ball.pos.x;
-    const aligned = Math.abs(p.pos.x - reference) < (blockIndex === 0 ? 1.8 : 3.4);
-    const timing = this.rng.range(0, 1) < 0.34 + this.difficulty * 0.2;
+    // Preserve the established RNG stream for unrelated attack/defence choices.
+    // Older builds spent one draw here every frame; changing that consumption
+    // silently rewrote whole seeded matches even though block timing no longer
+    // uses the random value.
+    void this.rng.range(0, 1);
     // The outside blocker goes with the middle. A double block is two people
     // leaving the floor together — judged apart, the second one waited for its
     // own read, arrived a beat late and stayed down, which is why a block was
@@ -738,27 +976,107 @@ export class TeamBrain {
     // not only while it is still going up: judged against `vertVel > -1` the
     // window was a couple of frames wide, so the second man missed it more
     // often than not and the block stayed a single.
-    const withLead = blockIndex > 0 && lead !== undefined && lead.airborne && lead.height > 0.1;
+    const withLead =
+      blockIndex > 0 &&
+      lead !== undefined &&
+      (lead.presentation.action === 'block' || (lead.airborne && lead.height > 0.1));
+    const partnerNear =
+      partner !== undefined &&
+      !partner.airborne &&
+      partner.canAct &&
+      partner.downTime <= 0 &&
+      partner.gettingUp <= 0 &&
+      !partner.diving &&
+      Math.abs(partner.pos.x - p.pos.x) < 4.5 &&
+      Math.abs(partner.pos.y) < 2.8;
+    const aligned =
+      blockIndex === 0
+        ? Math.abs(p.pos.x - reference) < 1.8
+        : withLead
+          ? Math.abs(p.pos.x - lead.pos.x) < 4.0 || Math.abs(p.pos.x - reference) < 4.2
+          : Math.abs(p.pos.x - reference) < 3.4;
     const cue = strikeZone || withLead;
+    const readableBlockWindow =
+      cue ||
+      (s.blockReadDelay >= 0 &&
+        theirSide &&
+        Math.abs(ball.pos.y) < 3.55 &&
+        ball.pos.z > NET_HEIGHT + 0.2 &&
+        ball.pos.z < NET_HEIGHT + 2.45 &&
+        ball.vel.z < 2.6);
+
+    // Read the attack once and react after a player-specific delay. Rolling a
+    // new random chance on every simulation frame made the wall leave the
+    // floor at an arbitrary moment even when the set and hitter were identical.
+    // The partner keys off the lead and therefore needs only a short sync beat.
+    if (!readableBlockWindow) {
+      s.blockReadDelay = -1;
+    } else if (withLead) {
+      // Once the lead is in the air this is no longer an individual read: the
+      // partner closes the wall now, otherwise the "double" block forms after
+      // contact and reads as two unrelated jumps.
+      s.blockReadDelay = 0;
+    } else if (s.blockReadDelay < 0) {
+      s.blockReadDelay = BLOCK_LEAD_READ_DELAY;
+    }
 
     // Mirroring the lead blocker is not a decision to be dithered over: when
     // the middle goes, the outside goes, without waiting on its own dice roll.
-    // The human's team does not put the block up on its own. The player calls
-    // it: SPACE near the net sends the active player up, and the world brings
-    // the nearest front-row team-mate with them. An AI wall that fired by
-    // itself made pressing the button feel irrelevant — the one thing an
-    // arcade game must never do.
-    const humanTeam = this.world.humanTeam?.side === this.team.side;
-    if (!humanTeam && !p.airborne && p.canAct && cue && aligned && (timing || withLead)) {
-      if (this.stateOf(p).reactionDelay <= 0 && p.jump()) {
-        // Read as a block from the first frame of the jump.
-        p.setAnim('block');
-        this.world.reportBlockAttempt(p);
-        this.stateOf(p).reactionDelay = this.latency(p);
+    // The two unselected front-row teammates read and jump together. Only the
+    // controlled player keeps a manual jump; suppressing the entire human
+    // team here was why its automatic wall never supported that player.
+    const controlled = p.id === this.suppressedId;
+    // Begin the grounded gather before the existing jump cue. This predicts
+    // only the short approach of the ball to that same window; it neither
+    // delays takeoff nor tells the partner that a jump has already happened.
+    const ahead = BLOCK_PREPARATION_TIME;
+    const futureY = ball.pos.y + ball.vel.y * ahead;
+    const futureZ = ball.pos.z + ball.vel.z * ahead + .5 * GRAVITY * ahead * ahead;
+    const approachingWindow = futureY * dir > 0 && Math.abs(futureY) < 3.7
+      && futureZ > NET_HEIGHT + .35 && futureZ < NET_HEIGHT + 2.45
+      && ball.vel.z + GRAVITY * ahead < 2.4 && timeToStrikeWindow < .82 + ahead;
+    s.blockPreparing = !controlled && p.height === 0 && p.vertVel === 0 && p.canAct
+      && p.presentation.action === 'none' && !p.diving && Math.abs(p.pos.y) < 2
+      && Math.hypot(p.vel.x, p.vel.y) < 2.4
+      && (aligned || (partnerNear && Math.abs(partner!.pos.x - reference) < (blockIndex === 0 ? 3.4 : 1.8)))
+      && (readableBlockWindow || approachingWindow);
+    const reactionReady = s.reactionDelay <= 0 || withLead || (blockIndex === 0 && partnerNear && strikeZone);
+    if (!controlled && !p.airborne && p.canAct && Math.abs(p.pos.y) < 1.35
+      && readableBlockWindow && aligned && s.blockReadDelay <= 0) {
+      if (reactionReady && this.jumpForBlock(p)) {
+        this.syncBlockMate(p, partner);
+        s.reactionDelay = this.latency(p);
+        s.blockReadDelay = -1;
       }
     }
     s.wantsAction = p.airborne || Math.abs(w.ball.pos.y) < 1.4;
     s.holdAction = false;
+  }
+
+  private syncBlockMate(lead: Player, explicitMate?: Player): void {
+    const pairedId = this.blockPair.find((id) => id !== lead.id);
+    const mate = explicitMate ?? (pairedId ? this.team.get(pairedId) : undefined);
+    if (!mate || mate.id === this.suppressedId || !this.team.isFrontRow(mate) || mate.role === 'libero') return;
+    if (mate.airborne || !mate.canAct || mate.downTime > 0 || mate.diving) return;
+    if (Math.abs(mate.pos.x - lead.pos.x) > 4.2 || Math.abs(mate.pos.y) > 1.35) return;
+    if (this.jumpForBlock(mate)) {
+      const state = this.stateOf(mate);
+      state.job = 'block';
+      state.blockReadDelay = -1;
+      state.reactionDelay = this.latency(mate);
+    }
+  }
+
+  private jumpForBlock(p: Player): boolean {
+    if (p.id === this.suppressedId || !this.team.isFrontRow(p) || p.role === 'libero') return false;
+    if (!p.jump()) return false;
+    // A block is an extended vertical wall, not a spike approach. Give the
+    // block-specific jump a little more hang so the two-player wall is still
+    // present at attack contact instead of peaking between set and swing.
+    p.vertVel *= 1.055;
+    p.setAnim('block');
+    this.world.reportBlockAttempt(p);
+    return true;
   }
 
   // ------------------------------------------------------------- positioning
@@ -766,10 +1084,17 @@ export class TeamBrain {
   private pickReceiver(): number {
     const pred = predictLanding(this.world.ball);
     const target = pred.valid ? pred.point : this.world.ball.pos;
+    const receivingServe = this.world.serveInFlight && this.world.servingSide !== this.team.side;
+    const passers = receivingServe ? this.passers() : [];
+    // Let the reception unit own an ordinary serve. A non-passer can cover an
+    // emergency short ball, but must not replace a reachable libero/outside.
+    const reachablePasser = pred.valid && this.team.players.some(p => passers.includes(p.id)
+      && distXY(p.pos, target) <= p.runSpeed * pred.time * .9 + .7);
     let bestId = -1;
     let best = Infinity;
     for (const p of this.team.players) {
-      if (p.downTime > 0) continue;
+      if (p.downTime > 0 || p.gettingUp > 0) continue;
+      if (reachablePasser && !passers.includes(p.id)) continue;
       // Setters avoid taking the first ball when someone else can get there.
       const penalty = p.role === 'setter' ? 1.6 : 0;
       const d = distXY(p.pos, target) + penalty;
@@ -781,10 +1106,11 @@ export class TeamBrain {
     return bestId;
   }
 
-  private pickAttacker(): number {
-    const front = this.team.frontRow().filter((p) => p.role !== 'setter' && p.downTime <= 0);
+  private pickAttacker(candidates?: Player[]): number {
+    const front = candidates ?? this.team.frontRow().filter((p) => p.role !== 'setter'
+      && p.role !== 'libero' && p.downTime <= 0 && p.gettingUp <= 0);
     if (!front.length) {
-      const any = this.team.players.filter((p) => p.downTime <= 0);
+      const any = this.team.players.filter((p) => p.downTime <= 0 && p.gettingUp <= 0);
       return any.length ? any[0].id : this.team.players[0].id;
     }
     // Weight by power and jump, with a little variety so it is not predictable.
@@ -798,6 +1124,46 @@ export class TeamBrain {
       }
     }
     return bestId;
+  }
+
+  /** A shuffled bag prevents a long run of one set while retaining variation. */
+  private nextSetPlay(): SetPlay {
+    if (!this.hasPlannedPlay) { this.hasPlannedPlay = true; return 'high'; }
+    if (!this.playBag.length) {
+      this.playBag = ['high', 'quick', 'back', 'pipe', 'feint'];
+      for (let i = this.playBag.length - 1; i > 0; i--) {
+        const j = this.playRng.int(0, i + 1);
+        [this.playBag[i], this.playBag[j]] = [this.playBag[j], this.playBag[i]];
+      }
+    }
+    return this.playBag.pop()!;
+  }
+
+  private planSet(requested: SetPlay): void {
+    const w = this.world;
+    const eligible = this.team.players.filter(p => p.role !== 'setter' && p.role !== 'libero'
+      && p.downTime <= 0 && p.gettingUp <= 0
+      && (p.id !== w.lastToucherId || w.lastTouchWasBlock));
+    const front = eligible.filter(p => this.team.isFrontRow(p));
+    const back = eligible.filter(p => !this.team.isFrontRow(p));
+    let play = requested;
+    let candidates = play === 'pipe' ? back : front;
+    if (play === 'quick') candidates = front.filter(p => p.role === 'middle');
+    if (play === 'back' || play === 'feint') {
+      const opposite = front.filter(p => p.role === 'opposite');
+      candidates = opposite.length ? opposite : front.filter(p => p.role !== 'middle');
+    }
+    if (!candidates.length) { play = front.length ? 'high' : 'pipe'; candidates = front.length ? front : back; }
+    const id = this.pickAttacker(candidates);
+    const hitter = this.team.get(id)!;
+    const decoy = play === 'feint' ? front.find(p => p.id !== id && p.role === 'middle') : undefined;
+    if (play === 'feint' && !decoy) play = 'back';
+    this.setPlan = { play, attackerId: id, target: setTargetFor(hitter, play), decoyId: decoy?.id };
+    this.designatedAttacker = id;
+    this.plannedAttack = copy(this.setPlan.target);
+    this.decoyJumped = false;
+    this.attackAim = null;
+    this.readAirborneBlock = false;
   }
 
 
@@ -826,7 +1192,22 @@ export class TeamBrain {
       jumpPressed: s.armSpecial,
       aim: s.aim,
     };
-    if (p.id === this.suppressedId) return cmd;
+    // Expose the tactical owner of this body to render/QA. `sourceJob` used to
+    // be written mainly when an approach was licensed, which proved that cover
+    // players were not borrowing the spike run-up but did not prove the more
+    // important volleyball invariant: only one hitter is assigned to the play.
+    // Keeping it current lets the metrics detect the rejected "all attackers
+    // go to the ball" behaviour as an actual frame-level failure.
+    // The tactical job and unfinished gesture are separate axes. The action
+    // keeps the set's planted recovery/locked shoulders while the next job is
+    // already coverage. Copying "set" here until a later tick left stale ball
+    // pursuit active exactly when Player.step released that physical lock.
+    p.presentation.sourceJob = s.job;
+    if (p.id === this.suppressedId) { s.adjusting = false; return cmd; }
+    if (this.world.phase === 'serve' && p.id !== this.world.team(this.world.servingSide).server.id) {
+      s.adjusting = false;
+      return cmd;
+    }
 
     const dx = s.goal.x - p.pos.x;
     const dy = s.goal.y - p.pos.y;
@@ -844,9 +1225,14 @@ export class TeamBrain {
     // A real player commits: they move when they are clearly out of position,
     // keep moving until they have actually arrived, and otherwise stand and
     // watch the ball. Only whoever is playing the ball reacts to every twitch.
-    const chasing =
-      s.job === 'receive' || s.job === 'set' || s.job === 'attack' || s.job === 'block';
-    if (!chasing) {
+    const chasing = s.job === 'receive' || s.job === 'set'
+      || (s.job === 'attack' && this.world.possession === p.side && this.world.touches >= 2)
+      || (s.job === 'block' && this.world.possession !== p.side && this.world.touches >= 2 && !this.world.serveInFlight);
+    const ownAttack = this.world.possession === p.side && this.world.touches >= 1 && this.setPlan !== null;
+    const clearingAttack = s.job === 'cover' && ownAttack
+      && !(p.id === this.setPlan?.decoyId && !this.decoyJumped)
+      && distXY(p.pos, this.coverLanding ?? this.plannedAttack) < 2.4;
+    if (!chasing && !clearingAttack) {
       if (!s.enRoute && gap > tolerance + 0.55) s.enRoute = true;
       if (s.enRoute && gap < tolerance * 0.8) s.enRoute = false;
     } else {
@@ -859,7 +1245,10 @@ export class TeamBrain {
       // above 1.5 m/s at any instant. Capped at a trot, a transition reads as
       // a team settling into its shape rather than a stampede, and whoever is
       // actually playing the ball still goes flat out.
-      const urgency = chasing ? clamp(gap / 1.6, 0.35, 1) : clamp(gap / 3.6, 0.22, 0.32);
+      // Brake continuously into a position. A minimum .35 command made a
+      // player accelerate again at centimetres from goal on every correction.
+      const urgency = chasing ? clamp(gap / 1.6, 0, 1)
+        : clearingAttack ? clamp(gap / 2, 0, .64) : clamp(gap / 3.6, 0, 0.32);
       cmd.moveX = (dx / gap) * urgency;
       cmd.moveY = (dy / gap) * urgency;
     }
@@ -889,6 +1278,7 @@ export class TeamBrain {
     let sepY = 0;
     for (const mate of this.team.players) {
       if (mate.id === p.id || mate.airborne) continue;
+      const bothBlocking = s.job === 'block' && this.stateOf(mate).job === 'block';
       const theirs = onTheBall(this.stateOf(mate).job);
       // Two players both going for the ball is the collision that actually
       // looks bad, and the tie is broken the way players break it on a court:
@@ -897,9 +1287,10 @@ export class TeamBrain {
       const ox = p.pos.x - mate.pos.x;
       const oy = p.pos.y - mate.pos.y;
       const d = Math.hypot(ox, oy);
-      if (d > PERSONAL_SPACE || d < 1e-4) continue;
+      const personalSpace = bothBlocking ? 0.72 : PERSONAL_SPACE;
+      if (d > personalSpace || d < 1e-4) continue;
       // Give extra room to a team-mate who is playing the ball.
-      const push = ((PERSONAL_SPACE - d) / PERSONAL_SPACE) * (theirs ? 2.2 : 1);
+      const push = ((personalSpace - d) / personalSpace) * (theirs ? 2.2 : 1);
       sepX += (ox / d) * push;
       sepY += (oy / d) * push;
     }
@@ -908,15 +1299,104 @@ export class TeamBrain {
       cmd.moveY = clamp(cmd.moveY + sepY * 1.6, -1, 1);
     }
 
+    // Cover supports the play; it must not stand underneath the play. When a
+    // high ball is already owned by a setter/attacker/blocker, nearby cover
+    // bodies clear the lane instead of continuing through the ball marker.
+    // A delivered set already has a stable landing-clearance destination.
+    // Repelling cover from the live ball as it travelled there drove players
+    // back toward the net and underneath the hitter they had been clearing.
+    if (s.job === 'cover' && !ownAttack && ballPos.z > NET_HEIGHT + 0.35) {
+      const awayX = p.pos.x - ballPos.x;
+      const awayY = p.pos.y - ballPos.y;
+      const awayD = Math.hypot(awayX, awayY);
+      if (awayD > 1e-4 && awayD < 2.05) {
+        const push = ((2.05 - awayD) / 2.05) * 1.1;
+        cmd.moveX = clamp(cmd.moveX + (awayX / awayD) * push, -1, 1);
+        cmd.moveY = clamp(cmd.moveY + (awayY / awayD) * push, -1, 1);
+      }
+    }
+
+    // Apply after all formation/separation forces have been combined. Filtering
+    // only the goal leaves the personal-space term free to restart the feet.
+    const betweenPoints = this.world.phase !== 'rally' && this.world.phase !== 'serve' && s.job === 'idle';
+    if (betweenPoints) {
+      // A settled athlete cannot finish a new adjustment just before service
+      // positions are placed. Keep the actual command quiet during that last
+      // beat; existing travel and all live/human movement retain their input.
+      const awaitingServe = this.world.phase === 'dead'
+        && this.world.phaseTimer >= POINT_BREAK_SECONDS - .18
+        && p.height === 0 && p.vertVel === 0 && p.vel.x === 0 && p.vel.y === 0;
+      const steering = awaitingServe ? { x: 0, y: 0, moving: false }
+        : resetAdjustmentSteering(cmd.moveX, cmd.moveY, s.adjusting);
+      s.adjusting = steering.moving;
+      cmd.moveX = steering.x; cmd.moveY = steering.y;
+    } else if (!chasing && s.job !== 'serve') {
+      const steering = settledSteering(cmd.moveX, cmd.moveY, s.adjusting);
+      s.adjusting = steering.moving;
+      cmd.moveX = steering.x; cmd.moveY = steering.y;
+    } else {
+      s.adjusting = false;
+    }
+
+    // After a point, two former blockers can still be shoulder-to-shoulder.
+    // Separation used to override the .32 walking command above and briefly
+    // accelerate them into run -> walk in ~50ms. Preserve its direction and
+    // gradual acceleration, but cap the COMPLETE reset command to a walk.
+    // No live rally or human command is slowed by this branch.
+    if (betweenPoints) {
+      const reset = walkingResetSteering(cmd.moveX, cmd.moveY);
+      cmd.moveX = reset.x; cmd.moveY = reset.y;
+    }
+
     // `Player.pos.z` is always 0 — height lives in `Player.height` — so this
     // must be a floor-plane distance plus an explicit reach check. Using a 3D
     // distance here made the AI ignore every ball above head height.
     const ball = this.world.ball;
+    // The platform drawings have planted feet. Once the incoming ball is
+    // reachable after natural braking, stop chasing its later FLOOR landing.
+    // Human input is returned above unchanged; desperate digs keep travelling.
+    if (s.job === 'receive' && p.presentation.action === 'bump'
+      && p.presentation.phase === 'prepare' && canPlantForReceive(p, ball)) {
+      cmd.moveX = 0; cmd.moveY = 0;
+    }
+    // Brake before showing planted-foot set preparation. Waiting for that
+    // artwork first makes the torso skate while the tactical goal continues
+    // pulling it toward the ball's later floor landing. Keep moving for a
+    // genuinely unreachable ball; human commands were returned above.
+    if (s.job === 'set' && (p.presentation.action === 'none'
+      || p.presentation.action === 'set' && p.presentation.phase === 'prepare')
+      && (canPlantForGroundContact(p, ball)
+        || Math.hypot(p.vel.x, p.vel.y) < .1 && canReach(p, ball))) {
+      cmd.moveX = 0; cmd.moveY = 0;
+    }
+    // The ball has left the hands, but those hands are still extending and
+    // returning. Do not let coverage/separation drag planted feet sideways
+    // through that recovery. This is AI steering, never a human input lock.
+    const groundRecovery = p.presentation.action === 'set' ? SET_GROUND_RECOVERY_TIME
+      : p.presentation.action === 'bump' ? BUMP_GROUND_RECOVERY_TIME : 0;
+    if (p.height === 0 && !p.diving && p.presentation.phase === 'contact'
+      && p.animTime < groundRecovery) {
+      cmd.moveX = 0; cmd.moveY = 0;
+    }
+    // Close the last adjustment during the weight shift, then brake for the
+    // deep compression poses. Do not arrest the approach at its first drawing.
+    if (s.blockPreparing && p.blockPreparationAge !== undefined
+      && p.blockPreparationAge >= BLOCK_PREPARATION_TIME / 2) {
+      cmd.moveX = 0; cmd.moveY = 0;
+    }
     const near =
       distXY(p.pos, ball.pos) < 2.2 && ball.pos.z < p.height + PLAYER_REACH + 0.8;
     cmd.actionHeld = s.holdAction && (near || s.job === 'serve');
     cmd.actionPressed = s.wantsAction && near;
     if (cmd.actionHeld) cmd.actionPressed = true;
+    if (s.job === 'set' && Math.hypot(p.vel.x, p.vel.y) > .1 && canPlantForGroundContact(p, ball)) {
+      // The hands remain offered, but an AI setter waits for the safe planted
+      // contact predicted above. Clear only its own automatic button buffer;
+      // an early AI request must not make World strike halfway through braking.
+      cmd.actionPressed = false;
+      cmd.actionHeld = false;
+      p.actionBuffer = 0;
+    }
     return cmd;
   }
 }

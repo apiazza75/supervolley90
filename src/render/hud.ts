@@ -1,4 +1,4 @@
-import { MAX_TOUCHES, POWER_MAX, setTarget } from '../core/rules';
+import { MAX_TOUCHES, POWER_MAX } from '../core/rules';
 import { World } from '../core/world';
 
 const INK = '#070b16';
@@ -25,14 +25,14 @@ export class Hud {
     world: World,
     width: number,
     height: number,
-    opts: { gamepad: boolean; time: number },
+    opts: { gamepad: boolean; gamepadAway?: boolean; touch?: boolean; time: number },
   ): void {
     const ctx = this.ctx;
     ctx.save();
     this.drawScoreboard(world, width, opts.time);
-    this.drawPowerGauges(world, width, height, opts.time);
-    this.drawTouchPips(world, width, height, opts.time);
-    this.drawHint(world, width, height, opts.gamepad);
+    this.drawPowerGauges(world, width, height, opts.time, opts.touch === true);
+    this.drawTouchPips(world, width, height, opts.time, opts.touch === true);
+    if (!opts.touch) this.drawHint(world, width, height, opts.gamepad, opts.gamepadAway === true);
     this.drawPhaseBanner(world, width, height, opts.time);
     ctx.restore();
   }
@@ -76,7 +76,8 @@ export class Hud {
     ctx.font = '800 11px "Arial Narrow", "Inter", system-ui, sans-serif';
     ctx.letterSpacing = '1.3px';
     ctx.fillStyle = MUTED;
-    ctx.fillText(`SET ${world.setNumber}   /   FIRST TO ${setTarget(world.setNumber)}`, middle, y + 18);
+    const scoring = world.format.scoring === 'sideout15' ? 'CAMBIO PALLA' : 'RALLY POINT';
+    ctx.fillText(`SET ${world.setNumber}/${world.format.bestOf}  ·  A ${world.pointsToWinSet}  ·  ${scoring}`, middle, y + 18);
     ctx.letterSpacing = '0px';
 
     const teams = [world.home, world.away] as const;
@@ -101,6 +102,12 @@ export class Hud {
       ctx.font = '700 9px "Arial Narrow", "Inter", system-ui, sans-serif';
       ctx.fillStyle = 'rgba(218,229,248,0.48)';
       ctx.fillText(team.config.name.toUpperCase(), nameX, y + 54);
+      const liberoIn = team.players.some((p) => p.role === 'libero');
+      if (liberoIn) {
+        ctx.font = '900 8px "Arial Narrow", "Inter", system-ui, sans-serif';
+        ctx.fillStyle = CORAL;
+        ctx.fillText('●  LIBERO IN', nameX, y + 64);
+      }
 
       // Score: outlined arcade numeral with restrained neon edge.
       const serving = world.servingSide === team.side;
@@ -117,8 +124,8 @@ export class Hud {
       ctx.shadowColor = 'transparent';
 
       // Set indicators as small slanted cartridges.
-      const baseX = left ? nameX : nameX - 44;
-      for (let i = 0; i < 3; i++) {
+      const baseX = left ? nameX : nameX - world.setsNeeded * 15 + 1;
+      for (let i = 0; i < world.setsNeeded; i++) {
         const px = baseX + i * 15;
         ctx.beginPath();
         ctx.moveTo(px + 3, y + 64);
@@ -158,18 +165,18 @@ export class Hud {
     ctx.fillText('SV90', middle, y + 45);
     ctx.font = '800 9px "Arial Narrow", "Inter", system-ui, sans-serif';
     ctx.fillStyle = GOLD;
-    ctx.fillText('LIVE', middle, y + 61);
+    ctx.fillText(world.humanAwayTeam ? 'P1  VS  P2' : 'LIVE', middle, y + 61);
     ctx.restore();
   }
 
   /** Segmented energy cells, filling towards centre court. */
-  private drawPowerGauges(world: World, width: number, height: number, time: number): void {
+  private drawPowerGauges(world: World, width: number, height: number, time: number, touch: boolean): void {
     const ctx = this.ctx;
     const gaugeW = Math.min(278, width * 0.23);
     const segmentCount = 10;
     const segmentGap = 3;
     const segmentW = (gaugeW - segmentGap * (segmentCount - 1)) / segmentCount;
-    const y = height - 58;
+    const y = touch ? 127 : height - 58;
 
     for (const team of [world.home, world.away]) {
       const left = team.side === 'home';
@@ -180,13 +187,14 @@ export class Hud {
       ctx.save();
       ctx.textBaseline = 'alphabetic';
       ctx.textAlign = left ? 'left' : 'right';
-      ctx.font = '900 10px "Arial Narrow", "Inter", system-ui, sans-serif';
+      ctx.font = `900 ${touch ? 12 : 10}px "Arial Narrow", "Inter", system-ui, sans-serif`;
       ctx.fillStyle = ready ? GOLD : 'rgba(219,231,249,0.62)';
-      const label = ready ? 'LETHAL READY' : `${team.config.shortName}  OVERDRIVE`;
+      const control = world.humanAwayTeam ? `${left ? 'P1' : 'P2'}  ` : '';
+      const label = `${control}${ready ? 'SPECIAL PRONTA' : `${team.config.shortName}  ENERGIA`}`;
       ctx.fillText(label, left ? x : x + gaugeW, y - 9);
 
       // Under-rail.
-      ctx.fillStyle = 'rgba(4,8,18,0.78)';
+      ctx.fillStyle = touch ? 'rgba(3,7,16,0.96)' : 'rgba(4,8,18,0.78)';
       ctx.fillRect(x - 4, y - 4, gaugeW + 8, 20);
       ctx.fillStyle = team.config.colors[1];
       ctx.globalAlpha = 0.55;
@@ -214,7 +222,7 @@ export class Hud {
           ctx.fillStyle = grad;
         } else {
           ctx.globalAlpha = 1;
-          ctx.fillStyle = 'rgba(189,213,239,0.11)';
+          ctx.fillStyle = touch ? 'rgba(189,213,239,0.25)' : 'rgba(189,213,239,0.11)';
         }
         ctx.fill();
       }
@@ -223,12 +231,12 @@ export class Hud {
     }
   }
 
-  private drawTouchPips(world: World, width: number, height: number, time: number): void {
+  private drawTouchPips(world: World, width: number, height: number, time: number, touch: boolean): void {
     if (world.phase !== 'rally' || world.touches === 0) return;
     const ctx = this.ctx;
     const team = world.team(world.possession);
     const cx = width / 2;
-    const y = height - 78;
+    const y = touch ? 132 : height - 78;
     const w = 146;
 
     ctx.save();
@@ -261,21 +269,33 @@ export class Hud {
     ctx.restore();
   }
 
-  private drawHint(world: World, width: number, height: number, gamepad: boolean): void {
+  private drawHint(world: World, width: number, height: number, gamepad: boolean, gamepadAway: boolean): void {
     const ctx = this.ctx;
+    if (world.humanAwayTeam) {
+      ctx.save();
+      ctx.font = '800 10px "Arial Narrow", system-ui, sans-serif';
+      ctx.textBaseline = 'middle';
+      const y = height - 22;
+      ctx.textAlign = 'left'; ctx.fillStyle = CYAN;
+      ctx.fillText(gamepad ? 'P1  STICK · A/X COLPISCI · B/Y SALTA/SPECIAL' : 'P1  WASD MUOVI · F COLPISCI · G SALTA/SPECIAL', 24, y);
+      ctx.textAlign = 'right'; ctx.fillStyle = GOLD;
+      ctx.fillText(gamepadAway ? 'P2  STICK · A/X COLPISCI · B/Y SALTA/SPECIAL' : 'P2  FRECCE MUOVI · K COLPISCI · L SALTA/SPECIAL', width - 24, y);
+      ctx.restore();
+      return;
+    }
     const action = gamepad ? 'A' : 'SPACE';
     const jump = gamepad ? 'B' : 'SHIFT';
     const isServe = world.phase === 'serve';
     const entries = isServe
       ? [
-          [action, 'HOLD / RELEASE  TOSS'],
-          [action, 'TAP  HIT'],
-          ['← → ↑ ↓', 'AIM'],
+          [action, 'TIENI / RILASCIA'],
+          [action, 'ROSSO = COLPISCI'],
+          [gamepad ? 'STICK' : '← → ↑ ↓', 'MIRA'],
         ]
       : [
-          [action, 'PLAY / JUMP / SPIKE'],
-          [jump, 'LETHAL'],
-          ['← → ↑ ↓', 'MOVE + AIM'],
+          [action, 'GIOCA / ATTACCA'],
+          [jump, 'SALTA / SPECIAL'],
+          [gamepad ? 'STICK' : '← → ↑ ↓', 'MUOVI / MIRA'],
         ];
 
     const totalW = Math.min(520, width * 0.46);
@@ -346,14 +366,15 @@ export class Hud {
       ctx.fillText(winner.config.name.toUpperCase(), width / 2, y + 62);
       ctx.font = '900 18px "Arial Narrow", "Inter", system-ui, sans-serif';
       ctx.fillStyle = accent;
-      ctx.fillText(`MATCH WINNER  //  ${world.home.setsWon} — ${world.away.setsWon}`, width / 2, y + 108);
+      const victor = world.humanAwayTeam ? `${winner.side === 'home' ? 'P1' : 'P2'} VINCE` : 'PARTITA VINTA';
+      ctx.fillText(`${victor}  //  ${world.home.setsWon} — ${world.away.setsWon}`, width / 2, y + 108);
       ctx.font = '700 11px "Arial Narrow", "Inter", system-ui, sans-serif';
       ctx.fillStyle = MUTED;
-      ctx.fillText('PRESS ESC TO RETURN TO TEAM SELECT', width / 2, y + 144);
+      ctx.fillText('SCEGLI RIVINCITA O TORNA AL MENU', width / 2, y + 144);
     } else {
       ctx.font = '950 48px "Arial Black", "Inter", system-ui, sans-serif';
       ctx.fillStyle = TEXT;
-      ctx.fillText(`SET ${world.setNumber} COMPLETE`, width / 2, y + 66);
+      ctx.fillText(`SET ${world.setNumber} CONCLUSO`, width / 2, y + 66);
       ctx.font = '900 18px "Arial Narrow", "Inter", system-ui, sans-serif';
       ctx.fillStyle = GOLD;
       ctx.fillText(`${world.home.setScores.join(' · ')}   //   ${world.away.setScores.join(' · ')}`, width / 2, y + 116);

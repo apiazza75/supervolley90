@@ -1,130 +1,102 @@
-import type { PlayerRole } from '../core/player';
-import { Side } from '../core/rules';
-import { World } from '../core/world';
+import type { Player } from '../core/player';
+import type { SpriteAction } from '../render/sprites';
 
-/**
- * One recorded instant: everything the renderer needs to redraw the court.
- *
- * Deliberately a flat snapshot rather than a reference to the live objects —
- * the simulation keeps mutating those, and a replay that points at them shows
- * the present, not the past.
- */
-export interface ReplayFrame {
-  ball: { x: number; y: number; z: number; roll: number };
-  players: {
-    id: number;
-    side: Side;
-    role: PlayerRole;
-    pos: { x: number; y: number; z: number };
-    vel: { x: number; y: number; z: number };
-    height: number;
-    vertVel: number;
-    anim: string;
-    facing: number;
-    swing: number;
-    charge: number;
-    airborne: boolean;
-    rotationSlot: number;
-  }[];
+/** The authored drawing actually painted, not a newly inferred animation. */
+export interface ReplayPose { action: SpriteAction; frame: number; facing: number; renderedHeight?: number }
+
+export function captureReplayPlayer(p: Player, sprite: ReplayPose) {
+  return {
+    id: p.id, side: p.side, role: p.role,
+    pos: { x: p.pos.x, y: p.pos.y, z: 0 },
+    vel: { x: p.vel.x, y: p.vel.y, z: 0 },
+    height: sprite.renderedHeight ?? p.height, vertVel: p.vertVel, anim: p.anim,
+    facing: sprite.facing, swing: p.swing, charge: 0,
+    airborne: p.airborne, rotationSlot: p.rotationSlot,
+    sprite: { action: sprite.action, frame: sprite.frame, facing: sprite.facing },
+  };
 }
 
-/** How long the opening card holds before the action rolls. */
-export const INTRO = 0.75;
+/** Detached snapshot of the interpolated live view, captured after painting. */
+export interface ReplayFrame {
+  ball: { x: number; y: number; z: number; roll: number };
+  players: ReturnType<typeof captureReplayPlayer>[];
+}
 
-/** Seconds of play kept available, and how fast the replay is played back. */
-const WINDOW = 2.2;
-const RATE = 40;
-const PLAYBACK = 0.5;
+export const INTRO = 0.25;
+const WINDOW = 1.6;
+const PLAYBACK = 0.8;
+type Sample = { time: number; frame: ReplayFrame };
+const mix = (a: number, b: number, u: number) => a + (b - a) * u;
 
-/**
- * A rolling two seconds of play, replayed after the points worth seeing again.
- *
- * Recording is cheap: forty small snapshots a second, capped at a fixed
- * window, so memory never grows. Playback drives the renderer directly and any
- * input cuts it short — a replay you cannot skip is a replay you resent.
- */
+/** Interpolate body anchors, never blend two silhouettes or anticipate a pose. */
+export function interpolateReplay(a: ReplayFrame, b: ReplayFrame, u: number): ReplayFrame {
+  if (u <= 0) return a;
+  if (u >= 1) return b;
+  const next = new Map(b.players.map(p => [p.id, p]));
+  return {
+    ball: {
+      x: mix(a.ball.x, b.ball.x, u), y: mix(a.ball.y, b.ball.y, u),
+      z: mix(a.ball.z, b.ball.z, u), roll: mix(a.ball.roll, b.ball.roll, u),
+    },
+    players: a.players.map(p => {
+      const q = next.get(p.id);
+      // Substitutions and point resets are cuts, not journeys across the court.
+      if (!q || Math.hypot(q.pos.x - p.pos.x, q.pos.y - p.pos.y) > 1) return p;
+      return { ...p,
+        pos: { x: mix(p.pos.x, q.pos.x, u), y: mix(p.pos.y, q.pos.y, u), z: 0 },
+        height: mix(p.height, q.height, u), vertVel: mix(p.vertVel, q.vertVel, u),
+        vel: { x: mix(p.vel.x, q.vel.x, u), y: mix(p.vel.y, q.vel.y, u), z: 0 },
+      };
+    }),
+  };
+}
+
+/** Timestamped display samples: no 40 Hz quantisation or independent pose clock. */
 export class Replay {
-  private frames: ReplayFrame[] = [];
-  private accum = 0;
-  private playhead = 0;
-  private playing: ReplayFrame[] | null = null;
+  private frames: Sample[] = [];
+  private clock = 0;
+  private cursor = 0;
+  private playing: Sample[] | null = null;
   private label = '';
-  /** Seconds since playback began, for the intro card and the wipe. */
   private elapsed = 0;
 
-  get age(): number {
-    return this.elapsed;
-  }
-
-  get isPlaying(): boolean {
-    return this.playing !== null;
-  }
-
-  get title(): string {
-    return this.label;
-  }
+  get age() { return this.elapsed; }
+  get isPlaying() { return this.playing !== null; }
+  get title() { return this.label; }
 
   clear(): void {
-    this.frames.length = 0;
-    this.playing = null;
+    this.frames = []; this.playing = null;
+    this.clock = 0; this.cursor = 0; this.elapsed = 0;
   }
 
-  record(world: World, dt: number): void {
-    if (this.playing) return;
-    this.accum += dt;
-    if (this.accum < 1 / RATE) return;
-    this.accum = 0;
-
-    const b = world.ball;
-    this.frames.push({
-      ball: { x: b.pos.x, y: b.pos.y, z: b.pos.z, roll: b.roll },
-      players: world.allPlayers().map((p) => ({
-        id: p.id,
-        side: p.side,
-        role: p.role,
-        pos: { x: p.pos.x, y: p.pos.y, z: 0 },
-        vel: { x: p.vel.x, y: p.vel.y, z: 0 },
-        height: p.height,
-        vertVel: p.vertVel,
-        anim: p.anim,
-        facing: p.facing,
-        swing: p.swing,
-        charge: 0,
-        airborne: p.airborne,
-        rotationSlot: p.rotationSlot,
-      })),
-    });
-    if (this.frames.length > Math.ceil(WINDOW * RATE)) this.frames.shift();
+  record(frame: ReplayFrame, dt: number): void {
+    if (this.playing || dt <= 0 || !Number.isFinite(dt)) return;
+    this.clock += dt;
+    // Protect recordings even if a caller reuses its arrays on the next paint.
+    this.frames.push({ time: this.clock, frame: {
+      ball: { ...frame.ball },
+      players: frame.players.map(p => ({ ...p, pos: { ...p.pos }, vel: { ...p.vel }, sprite: { ...p.sprite } })),
+    } });
+    // Retain one bracketing sample; also bound memory at exotic refresh rates.
+    while (this.frames.length > 2 && (this.frames[1].time < this.clock - WINDOW || this.frames.length > 2048)) this.frames.shift();
   }
 
-  /** Start replaying everything recorded so far. Ignored if too little exists. */
   start(label: string): boolean {
-    if (this.frames.length < RATE * 0.8) return false;
+    if (this.playing || this.frames.length < 2 || this.frames.at(-1)!.time - this.frames[0].time < 0.8) return false;
     this.playing = this.frames.slice();
-    this.playhead = 0;
-    this.elapsed = 0;
-    this.label = label;
+    this.cursor = 0; this.elapsed = 0; this.label = label;
     return true;
   }
 
-  stop(): void {
-    this.playing = null;
-    this.frames.length = 0;
-  }
+  stop(): void { this.clear(); }
 
-  /** Advance playback; returns the frame to draw, or null when it is over. */
   step(dt: number): ReplayFrame | null {
     if (!this.playing) return null;
-    this.elapsed += dt;
-    // A beat on the opening card before the action rolls, so the replay
-    // announces itself instead of looking like the game stuttering.
-    if (this.elapsed < INTRO) return this.playing[0];
-    this.playhead += dt * RATE * PLAYBACK;
-    const i = Math.floor(this.playhead);
-    if (i >= this.playing.length) {
-      this.stop();
-      return null;
-    }
-    return this.playing[i];
+    this.elapsed += Number.isFinite(dt) ? Math.max(0, dt) : 0;
+    const time = this.playing[0].time + Math.max(0, this.elapsed - INTRO) * PLAYBACK;
+    if (time > this.playing.at(-1)!.time) { this.stop(); return null; }
+    while (this.cursor + 1 < this.playing.length && this.playing[this.cursor + 1].time <= time) this.cursor++;
+    const a = this.playing[this.cursor], b = this.playing[this.cursor + 1];
+    return b ? interpolateReplay(a.frame, b.frame, (time - a.time) / (b.time - a.time)) : a.frame;
   }
 }
