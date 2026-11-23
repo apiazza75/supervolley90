@@ -1,0 +1,58 @@
+{
+  "tool": "built-in image_gen",
+  "useCase": "stylized-concept",
+  "prompts": [
+    "Use case: stylized-concept. Asset type: four new hand-drawn animation inbetweens for an existing manga volleyball game, NOT a redesign. Image 1 is style/anatomy reference for backward defensive footwork; image 2 is style and target diving extension reference. Draw exactly four isolated full-body poses in a square 2 by 2 grid, equal square cells, one athlete per cell, generous clear margins. Same blue jersey number 7, blue shorts with ivory side panels, dark knee pads, ivory socks, blue/gold shoes, brown spiky hair, athletic adult proportions and crisp dark manga ink with flat cel shadows. Consistent anatomical size across cells, camera fixed slightly above side view. TRANSPARENT background, no floor, no shadow, no text labels, no ball, no grid lines. Read left to right, top to bottom: A: athlete begins facing screen RIGHT in low defensive backpedal stance, knees flexed, shoulders starting to twist toward viewer, hands separate below waist. B: midway rotation, chest faces viewer, knees flex deeper, hips pivot on shoe toes, head turns toward screen LEFT, arms travel leftward. C: three-quarter LEFT, torso leans left and lowers, rightmost leg drives behind, leftmost knee bends, both arms reach diagonally down-left. D: fully LEFT-facing low diving push-off, torso diagonal left, both arms extending left, leftmost shoe just leaving floor, rightmost leg trailing behind; this must lead smoothly into a horizontal leftward dive (mirror of reference image 2 early flight). A to D must gradually rotate RIGHT THROUGH FRONT TO LEFT while lowering/leaning, not four similar poses and not instant mirror. Each complete figure unique, two hands and two feet, no stretched legs, no ellipses/mannequins, no motion blur, no ghosting, no white matte fragments between limbs. Preserve reference art identity and line detail.",
+    "Correct this animation sheet for production. Keep exactly the same four figures, character identity, blue number 7 kit, proportions, detailed manga ink and cel shadows, but fix orientation and layout. Make a SQUARE canvas with an exact 2x2 grid of equal SQUARE cells; every full figure must fit INSIDE its own cell with generous outer margins, including every shoe, no overlap across cell boundaries. TRANSPARENT background, no grid lines or labels. Top-left A remains facing RIGHT, low defensive posture. Top-right B chest and knees face FRONT toward viewer, head turns LEFT, hands now starting to move LEFT (not right). Bottom-left C must face three-quarter LEFT, both arms reach down-left and torso leans left. Bottom-right D must face fully LEFT, horizontally launching toward LEFT with BOTH HANDS LEFT of the head and BOTH FEET trailing RIGHT. Essential: A right, B front, C left, D left. These are four successive drawings of a right-to-left rotational diving push-off. Same anatomical scale in all four cells: bending naturally reduces height, do not enlarge the crouched or horizontal bodies. Keep transparent gaps between limbs, no checkerboard baked into pixels, no floor or shadows.",
+    "Keep this exact manga player and the four right-to-front-to-left poses. Recompose on a square canvas with a strict 2x2 grid. SHRINK ALL FOUR WHOLE FIGURES together to 70 percent of their present size, leaving very generous transparent padding around EVERY figure inside its own quadrant; no figure may touch or cross the center vertical or center horizontal lines. Do not draw lines or labels. Keep all shoes and fingertips complete. Change only pose D bottom right: it must be an EARLY diagonal LEFT-facing dive push-off, torso angled downward toward left but not yet horizontal, leftmost bent knee leading, rightmost leg trailing, both arms reaching down-left, like pose C but with feet beginning to lift. A stays right-facing defensive stance; B chest faces viewer/head left; C stays three-quarter left deep launch. Consistent fixed anatomical size across all four. Preserve blue number7 kit, ivory socks/side stripes, dark kneepads, brown hair, ink and cel shading. True alpha transparency, no shadows or checkerboard pixels.",
+    "Change ONLY the background of this exact four-pose manga sprite sheet. The checkerboard is unfortunately baked into the pixels: replace ALL checkerboard squares everywhere, including the gaps between legs, arms and fingers, with a perfectly flat solid saturated magenta RGB(255,0,255) chroma-key background. No checkerboard, no transparency simulation, no gradients, no shadows. Preserve every colored character pixel, all four poses, original image dimensions and exact figure positions/scales. Do not redraw the anatomy or change any pose. Keep the ivory socks, ivory jersey stripes and number7 INSIDE the figures intact. The outside and inter-limb background must be pure flat magenta."
+  ],
+  "source": "dive-turn-keyed-source.png",
+  "sourceSize": [
+    1254,
+    1254
+  ],
+  "sourceSha256": "27b8d72e228b691066675af94c01e023fbe3b05bff0a67f4e70ed632b8b87c75",
+  "runtime": "public/sprites/dive-turn.png",
+  "runtimeSha256": "defe4ca87356241d11caf19938623056ee9b0d86b3f35125aeef93b4a1e752c4",
+  "originalAtlasSha256": "0e27ba0033c4899ddbbafa9d3ca98dd5b2abef9c37e6bb1683c22bcbe89f25b5",
+  "runtimeFrames": [
+    40,
+    41,
+    42,
+    43
+  ],
+  "uniformScale": 0.81,
+  "boxes": [
+    [
+      0,
+      0,
+      627,
+      627
+    ],
+    [
+      627,
+      0,
+      1254,
+      627
+    ],
+    [
+      0,
+      627,
+      627,
+      1254
+    ],
+    [
+      627,
+      627,
+      1254,
+      1254
+    ]
+  ],
+  "registration": "One isotropic whole-figure scale; chroma extraction and root/sole alignment through import_set_gather.py. Original atlas untouched.",
+  "selectedRuntimeFrames": [40, 41, 42],
+  "excludedRuntimeFrames": [43],
+  "sequence": [40, 41, 42, 0, 1, 2, 3, 4, 5, 6, 7, 8],
+  "scope": "Opposite-facing grounded locomotion into a real dive only; three new torsion poses followed by the nine original push-off poses, 0.01s simulated time per drawing from first observed takeoff. Actual contact always interrupts. Physical trajectory, reach eligibility and input timing are unchanged.",
+  "remainingVisualRisk": "This specific seed-7 transition was inspected in captured real play. Other seeds, early-save interruptions and native in-app display still need broad visual acceptance. Excluded pose 43 made the chest dip before flight."
+}

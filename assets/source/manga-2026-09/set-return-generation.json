@@ -1,0 +1,63 @@
+{
+  "source": "set-return-keyed-source.png",
+  "sourceSha256": "24954326adcd42dff75e9bda3909401f3eddad7e15ea464721d3a15470fd405f",
+  "sourceSize": [
+    1254,
+    1254
+  ],
+  "uniformScale": 0.8,
+  "boxes": [
+    [
+      0,
+      0,
+      627,
+      627
+    ],
+    [
+      627,
+      0,
+      1254,
+      627
+    ],
+    [
+      0,
+      627,
+      627,
+      1254
+    ],
+    [
+      627,
+      627,
+      1254,
+      1254
+    ]
+  ],
+  "runtime": "public/sprites/set-return.png",
+  "runtimeSha256": "b3270025db1d53b635315b40336806ba4b49a29599c0350cb5ce6ecf5ef6fa7e",
+  "originalAtlasSha256": "df0be79a6c75d4d9199c4d84a441be7223d9ed414728af4bdd90f3347aa61f97",
+  "sequence": [
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    28,
+    29,
+    16,
+    30,
+    31,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23
+  ],
+  "generator": "built-in image_gen",
+  "prompt": "Use case: stylized-concept.\nAsset type: four new 2D manga volleyball sprite inbetweens for an existing game, not concept redesign.\nInput image 1 is the exact character, anatomy, linework, colors and perspective reference, a 6x4 sheet. Study row 3 column 4 (zero-based frame15, fully extended arms after a forward overhead set), and row3 column5 (frame16, elbows bending with hands coming down in front). Create FOUR NEW consecutive recovery drawings strictly BETWEEN those two endpoints, not repeats of the earlier raising/contact gesture.\nOutput a square sheet, clean 2x2 grid of four equally sized invisible panels, one complete full-body athlete per panel, left-to-right top-to-bottom. All face screen RIGHT in exactly the original three-quarter side view. Identical camera, head size, torso/leg proportions, feet locations, shoe scale and floor baseline in every cell. Keep generous empty margins; each athlete stays wholly inside his own quadrant. Genuinely transparent background, no checkerboard or shadows or environment.\nCharacter: same brown-haired young adult man, blue jersey number7 and blue shorts with pale gray side stripes, dark kneepads, gray-white socks, blue/yellow shoes, ink outlines and restrained anime cel shading. Natural athletic proportions, never long stilt legs, no vector circles.\nMotion: grounded setter just released the ball forwards/upwards. Feet planted in staggered stance, knees softly bent, torso steady. A (top left): arms still almost extended diagonally up-forward, but wrists and fingers relaxing DOWN from the released set. B (top right): both upper arms lower a little; elbows softly begin bending, fingers relaxed, hands moving down and inward. C (bottom left): elbows bend further as hands descend, forearms still diagonal up-forward; NOT another overhead receiving cup. D (bottom right): hands reach just above face level in front, upper arms lower, elbows smoothly bent, approaching original frame16. Four clearly different, closely spaced incremental poses in ONE monotonic arm-lowering arc. No renewed push, no arm raising again. Keep the shoulder, hair, pelvis and feet virtually stationary through this short arm return. No ball, no motion streaks, no labels, no panel borders, no watermark. Preserve the exact established illustrated style; these will be interleaved into the supplied sheet.",
+  "backgroundEditPrompt": "Edit only the background of the supplied 2x2 manga volleyball sprite sheet. Replace EVERY gray/white checkerboard square with perfectly flat solid RGB(255,0,255) magenta, including all gaps between legs, fingers and arms. Preserve all four athletes, exact poses, anatomy, uniform, number, face, ink, shading, pixel placement, panel layout and canvas size. Do not redraw or reposition the players. No border, labels, shadow, checkerboard, white halo, gradient or new content. The background must be a SINGLE completely uniform magenta key color.",
+  "note": "Original atlas untouched. Four new authored return poses replace the four reversed extension poses. Uniform whole-figure registration only; contact and recovery deadlines unchanged."
+}

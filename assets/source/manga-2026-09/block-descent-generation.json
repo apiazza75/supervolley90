@@ -1,0 +1,71 @@
+{
+  "source": "block-descent-v2.png",
+  "sourceSize": [
+    1254,
+    1254
+  ],
+  "sourceSha256": "0b2ee8836b253692a7534779a9bf12b84349f678be070a66c01fae88a7cfb85b",
+  "runtime": "public/sprites/block-descent.png",
+  "runtimeSha256": "c5dbec79cabb5fe9b3f7abc592a50823d716e92912db374cc1c0621a7484f4dd",
+  "originalAtlasSha256": "256ce094749f4058cf8e78568924a3a6489da32e586de047bc2493e7ff10cc83",
+  "method": "Built-in image_gen; four authored drawings selected in reviewed physical order, chroma extraction and one uniform whole-body registration scale. No limb warping, blending, or duplicated filler.",
+  "uniformScale": 0.77,
+  "boxes": [
+    [
+      627,
+      0,
+      1254,
+      627
+    ],
+    [
+      0,
+      0,
+      627,
+      627
+    ],
+    [
+      627,
+      627,
+      1254,
+      1254
+    ],
+    [
+      0,
+      627,
+      627,
+      1254
+    ]
+  ],
+  "runtimeFrames": [
+    32,
+    33,
+    34,
+    35
+  ],
+  "sequence": [
+    17,
+    32,
+    18,
+    33,
+    34,
+    35,
+    19,
+    20
+  ],
+  "legacyPhaseStarts": [
+    16.5,
+    17,
+    17.5,
+    17.75,
+    18,
+    18.25,
+    18.5,
+    19.5
+  ],
+  "prompts": [
+    "Use case: stylized-concept. Asset type: production manga volleyball sprite in-between animation sheet. Create ONE square 2x2 image containing FOUR complete full-body drawings of exactly the same athlete shown in the four reference images. Input images are the existing sequential KEY POSES, NOT an edit target: image1 arms fully extended overhead, image2 elbows beginning to bend, image3 hands near forehead with slightly bent knees, image4 hands beside head and knees preparing to land. Draw ONLY the MISSING in-between poses, NOT copies of the keys. Reading order A top-left, B top-right, C bottom-left, D bottom-right. A is one third of the way from reference1 to reference2: both elbows just slightly softer, open hands lowered a little. B is two thirds from reference1 to reference2: elbows bend a little further, hands still above the crown. C is exactly halfway from reference2 to reference3: both hands descend together, shoulders and head lower slightly, knees gradually flex. D is exactly halfway from reference3 to reference4: wrists lower a little, knees bend slightly further, feet spread very slightly ready to absorb landing. This is ONE continuous lowering of the blocker's arms during descent, never a second jump or a second crouch. Match precisely the original clean hand-drawn manga black line work, detailed cel shading, young brown-spiky-haired male, blue number7 jersey with white side stripes, blue shorts, dark kneepads, white socks, blue/yellow athletic shoes. Preserve the right-facing three-quarter side view, head size, body proportions, limb lengths and colors. In all four cells use IDENTICAL character scale and shoe baseline, full body with fingertips and shoes completely inside equal square cells, generous margins. Do not normalize height as arms lower: the hands naturally occupy less height but the head and body must stay the same size. No ball, net, floor, shadows, speed lines, diagram labels, text outside jersey number, extra limbs, ghosts, motion blur or gradients. Entire background including all spaces between limbs must be uniform vivid magenta #ff00ff for clean extraction. High-detail square output, ideally2048x2048.",
+    "Edit this exact 2x2 manga volleyball sheet. Keep the top-right and bottom-left drawings EXACTLY unchanged. Keep all four identities, faces, hair, blue number7 kits, colors, outlines, equal body scale, cell positions and uniform magenta background. Change only these two poses to make genuine in-betweens: TOP LEFT, lower BOTH open hands by about15 pixels in this1254px image by slightly bending both elbows, leaving the head, torso, legs and shoes exactly unchanged; the hands must lie slightly lower than now but still higher than those of the top-right pose. BOTTOM RIGHT, the athlete currently crouches too deeply: extend both knees just a little so the crown of his head rises about10 pixels, retaining both shoe positions exactly; at the same time raise both open hands about15 pixels so the wrists sit a little higher beside the forehead. This must be a shallower landing preparation, not a jump or an added bob. Do not change any other part. Every complete figure remains fully visible, same detailed cel-shaded manga style, no added marks, ghosts, blur, text, props, background gradients or white patches."
+  ],
+  "selection": "The generated cells were reordered B,A,D,C after reviewing hands, crown and knees against original keys17..20. Original timing for keys17,18,19,20 is preserved. New poses subdivide17→18 and18→19, not19→20.",
+  "limitations": "This extends the arm withdrawal of a real block. It does not prove global anatomical continuity or native-app fluidity; complete original atlas and physical jumps are preserved."
+}

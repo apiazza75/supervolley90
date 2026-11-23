@@ -1,0 +1,68 @@
+{
+  "source": "approach-plant-v2.png",
+  "sourceSize": [
+    1254,
+    1254
+  ],
+  "sourceSha256": "9116dac7f4284bc5d1dac8d847dc892230957b4a4e41ab108cf0554db8dd31de",
+  "runtime": "public/sprites/approach-plant.png",
+  "runtimeSha256": "b6565b2d01f94c16dc8688811d66a5b55e435a7b150ce030eedd5466da58a975",
+  "method": "Built-in image_gen; four newly authored poses, chroma extraction, one uniform scale, whole-figure shoe registration. No limb warping, silhouette blending, or duplicated filler.",
+  "uniformScale": 0.76,
+  "boxes": [
+    [
+      0,
+      0,
+      620,
+      615
+    ],
+    [
+      627,
+      0,
+      1247,
+      615
+    ],
+    [
+      0,
+      605,
+      620,
+      1220
+    ],
+    [
+      627,
+      605,
+      1247,
+      1220
+    ]
+  ],
+  "runtimeFrames": [
+    60,
+    61,
+    62,
+    63
+  ],
+  "sequence": [
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    60,
+    61,
+    62,
+    22,
+    63,
+    23
+  ],
+  "omittedOriginal": {
+    "frame": 21,
+    "reason": "Forward/backward shoe displacement and renewed head dip during the upward arm sweep; preserved in original PNG."
+  },
+  "originalAtlasSha256": "66b392731b13aa4d33b167ac1acfc83f174b085b37e526d7cab43b0ed4c41aa3",
+  "prompts": [
+    "Use case: stylized-concept. Asset type: production 2D manga volleyball sprite IN-BETWEEN drawings. Create ONE square 2 by 2 sheet with FOUR complete separate full-body drawings, ordered top left, top right, bottom left, bottom right. Reference image 1 is the original lower-arm plant key; reference image 2 is the original raised-arm key; reference image 3 is the final overhead key. Match exactly this existing young male volleyball athlete, blue number 7 jersey with white side stripe, blue shorts, black kneepads, white socks, blue/yellow shoes, brown spiky hair, same athletic manga proportions, same right-facing 3/4 SIDE VIEW, same drawn black outlines and cel shading. These are NOT four different designs. This is a continuous grounded arm sweep into a volleyball attack jump: feet remain planted close together on the SAME baseline and same horizontal positions in all cells, hips stay stable, knees smoothly extend very slightly, head gradually rises, no extra crouch or head bob. Both visible arms must progress smoothly upwards together. Pose A: hands halfway between reference 1 low hands and waist level, elbows moderately flexed, upper arms rotate forward. Pose B: hands at lower chest height, forearms pointing diagonally forward/up, wrists loose and fingers open. Pose C: hands at eye/forehead height, both elbows progressing upward, slightly bent arms, between chest pose and reference 2 above-head reach. Pose D: hands smoothly intermediate between reference 2 and reference 3, arms almost overhead, shoulders raised, knees still softly bent and BOTH shoes still on ground. Each pose is NEWLY DRAWN, single clean body, no duplicated ghosts, no blur. Lock head size, leg length, shoe shape, jersey, colors, viewpoint and overall size between all 4 cells. Avoid new proportions, miniature legs, added props, ball, court, shadows, text labels, guides, watermarks. Flat uniform magenta #ff00ff background throughout, also inside gaps between limbs; no white patches. Keep each entire figure inside its own equal square cell with generous clear margin and identical body scale; do not crop fingertips or shoes. Desired high detail square output 2048 by 2048.",
+    "Edit this exact 2x2 manga sprite sheet, preserving all four athlete identities, all four faces, jerseys, dimensions, body scales, knees, legs, planted shoes, grid, and flat magenta background. Change ONLY the arm poses in the TOP LEFT cell and BOTTOM LEFT cell, so they become true intermediates instead of copies of neighboring keyframes. TOP LEFT: raise BOTH hands from thigh level to WAIST level, about 50 pixels higher in the 1254px source, bend both elbows more; fingertips should be around local y=295 instead of y=345, hands stay ahead of the waist and below the chest. BOTTOM LEFT: LOWER BOTH hands from above-head height down to FACE/EYE height; fingertips should be around local y=130 within that cell instead of y=45; upper arms diagonal forward and up, elbows well bent, palms open and facing ahead. The hands must NOT be above the head in this cell. Keep the top-right chest-level pose and bottom-right overhead pose EXACTLY unchanged. All poses have the same fixed planted feet, no vertical bouncing, no foot movement, no new anatomy or clothing. Same crisp hand-drawn cel-shaded manga detail, single body per cell, no ghosts, no text or guides. Preserve the uniform magenta background and full-body margins."
+  ],
+  "limitations": "Authored drawings still have discrete temporal sampling. Physics plant remains 0.1 simulation seconds; 60 Hz may omit some closely spaced poses. This is not proof of global fluidity."
+}
