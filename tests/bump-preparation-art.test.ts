@@ -26,7 +26,7 @@ describe('authored bagher preparation',()=>{
   expect(clock.frameFor(p,0)).toMatchObject({action:'bump',frame:9});
  });
  it('preserves a natural full reception and releases an abandoned preparation without changing the match',()=>{
-  const config={home:TEAMS[0],away:TEAMS[1],seed:1337,difficulty:1,humanControlsHome:false};
+  const config={home:TEAMS[0],away:TEAMS[1],seed:2026,difficulty:1,humanControlsHome:false};
   const a=new World(config),b=new World(config),clock=new SpriteTimeline();
   const active=new Map<number,number[]>(),previous=new Map<number,string>();let received=false,cancelled=false;
   for(let tick=0;tick<18000&&!(received&&cancelled);tick++){

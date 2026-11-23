@@ -50,14 +50,23 @@ async function main(): Promise<void> {
 
   await page.goto('http://localhost:5188/', { waitUntil: 'networkidle' });
 
-  for (let i = 0; i < 40; i++) {
-    const started = await page.evaluate(
+  // The menu is a DOM form now, not a canvas screen: pressing Space with
+  // nothing focused starts nothing, so this loop used to spin forty times on
+  // the menu and the check then reported the referee as "not drawn" when no
+  // match had ever begun. Start the match the way a person does — by the
+  // button, once the athletes have loaded — and fail by name if that is
+  // impossible, rather than as a missing official.
+  await page.waitForSelector('#menu-start:not([disabled])', { timeout: 30000 });
+  await page.click('#menu-start');
+  const started = await page
+    .waitForFunction(
       () => Boolean((window as unknown as { __sv90?: { world?: unknown } }).__sv90?.world),
-    );
-    if (started) break;
-    await page.keyboard.press('Space');
-    await page.waitForTimeout(300);
-  }
+      undefined,
+      { timeout: 10000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  if (!started) problems.push('the match did not start from the menu button');
 
   type AssetCounts = { sprites: number; masks: number; arena: number };
   const rawAssets = await page
