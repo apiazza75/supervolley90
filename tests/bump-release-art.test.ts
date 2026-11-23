@@ -70,7 +70,7 @@ describe('authored bagher to defensive step release',()=>{
   try{w.step(idleCommand());expect(p.anim).toBe('bump_ready');}finally{spy.mockRestore();}
  });
  it('drops the lost AI receive job promptly and shows every release pose in the natural rally',()=>{
-  const w=new World({home:TEAMS[0],away:TEAMS[1],seed:4242,difficulty:1,humanControlsHome:false}),clock=new SpriteTimeline();
+  const w=new World({home:TEAMS[0],away:TEAMS[1],seed:2026,difficulty:1,humanControlsHome:false}),clock=new SpriteTimeline();
   const previous=new Map<number,{tick:number;anim:string;job:string;pose:Playhead}>(),frames:number[]=[];
   let releasing:number|undefined,completed=false;
   for(let tick=0;tick<16000;tick++){

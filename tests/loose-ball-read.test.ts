@@ -46,7 +46,7 @@ describe('grounded defender reads a loose overpass', () => {
     expect(looseBallReader(ball, [p])).toBeUndefined();
   });
   it('uses the full drawn preparation before a natural stationary front-row overpass reception', () => {
-    const w = new World({ home: TEAMS[0], away: TEAMS[1], seed: 7, difficulty: 1, humanControlsHome: false });
+    const w = new World({ home: TEAMS[0], away: TEAMS[1], seed: 2, difficulty: 1, humanControlsHome: false });
     const timeline = new SpriteTimeline(), frames:number[]=[];
     let receiver:number|undefined,preparedAt:number|undefined,plant:{x:number;y:number}|undefined;
     // Find the tactical boundary: a grounded blocker anticipates an overpass

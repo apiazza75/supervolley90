@@ -6,6 +6,7 @@ import {
   solveArc,
   solveArcOverNet,
   solveDrive,
+  Prediction,
 } from './ball';
 import { Vec3, v3, clamp, distXY, lerp } from './math3';
 import { Player } from './player';
@@ -474,12 +475,6 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
 
   const power = lerp(16, 29, charge) * (0.88 + 0.24 * player.stats.power)
     * (ctx.modifiers?.powerMultiplier ?? 1);
-  // A hitter well above the tape may drive the ball down through it — that is
-  // the shot. A hitter barely at net height gets the launch lifted just enough
-  // to clear, instead of burying a third of all attacks in the net.
-  const headroom = from.z - (NET_HEIGHT + 0.45);
-  const vel = headroom > 0 ? solveDrive(from, target, power) : driveOverNet(from, target, power, 0.1);
-
   // Topspin, plus a sidespin component matching how far the hitter cut the ball.
   //
   // Both spins are multiplied by the attack direction. The Magnus force is
@@ -488,6 +483,61 @@ export function performAttack(ctx: StrikeContext): StrikeResult {
   // made one side hit twice as many balls out as the other.
   const dir = attackDir(player.side);
   const spin = v3(-5.5 * dir, 0, -aim.x * 3.4 * dir);
+  // A hitter well above the tape may drive the ball down through it — that is
+  // the shot, and the flat drive is kept whenever it genuinely gets over. But
+  // "well above the tape" is only enough right at the net. The old code took
+  // the flat drive on height alone, so a back-row attack from behind the
+  // three-metre line was aimed straight through the net (two attacks in three
+  // died there, unblocked), and the low contact of a quick got a clearance
+  // that ignored the topspin about to pull it down. Every attack is now
+  // checked against the tape with the same spin it will fly with, and lifted
+  // only when it would not have arrived.
+  //
+  // The closed-form clearance is an estimate: it knows the topspin only as an
+  // average pull. So the launch is flown once, exactly as the ball will fly
+  // it, and one that would die on the tape is hit again a little higher.
+  //
+  // It stays a spike. Falling back to the arc solver here turned a swing from
+  // three and a half metres up into a seven-metre-per-second lob, and made the
+  // hitter's power irrelevant. Instead the same swing is tilted up until it
+  // crosses; a ball lifted that far flies long, so the pace comes off in steps
+  // until the topspin brings it down no more than a stride past its target.
+  // Only a contact from which no real swing can cross is lobbed.
+  const crosses = (v: Vec3): Prediction | null => {
+    // Flown from where the ball IS. The launch is solved from the hands,
+    // which sit between the body and the ball; the ball itself starts up to
+    // a few decimetres away, and near the tape that is the whole margin.
+    const flown = landingOf(ball.pos, v, spin);
+    return flown.valid && flown.point.y * dir > 0 ? flown : null;
+  };
+  let vel = solveDrive(from, target, power);
+  if (!crosses(vel)) {
+    let found: Vec3 | null = null;
+    for (let pace = 1; pace >= 0.5 && !found; pace -= 0.1) {
+      const drive = solveDrive(from, target, power * pace);
+      for (let lift = 0.5; lift <= 9; lift += 0.5) {
+        const lifted = v3(drive.x, drive.y, drive.z + lift);
+        const flown = crosses(lifted);
+        if (!flown) continue;
+        // The first lift that crosses is the flattest; a higher one only
+        // flies longer, so if this is too long the pace has to come off.
+        if ((flown.point.y - target.y) * dir <= 1) found = lifted;
+        break;
+      }
+    }
+    vel = found ?? aimThroughSpin(
+      target,
+      spin,
+      (aimAt, lift) => {
+        const dist = Math.hypot(aimAt.x - from.x, aimAt.y - from.y);
+        const flight = Math.max(0.35, (dist / Math.max(6, power)) * 1.05);
+        const pull = Math.abs(spin.x) * (dist / flight) * MAGNUS;
+        return solveArcOverNet(from, aimAt, 0.15 + lift, flight, flight * 2.8, pull);
+      },
+      from,
+    );
+  }
+
   ball.strike(vel, spin);
   player.swing = 0.3;
   player.setAnim(player.airborne ? 'air_contact_spike' : 'spike');
